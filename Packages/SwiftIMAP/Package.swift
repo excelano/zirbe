@@ -1,14 +1,17 @@
 // swift-tools-version:6.0
 import PackageDescription
 
+// SwiftIMAP is a standalone, high-level async IMAP client built on Apple's
+// low-level swift-nio-imap. It has no dependency on Zirbe and is designed to be
+// extracted into its own repository if anyone wants just the IMAP client.
 let package = Package(
-    name: "ZirbeMail",
+    name: "SwiftIMAP",
     platforms: [
         .iOS(.v17),
         .macOS(.v13),
     ],
     products: [
-        .library(name: "ZirbeMail", targets: ["ZirbeMail"]),
+        .library(name: "SwiftIMAP", targets: ["SwiftIMAP"]),
     ],
     dependencies: [
         .package(url: "https://github.com/apple/swift-nio-imap", from: "0.2.0"),
@@ -18,22 +21,25 @@ let package = Package(
     ],
     targets: [
         .target(
-            name: "ZirbeMail",
+            name: "SwiftIMAP",
             dependencies: [
                 .product(name: "NIOIMAP", package: "swift-nio-imap"),
-                .product(name: "NIO", package: "swift-nio"),
+                .product(name: "NIOCore", package: "swift-nio"),
+                .product(name: "NIOPosix", package: "swift-nio"),
                 .product(name: "NIOSSL", package: "swift-nio-ssl"),
                 .product(name: "Logging", package: "swift-log"),
             ]
         ),
-        // macOS-only command-line harness for the M1 spike. Not part of the
-        // shipped app; it exists to exercise ZirbeMail against a real account.
+        // macOS-only example client. Exercises SwiftIMAP against a real
+        // account using IMAP_* environment variables; not part of any app.
         .executableTarget(
-            name: "imap-spike",
-            dependencies: ["ZirbeMail"]
+            name: "imap-demo",
+            dependencies: ["SwiftIMAP"]
+        ),
+        .testTarget(
+            name: "SwiftIMAPTests",
+            dependencies: ["SwiftIMAP"]
         ),
     ],
-    // Swift 5 language mode for the spike; the app can adopt full Swift 6
-    // strict-concurrency later once the engine shape is settled.
     swiftLanguageModes: [.v5]
 )
