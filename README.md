@@ -34,10 +34,12 @@ providers.
 
 ## Status
 
-Early. The current work is the **M1 spike**: proving Apple's
-[`swift-nio-imap`](https://github.com/apple/swift-nio-imap) runs on iOS and can
-connect, authenticate, select a mailbox, and fetch message envelopes. See
-`Packages/ZirbeMail`.
+Early. The IMAP engine lives in `Packages/SwiftIMAP`, a standalone high-level
+IMAP client built on Apple's
+[`swift-nio-imap`](https://github.com/apple/swift-nio-imap) that Zirbe consumes.
+It compiles and links for iOS (device and simulator) and can connect,
+authenticate, select a mailbox, and fetch message envelopes. The current work
+is the M1 runtime check against live accounts.
 
 ## License
 
