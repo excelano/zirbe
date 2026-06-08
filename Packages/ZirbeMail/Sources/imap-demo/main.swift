@@ -1,4 +1,4 @@
-// Example client for SwiftIMAP. macOS only; not part of any app.
+// Example client for the ZirbeMail adapter. macOS only; not part of any app.
 //
 // Point it at a real account with credentials from the environment, never on
 // the command line or in source:
@@ -15,7 +15,7 @@
 
 import Foundation
 import Logging
-import SwiftIMAP
+import ZirbeMail
 
 func env(_ key: String) -> String? {
     guard let value = ProcessInfo.processInfo.environment[key], !value.isEmpty else { return nil }
@@ -38,32 +38,34 @@ let limit = env("IMAP_LIMIT").flatMap(Int.init) ?? 10
 var logger = Logger(label: "imap-demo")
 logger.logLevel = .info
 
-let client = IMAPClient(logger: logger)
+let engine = MailEngine(config: MailServerConfig(host: host, port: port), logger: logger)
 
 do {
-    try await client.connect(to: IMAPServer(host: host, port: port))
-    try await client.login(Credentials(username: user, password: pass))
-    let status = try await client.selectMailbox(mailbox)
-    let messages = try await client.fetchRecentEnvelopes(limit: limit)
+    try await engine.connect()
+    try await engine.login(username: user, password: pass)
+    let envelopes = try await engine.fetchRecentEnvelopes(in: mailbox, limit: limit)
 
-    print("\n— \(messages.count) of \(status.messageCount) message(s) in \(mailbox) —\n")
-    for message in messages.reversed() {
-        let seq = message.sequenceNumber.map(String.init) ?? "?"
-        let uid = message.uid.map(String.init) ?? "?"
+    print("\n— \(envelopes.count) message(s) from \(mailbox) —\n")
+    for envelope in envelopes.reversed() {
+        let seq = envelope.sequenceNumber.map(String.init) ?? "?"
+        let uid = envelope.uid.map(String.init) ?? "?"
         print("#\(seq)  uid:\(uid)")
-        print("  subject:     \(message.subject ?? "(none)")")
-        print("  from:        \(message.from.map(\.description).joined(separator: ", "))")
-        print("  date:        \(message.date ?? "(none)")")
-        print("  message-id:  \(message.messageID ?? "(none)")")
-        if let inReplyTo = message.inReplyTo {
+        print("  subject:     \(envelope.subject ?? "(none)")")
+        print("  from:        \(envelope.from ?? "(none)")")
+        print("  date:        \(envelope.date.map { ISO8601DateFormatter().string(from: $0) } ?? "(none)")")
+        print("  message-id:  \(envelope.messageID ?? "(none)")")
+        if let inReplyTo = envelope.inReplyTo {
             print("  in-reply-to: \(inReplyTo)")
+        }
+        if !envelope.references.isEmpty {
+            print("  references:  \(envelope.references.count) (\(envelope.references.last ?? ""))")
         }
         print("")
     }
 
-    await client.disconnect()
+    await engine.disconnect()
 } catch {
     FileHandle.standardError.write(Data("demo failed: \(error)\n".utf8))
-    await client.disconnect()
+    await engine.disconnect()
     exit(1)
 }
