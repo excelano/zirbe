@@ -42,3 +42,32 @@ public struct Thread: Sendable, Hashable, Identifiable {
 
     public var messageCount: Int { messages.count }
 }
+
+/// The inbox-row view of a thread: everything the conversation list shows,
+/// without loading the messages. The store persists these fields directly so
+/// the inbox is a cheap query; the full `Thread` (with messages) is loaded only
+/// when a conversation is opened.
+public struct ThreadSummary: Sendable, Hashable, Identifiable {
+    public var id: String
+    public var subject: String
+    public var participants: [Participant]
+    public var lastActivity: Date?
+    public var isUnread: Bool
+    public var messageCount: Int
+
+    public init(
+        id: String,
+        subject: String,
+        participants: [Participant],
+        lastActivity: Date?,
+        isUnread: Bool,
+        messageCount: Int
+    ) {
+        self.id = id
+        self.subject = subject
+        self.participants = participants
+        self.lastActivity = lastActivity
+        self.isUnread = isUnread
+        self.messageCount = messageCount
+    }
+}

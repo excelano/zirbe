@@ -217,16 +217,9 @@ public enum Threader {
 
     /// Flatten a root container's subtree into a chronological Thread.
     private static func makeThread(_ root: Container) -> Thread {
-        var messages: [Message] = []
-        collect(root, into: &messages)
-        messages.sort { lhs, rhs in
-            switch (lhs.date, rhs.date) {
-            case let (l?, r?): return l < r
-            case (nil, _?): return false
-            case (_?, nil): return true
-            case (nil, nil): return lhs.id < rhs.id
-            }
-        }
+        var collected: [Message] = []
+        collect(root, into: &collected)
+        let messages = collected.chronological()
 
         let subject = SubjectNormalizer.normalize(messages.first { ($0.subject?.isEmpty == false) }?.subject)
         let lastActivity = messages.compactMap(\.date).max()

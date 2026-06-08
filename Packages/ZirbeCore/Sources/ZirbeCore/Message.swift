@@ -58,3 +58,18 @@ public struct Message: Sendable, Hashable, Identifiable {
         return "anon:\(subject ?? "")|\(date?.timeIntervalSince1970 ?? 0)|\(from?.address ?? "")"
     }
 }
+
+extension Sequence where Element == Message {
+    /// Messages oldest first. Messages without a date sort to the end, with a
+    /// stable id tiebreak so ordering is deterministic.
+    func chronological() -> [Message] {
+        sorted { lhs, rhs in
+            switch (lhs.date, rhs.date) {
+            case let (l?, r?): return l < r
+            case (nil, _?): return false
+            case (_?, nil): return true
+            case (nil, nil): return lhs.id < rhs.id
+            }
+        }
+    }
+}

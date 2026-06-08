@@ -17,13 +17,21 @@ let package = Package(
     ],
     dependencies: [
         .package(path: "../ZirbeMail"),
+        .package(url: "https://github.com/groue/GRDB.swift", from: "7.0.0"),
     ],
     targets: [
         .target(
             name: "ZirbeCore",
             dependencies: [
                 .product(name: "ZirbeMail", package: "ZirbeMail"),
+                .product(name: "GRDB", package: "GRDB.swift"),
             ]
+        ),
+        // macOS-only example: fetch a real INBOX, store it, and print the
+        // conversations the store produces. Not part of any app.
+        .executableTarget(
+            name: "sync-demo",
+            dependencies: ["ZirbeCore"]
         ),
         .testTarget(
             name: "ZirbeCoreTests",
