@@ -38,9 +38,10 @@ Early. The mail engine is [Cocoanetics/SwiftMail](https://github.com/Cocoanetics
 a mature actor-based async IMAP and SMTP client, consumed through a thin
 adapter in `Packages/ZirbeMail` (a `MailEngine` actor returning Zirbe-owned
 value types, so the engine stays swappable). It compiles and links for iOS
-(device and simulator) and can connect, authenticate, select a mailbox, and
-fetch message envelopes with their threading headers. The current work is the
-runtime check against live accounts.
+(device and simulator) and is proven end to end: connecting, authenticating,
+selecting a mailbox, and fetching message envelopes with their threading
+headers against a live account. Next up is `ZirbeCore` (domain models, JWZ
+threading, the GRDB store) and the read-only conversation UI.
 
 ## License
 
