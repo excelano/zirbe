@@ -30,6 +30,7 @@ struct MessageRow: Codable, FetchableRecord, PersistableRecord {
     var toParticipants: [Participant]
     var date: Date?
     var flags: [Flag]
+    var bodyText: String?
     var threadID: String?
 
     init(_ message: Message, accountID: String, mailboxName: String) {
@@ -46,6 +47,7 @@ struct MessageRow: Codable, FetchableRecord, PersistableRecord {
         self.toParticipants = message.to
         self.date = message.date
         self.flags = Array(message.flags)
+        self.bodyText = message.bodyText
         self.threadID = nil
     }
 
@@ -59,7 +61,8 @@ struct MessageRow: Codable, FetchableRecord, PersistableRecord {
             from: fromAddress.map { Participant(address: $0, displayName: fromName) },
             to: toParticipants,
             date: date,
-            flags: Set(flags)
+            flags: Set(flags),
+            bodyText: bodyText
         )
     }
 }
@@ -148,11 +151,32 @@ public final class MailStore: @unchecked Sendable {
     }
 
     /// Insert or update the given messages. Existing rows (matched by id) are
-    /// refreshed, so re-fetching the same mail is idempotent.
+    /// refreshed, so re-fetching the same mail is idempotent. A re-synced header
+    /// carries no body, so a body already cached for that message is preserved
+    /// rather than nulled out.
     public func save(_ messages: [Message], accountID: String, mailboxName: String) async throws {
         try await dbQueue.write { db in
             for message in messages {
-                try MessageRow(message, accountID: accountID, mailboxName: mailboxName).save(db)
+                var row = MessageRow(message, accountID: accountID, mailboxName: mailboxName)
+                if row.bodyText == nil {
+                    row.bodyText = try MessageRow.fetchOne(db, key: row.id)?.bodyText
+                }
+                try row.save(db)
+            }
+        }
+    }
+
+    /// Persist fetched text bodies, keyed by message id. Used by the lazy-body
+    /// path when a conversation is opened, so the bodies are cached and the next
+    /// open is offline.
+    public func storeBodies(_ bodiesByMessageID: [String: String]) async throws {
+        guard !bodiesByMessageID.isEmpty else { return }
+        try await dbQueue.write { db in
+            for (id, text) in bodiesByMessageID {
+                try db.execute(
+                    sql: "UPDATE message SET bodyText = ? WHERE id = ?",
+                    arguments: [text, id]
+                )
             }
         }
     }
@@ -194,6 +218,21 @@ public final class MailStore: @unchecked Sendable {
                 .order(Column("lastActivity").desc)
                 .fetchAll(db)
                 .map(\.summary)
+        }
+    }
+
+    /// Messages in a thread that still need a body fetched: those with no cached
+    /// body and a known server UID. Returns the row id (to cache the fetched
+    /// text under), the UID to fetch, and the mailbox to select. An empty result
+    /// means the conversation is fully cached and can be shown offline.
+    public func messagesNeedingBodies(threadID: String) async throws -> [(id: String, uid: UInt32, mailbox: String)] {
+        try await dbQueue.read { db in
+            try MessageRow
+                .filter(Column("threadID") == threadID && Column("bodyText") == nil && Column("uid") != nil)
+                .fetchAll(db)
+                .compactMap { row in
+                    row.uid.map { (id: row.id, uid: UInt32(truncatingIfNeeded: $0), mailbox: row.mailboxName) }
+                }
         }
     }
 
@@ -251,6 +290,7 @@ public final class MailStore: @unchecked Sendable {
                 t.column("toParticipants", .text).notNull()
                 t.column("date", .datetime)
                 t.column("flags", .text).notNull()
+                t.column("bodyText", .text)
                 t.column("threadID", .text).indexed()
             }
             try db.create(table: "thread") { t in

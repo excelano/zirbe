@@ -10,7 +10,7 @@ let package = Package(
     name: "ZirbeCore",
     platforms: [
         .iOS(.v17),
-        .macOS(.v13),
+        .macOS(.v14), // Observation (the @Observable view model) needs macOS 14.
     ],
     products: [
         .library(name: "ZirbeCore", targets: ["ZirbeCore"]),

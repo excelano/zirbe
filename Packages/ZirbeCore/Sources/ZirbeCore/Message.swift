@@ -24,6 +24,11 @@ public struct Message: Sendable, Hashable, Identifiable {
     public var to: [Participant]
     public var date: Date?
     public var flags: Set<Flag>
+    /// The message's readable text body, when it has been fetched. Nil until the
+    /// conversation is opened; bodies load lazily and are then cached in the
+    /// store, so this is populated for messages in a conversation the user has
+    /// viewed and nil for inbox rows that have only been synced as headers.
+    public var bodyText: String?
 
     public init(
         messageID: String? = nil,
@@ -34,7 +39,8 @@ public struct Message: Sendable, Hashable, Identifiable {
         from: Participant? = nil,
         to: [Participant] = [],
         date: Date? = nil,
-        flags: Set<Flag> = []
+        flags: Set<Flag> = [],
+        bodyText: String? = nil
     ) {
         self.messageID = messageID
         self.uid = uid
@@ -45,6 +51,7 @@ public struct Message: Sendable, Hashable, Identifiable {
         self.to = to
         self.date = date
         self.flags = flags
+        self.bodyText = bodyText
     }
 
     /// Whether the message has been read.

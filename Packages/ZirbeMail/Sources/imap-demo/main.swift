@@ -41,8 +41,7 @@ logger.logLevel = .info
 let engine = MailEngine(config: MailServerConfig(host: host, port: port), logger: logger)
 
 do {
-    try await engine.connect()
-    try await engine.login(username: user, password: pass)
+    try await engine.connect(username: user, password: pass)
     let envelopes = try await engine.fetchRecentEnvelopes(in: mailbox, limit: limit)
 
     print("\n— \(envelopes.count) message(s) from \(mailbox) —\n")

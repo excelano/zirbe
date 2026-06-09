@@ -124,4 +124,43 @@ final class MailStoreTests: XCTestCase {
         XCTAssertEqual(summaries.first?.id, firstID)
         XCTAssertEqual(summaries.first?.messageCount, 2)
     }
+
+    func testBodyCachingAndPreservation() async throws {
+        let store = try MailStore()
+        let acct = account()
+        try await store.upsert(acct)
+
+        // A header-only message with a server UID and no body yet.
+        let header = Message(
+            messageID: "<a@x>",
+            uid: 42,
+            subject: "Body test",
+            from: Participant(address: "p@x.com"),
+            date: Date(timeIntervalSince1970: 0),
+            flags: [.seen]
+        )
+        try await store.save([header], accountID: acct.id, mailboxName: "INBOX")
+        try await store.rethread(accountID: acct.id)
+
+        let summaries = try await store.threadSummaries(accountID: acct.id)
+        let threadID = try XCTUnwrap(summaries.first?.id)
+
+        // It reports needing a body, with the UID and mailbox to fetch from.
+        let needs = try await store.messagesNeedingBodies(threadID: threadID)
+        XCTAssertEqual(needs.map(\.uid), [42])
+        XCTAssertEqual(needs.first?.mailbox, "INBOX")
+
+        // Cache the fetched body: it no longer needs one and the conversation shows it.
+        try await store.storeBodies([header.id: "Hello there"])
+        let afterCache = try await store.messagesNeedingBodies(threadID: threadID)
+        XCTAssertTrue(afterCache.isEmpty)
+        var convo = try await store.thread(id: threadID)
+        XCTAssertEqual(convo?.messages.first?.bodyText, "Hello there")
+
+        // A later header re-sync carries no body; the cached body must survive it.
+        try await store.save([header], accountID: acct.id, mailboxName: "INBOX")
+        try await store.rethread(accountID: acct.id)
+        convo = try await store.thread(id: threadID)
+        XCTAssertEqual(convo?.messages.first?.bodyText, "Hello there")
+    }
 }
