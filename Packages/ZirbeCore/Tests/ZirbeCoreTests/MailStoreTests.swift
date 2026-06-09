@@ -163,4 +163,35 @@ final class MailStoreTests: XCTestCase {
         convo = try await store.thread(id: threadID)
         XCTAssertEqual(convo?.messages.first?.bodyText, "Hello there")
     }
+
+    func testCcPersistsAndJoinsParticipants() async throws {
+        let store = try MailStore()
+        let acct = account()
+        try await store.upsert(acct)
+
+        // A message addressed To one person and Cc'ing two others.
+        let m = Message(
+            messageID: "<a@x>",
+            subject: "Kickoff",
+            from: Participant(address: "p@x.com"),
+            to: [Participant(address: "q@x.com")],
+            cc: [Participant(address: "r@x.com"), Participant(address: "s@x.com")],
+            date: Date(timeIntervalSince1970: 0),
+            flags: [.seen]
+        )
+        try await store.save([m], accountID: acct.id, mailboxName: "INBOX")
+        try await store.rethread(accountID: acct.id)
+
+        // Cc survives the store round-trip, kept distinct from To.
+        let summaries = try await store.threadSummaries(accountID: acct.id)
+        let threadID = try XCTUnwrap(summaries.first?.id)
+        let convo = try await store.thread(id: threadID)
+        let stored = try XCTUnwrap(convo?.messages.first)
+        XCTAssertEqual(stored.to.map(\.address), ["q@x.com"])
+        XCTAssertEqual(stored.cc.map(\.address), ["r@x.com", "s@x.com"])
+
+        // Cc recipients count as conversation participants alongside From/To.
+        let participants = try XCTUnwrap(convo?.participants)
+        XCTAssertEqual(Set(participants.map(\.address)), ["p@x.com", "q@x.com", "r@x.com", "s@x.com"])
+    }
 }

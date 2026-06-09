@@ -28,6 +28,7 @@ struct MessageRow: Codable, FetchableRecord, PersistableRecord {
     var fromAddress: String?
     var fromName: String?
     var toParticipants: [Participant]
+    var ccParticipants: [Participant]
     var date: Date?
     var flags: [Flag]
     var bodyText: String?
@@ -45,6 +46,7 @@ struct MessageRow: Codable, FetchableRecord, PersistableRecord {
         self.fromAddress = message.from?.address
         self.fromName = message.from?.displayName
         self.toParticipants = message.to
+        self.ccParticipants = message.cc
         self.date = message.date
         self.flags = Array(message.flags)
         self.bodyText = message.bodyText
@@ -60,6 +62,7 @@ struct MessageRow: Codable, FetchableRecord, PersistableRecord {
             subject: subject,
             from: fromAddress.map { Participant(address: $0, displayName: fromName) },
             to: toParticipants,
+            cc: ccParticipants,
             date: date,
             flags: Set(flags),
             bodyText: bodyText
@@ -301,6 +304,15 @@ public final class MailStore: @unchecked Sendable {
                 t.column("isUnread", .boolean).notNull()
                 t.column("messageCount", .integer).notNull()
                 t.column("participants", .text).notNull()
+            }
+        }
+        // Cc was added with reply-all (M3): a message now carries its Cc list so a
+        // reply can preserve the original To/Cc split. Additive, with an empty-array
+        // default so existing synced rows migrate without a re-fetch; a later sync
+        // backfills the real Cc as it re-saves each header.
+        migrator.registerMigration("v2-cc") { db in
+            try db.alter(table: "message") { t in
+                t.add(column: "ccParticipants", .text).notNull().defaults(to: "[]")
             }
         }
         return migrator

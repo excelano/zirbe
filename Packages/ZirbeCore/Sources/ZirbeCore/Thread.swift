@@ -7,8 +7,8 @@
 import Foundation
 
 /// A conversation. Its identity is the thread root, its title is the subject,
-/// its members are everyone on From/To across the messages, and its body is the
-/// messages in time order, one bubble each.
+/// its members are everyone on From/To/Cc across the messages, and its body is
+/// the messages in time order, one bubble each.
 public struct Thread: Sendable, Hashable, Identifiable {
     /// Stable thread identity, derived from the root message's `Message-ID`
     /// (even when that root message itself was never received).
@@ -18,7 +18,7 @@ public struct Thread: Sendable, Hashable, Identifiable {
     public var subject: String
     /// Every message in the thread, oldest first.
     public var messages: [Message]
-    /// Everyone who appears on From or To across the thread, deduplicated.
+    /// Everyone who appears on From, To, or Cc across the thread, deduplicated.
     public var participants: [Participant]
     /// The most recent message date in the thread, for inbox sorting.
     public var lastActivity: Date?

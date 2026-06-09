@@ -27,6 +27,7 @@ public struct MailEnvelope: Sendable, Hashable, Identifiable {
     public var subject: String?
     public var from: String?
     public var to: [String]
+    public var cc: [String]
     public var date: Date?
     /// The message's own `Message-ID`.
     public var messageID: String?
@@ -50,6 +51,7 @@ public struct MailEnvelope: Sendable, Hashable, Identifiable {
         subject: String? = nil,
         from: String? = nil,
         to: [String] = [],
+        cc: [String] = [],
         date: Date? = nil,
         messageID: String? = nil,
         inReplyTo: String? = nil,
@@ -61,6 +63,7 @@ public struct MailEnvelope: Sendable, Hashable, Identifiable {
         self.subject = subject
         self.from = from
         self.to = to
+        self.cc = cc
         self.date = date
         self.messageID = messageID
         self.inReplyTo = inReplyTo

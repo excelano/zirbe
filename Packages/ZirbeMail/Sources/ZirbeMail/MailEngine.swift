@@ -26,6 +26,9 @@ public actor MailEngine {
     private var credentials: (username: String, password: String)?
     /// Whether we hold a live, authenticated session. Reset when the socket dies.
     private var isLoggedIn = false
+    /// The resolved Sent mailbox name, cached after the first lookup so saving a
+    /// sent copy doesn't re-list the server's special-use mailboxes each time.
+    private var sentMailboxName: String?
 
     public init(config: MailServerConfig, logger: Logger = Logger(label: "zirbe.mail")) {
         self.logger = logger
@@ -102,14 +105,39 @@ public actor MailEngine {
         }
     }
 
+    /// Save a copy of a just-sent message to the server's Sent mailbox, over the
+    /// warm session, so it appears in other mail clients and survives a local
+    /// rebuild. Flagged `\Seen` since the user wrote it. The same Message-ID as
+    /// the SMTP send is carried through, so a retry that re-appends is the user's
+    /// to avoid; this does not retry on a dropped connection (unlike the read
+    /// path), because an APPEND that half-committed could otherwise be doubled.
+    public func saveToSent(_ outgoing: OutgoingMessage) async throws {
+        try await ensureSession()
+        let mailbox = try await resolvedSentMailbox()
+        try await server.append(email: Email(outgoing), to: mailbox, flags: [.seen])
+    }
+
     /// Close the session and forget the credentials. Call on sign-out.
     public func disconnect() async {
         isLoggedIn = false
         credentials = nil
+        sentMailboxName = nil
         try? await server.disconnect()
     }
 
     // MARK: - Session
+
+    /// The server's Sent mailbox name, resolved once and cached. Lists the
+    /// special-use mailboxes on first call (which also populates the general
+    /// list, so the name-based fallback for a server without SPECIAL-USE works
+    /// too), then reads the Sent folder.
+    private func resolvedSentMailbox() async throws -> String {
+        if let sentMailboxName { return sentMailboxName }
+        try await server.listSpecialUseMailboxes()
+        let name = try await server.sentFolder.name
+        sentMailboxName = name
+        return name
+    }
 
     /// Ensure a live, authenticated session, reusing the existing one when it is
     /// still connected. Cheap and safe to call before every operation.

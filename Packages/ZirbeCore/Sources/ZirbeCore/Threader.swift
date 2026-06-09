@@ -227,7 +227,7 @@ public enum Threader {
         var seen = Set<String>()
         var participants: [Participant] = []
         for message in messages {
-            for p in ([message.from].compactMap { $0 } + message.to) where seen.insert(p.address).inserted {
+            for p in ([message.from].compactMap { $0 } + message.to + message.cc) where seen.insert(p.address).inserted {
                 participants.append(p)
             }
         }

@@ -19,6 +19,7 @@ extension Message {
             subject: envelope.subject,
             from: AddressParser.parseList(envelope.from).first,
             to: envelope.to.flatMap(AddressParser.parseList),
+            cc: envelope.cc.flatMap(AddressParser.parseList),
             date: envelope.date,
             flags: Set(envelope.flags.map(Flag.init(imap:)))
         )

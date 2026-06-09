@@ -12,6 +12,7 @@ extension MailEnvelope {
             subject: info.subject,
             from: info.from,
             to: info.to,
+            cc: info.cc,
             date: info.date,
             messageID: info.messageId?.description,
             inReplyTo: info.inReplyTo?.description,

@@ -22,6 +22,7 @@ public struct Message: Sendable, Hashable, Identifiable {
     public var subject: String?
     public var from: Participant?
     public var to: [Participant]
+    public var cc: [Participant]
     public var date: Date?
     public var flags: Set<Flag>
     /// The message's readable text body, when it has been fetched. Nil until the
@@ -38,6 +39,7 @@ public struct Message: Sendable, Hashable, Identifiable {
         subject: String? = nil,
         from: Participant? = nil,
         to: [Participant] = [],
+        cc: [Participant] = [],
         date: Date? = nil,
         flags: Set<Flag> = [],
         bodyText: String? = nil
@@ -49,6 +51,7 @@ public struct Message: Sendable, Hashable, Identifiable {
         self.subject = subject
         self.from = from
         self.to = to
+        self.cc = cc
         self.date = date
         self.flags = flags
         self.bodyText = bodyText
