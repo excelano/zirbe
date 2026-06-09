@@ -101,6 +101,85 @@ public final class InboxModel {
         }
     }
 
+    /// Send a reply into `thread`. Recipients default to reply-all derived from
+    /// the latest message, less any addresses the user removed (the group-chat
+    /// "remove someone" gesture). Returns the refreshed conversation with the
+    /// sent bubble in place, or nil if a guardrail fails or the send errors, with
+    /// the reason in `errorMessage`. The user's text gets the quote trailer
+    /// appended; the body passed here is just what they typed.
+    @discardableResult
+    public func sendReply(to thread: Thread, removing removedAddresses: Set<String> = [], body: String) async -> Thread? {
+        guard let password else {
+            errorMessage = "Connect an account first."
+            return nil
+        }
+        let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            errorMessage = "Write a message before sending."
+            return nil
+        }
+
+        var (to, cc) = ReplyBuilder.replyAllRecipients(to: thread, as: account)
+        let removed = Set(removedAddresses.map { $0.lowercased() })
+        to = to.filter { !removed.contains($0.address) }
+        cc = cc.filter { !removed.contains($0.address) }
+        guard !to.isEmpty || !cc.isEmpty else {
+            errorMessage = "A reply needs at least one recipient."
+            return nil
+        }
+
+        let draft = OutgoingDraft.reply(to: thread, as: account, to: to, cc: cc, body: trimmed, sentAt: Date())
+        do {
+            try await sync.send(draft, password: password)
+            return try await store.thread(id: thread.id)
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
+    /// Start a new conversation. The subject is required (a status panel reads by
+    /// subject, so an empty one is rejected), as are a body and at least one
+    /// recipient. Returns whether it sent; on success the inbox summaries refresh
+    /// to include the new conversation. On failure the reason is in
+    /// `errorMessage`.
+    @discardableResult
+    public func sendNew(
+        to recipients: [Participant],
+        cc: [Participant] = [],
+        subject: String,
+        body: String
+    ) async -> Bool {
+        guard let password else {
+            errorMessage = "Connect an account first."
+            return false
+        }
+        let trimmedSubject = subject.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedSubject.isEmpty else {
+            errorMessage = "A new conversation needs a subject."
+            return false
+        }
+        let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedBody.isEmpty else {
+            errorMessage = "Write a message before sending."
+            return false
+        }
+        guard !recipients.isEmpty || !cc.isEmpty else {
+            errorMessage = "Add at least one recipient."
+            return false
+        }
+
+        let draft = OutgoingDraft.new(from: account, to: recipients, cc: cc, subject: trimmedSubject, body: trimmedBody, sentAt: Date())
+        do {
+            try await sync.send(draft, password: password)
+            summaries = try await store.threadSummaries(accountID: account.id)
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
     /// Forget the session password, close the warm connection, and clear
     /// in-memory state.
     public func signOut() {

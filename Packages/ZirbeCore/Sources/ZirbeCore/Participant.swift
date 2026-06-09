@@ -27,4 +27,11 @@ public struct Participant: Sendable, Hashable, Codable, Identifiable {
     /// What to show in the UI: the display name when we have one, else the
     /// bare address.
     public var label: String { displayName ?? address }
+
+    /// The RFC 5322 address rendering: `Name <addr>` when a display name is
+    /// present, else the bare address. Used in quote attributions and the
+    /// compose recipient fields.
+    public var addressLabel: String {
+        displayName.map { "\($0) <\(address)>" } ?? address
+    }
 }

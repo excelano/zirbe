@@ -15,11 +15,13 @@ public actor SyncService {
     private let account: Account
     private let store: MailStore
     private let engine: MailEngine
+    private let sender: MailSender
 
     public init(account: Account, store: MailStore) {
         self.account = account
         self.store = store
         self.engine = MailEngine(config: MailServerConfig(host: account.imapHost, port: account.imapPort))
+        self.sender = MailSender(config: MailServerConfig(host: account.smtpHost, port: account.smtpPort))
     }
 
     /// Fetch the most recent `limit` messages from `mailbox`, persist them, and
@@ -71,8 +73,44 @@ public actor SyncService {
         return try await store.thread(id: id)
     }
 
+    /// Send a composed draft, then make it visible immediately.
+    ///
+    /// The SMTP send is the gate: if it throws, nothing was delivered and nothing
+    /// is stored, so the caller can let the user retry the same draft (its reused
+    /// Message-ID keeps a retry from doubling). Once the send succeeds the message
+    /// is delivered, so the optimistic local copy is inserted and the thread
+    /// recomputed even if the rest fails, and the bubble appears at once.
+    ///
+    /// Appending a copy to the server's Sent folder is best effort: it only helps
+    /// other mail clients see the message, so a failure there is logged and
+    /// swallowed rather than reported as a send failure for mail that did send.
+    /// The local copy carries the same Message-ID, so when Sent is later synced
+    /// the two reconcile to one row.
+    public func send(_ draft: OutgoingDraft, password: String) async throws {
+        let outgoing = draft.outgoingMessage
+        try await sender.send(outgoing, username: account.username, password: password)
+
+        try await store.upsert(Mailbox(accountID: account.id, name: Self.localSentMailbox, role: .sent))
+        try await store.save([draft.localMessage], accountID: account.id, mailboxName: Self.localSentMailbox)
+        try await store.rethread(accountID: account.id)
+
+        do {
+            try await engine.connect(username: account.username, password: password)
+            try await engine.saveToSent(outgoing)
+        } catch {
+            // The mail was sent and is shown locally; a missing server-side Sent
+            // copy is a reconciliation detail, not a send failure.
+        }
+    }
+
     /// Close the warm session and forget the password. Call on sign-out.
     public func disconnect() async {
         await engine.disconnect()
     }
+
+    /// The mailbox name the optimistic Sent copy is filed under locally. The
+    /// server's real Sent folder is resolved by the engine when appending; a
+    /// later Sent sync (a future milestone) will reconcile the names by
+    /// Message-ID. Until then this is a stable local label, not a server folder.
+    private static let localSentMailbox = "Sent"
 }

@@ -40,6 +40,12 @@ public struct Account: Sendable, Hashable, Identifiable, Codable {
         self.smtpPort = smtpPort
         self.username = username ?? address
     }
+
+    /// This account as a conversation participant, the sender of anything Zirbe
+    /// sends from it. The display name carries through to the `From` header.
+    public var selfParticipant: Participant {
+        Participant(address: emailAddress, displayName: displayName)
+    }
 }
 
 /// The well-known purpose of a mailbox, when we can determine it from IMAP
