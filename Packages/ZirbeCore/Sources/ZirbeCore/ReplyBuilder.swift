@@ -32,6 +32,13 @@ public enum ReplyBuilder {
         for p in latest.cc where placed.insert(p.address).inserted {
             cc.append(p)
         }
+
+        // A note to self: the only person on the latest message is the account,
+        // so dropping yourself left nobody. Email lets you write to yourself, so
+        // address the reply back to you rather than to no one.
+        if to.isEmpty && cc.isEmpty {
+            return ([account.selfParticipant], [])
+        }
         return (to, cc)
     }
 

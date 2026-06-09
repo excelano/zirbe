@@ -76,6 +76,7 @@ final class QuotedTextTests: XCTestCase {
         let trailer = QuotedText.quoteTrailer(for: m, locale: posix, timeZone: gmt)
         XCTAssertEqual(trailer, """
         On Jan 1, 1970, at 12:00 AM, David Anderson <david@x.com> wrote:
+
         > first
         >
         > third
@@ -85,7 +86,7 @@ final class QuotedTextTests: XCTestCase {
     func testQuoteTrailerWithoutDateDropsTheOnClause() {
         let m = message(from: Participant(address: "p@x.com"), date: nil, body: "hi")
         let trailer = QuotedText.quoteTrailer(for: m, locale: posix, timeZone: gmt)
-        XCTAssertEqual(trailer, "p@x.com wrote:\n> hi")
+        XCTAssertEqual(trailer, "p@x.com wrote:\n\n> hi")
     }
 
     func testReplyBodyPlacesUserTextAboveTrailer() {
@@ -99,6 +100,7 @@ final class QuotedTextTests: XCTestCase {
         My answer.
 
         On Jan 1, 1970, at 12:00 AM, Pat <p@x.com> wrote:
+
         > question?
         """)
     }

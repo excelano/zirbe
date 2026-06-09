@@ -54,6 +54,16 @@ final class ReplyTests: XCTestCase {
         XCTAssertEqual(cc.map(\.address), ["r@x.com"])
     }
 
+    func testReplyAllToNoteToSelfAddressesTheAccount() {
+        // A message from the account to only itself: dropping self would leave no
+        // one, so reply-all falls back to addressing the account, the way email
+        // lets you reply to a note to self.
+        let m = message(id: "<a@x>", from: "me@x.com", to: ["me@x.com"], minutes: 0)
+        let (to, cc) = ReplyBuilder.replyAllRecipients(to: thread([m]), as: account())
+        XCTAssertEqual(to.map(\.address), ["me@x.com"])
+        XCTAssertTrue(cc.isEmpty)
+    }
+
     func testReplyAllDerivesFromMostRecentMessage() {
         // An earlier message had three recipients; the latest dropped one. The
         // reply should follow the latest, not re-add the dropped person.

@@ -63,9 +63,11 @@ public enum QuotedText {
         return "\(body)\n\n\(trailer)"
     }
 
-    /// The quote trailer for one message: its attribution line followed by its
-    /// body with every line prefixed `> `. The body is whatever text we hold for
-    /// the message; an empty body yields just the attribution.
+    /// The quote trailer for one message: its attribution line, a blank line,
+    /// then the body with every line prefixed `> `. The blank line sets the
+    /// quoted original apart as its own block, the way Apple Mail does. The body
+    /// is whatever text we hold for the message; an empty body yields just the
+    /// attribution.
     public static func quoteTrailer(
         for message: Message,
         locale: Locale = .current,
@@ -78,7 +80,7 @@ public enum QuotedText {
             .components(separatedBy: "\n")
             .map { $0.isEmpty ? ">" : "> \($0)" }
             .joined(separator: "\n")
-        return "\(attribution)\n\(quoted)"
+        return "\(attribution)\n\n\(quoted)"
     }
 
     // MARK: - Attribution

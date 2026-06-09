@@ -10,6 +10,7 @@ import ZirbeCore
 
 struct InboxView: View {
     let model: InboxModel
+    @State private var isComposing = false
 
     var body: some View {
         List(model.summaries) { summary in
@@ -22,9 +23,20 @@ struct InboxView: View {
         .listStyle(.plain)
         .navigationTitle("Conversations")
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
+            ToolbarItem(placement: .topBarLeading) {
                 Button("Sign Out") { model.signOut() }
             }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    isComposing = true
+                } label: {
+                    Image(systemName: "square.and.pencil")
+                }
+                .accessibilityLabel("New Conversation")
+            }
+        }
+        .sheet(isPresented: $isComposing) {
+            ComposeView(model: model)
         }
         .overlay {
             if model.summaries.isEmpty {
