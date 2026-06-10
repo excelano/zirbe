@@ -280,7 +280,9 @@ private struct MessageBubble: View {
                     Text(date, format: .dateTime.month().day().hour().minute())
                         .font(.caption2)
                         .foregroundStyle(.secondary)
-                        .padding(.horizontal, 4)
+                        // Inset from the screen edge (past the bubble), on the
+                        // same side the bubble hugs.
+                        .padding(isOwn ? .trailing : .leading, 22)
                 }
             }
             if !isOwn { Spacer(minLength: 40) }
@@ -317,6 +319,10 @@ private struct MessageBubble: View {
             isOwn ? Color.accentColor : Color(.secondarySystemBackground),
             in: BubbleShape(isOwn: isOwn, hasTail: hasTail)
         )
+        // The tail droops below the bottom edge. When a timestamp follows it
+        // reserves the row's bottom space (and clears the tail horizontally), so
+        // explicit clearance is only needed for a tailed bubble with no date.
+        .padding(.bottom, (hasTail && message.date == nil) ? BubbleShape.tailDrop : 0)
     }
 
     /// The body split into the part to show and the quoted history to fold. An
@@ -330,42 +336,71 @@ private struct MessageBubble: View {
     }
 }
 
-/// A Messages-style bubble: a rounded rectangle that grows a small curved tail at
-/// its bottom outer corner (trailing for your own messages, leading for others)
-/// on the last bubble of a run. The tail is drawn just past the bubble's edge,
-/// into the gutter, so consecutive bubbles in a run stay edge-aligned.
+/// A Messages-style bubble drawn as one continuous outline so the fill is always
+/// clean. The last bubble of a run grows a small tail off its bottom outer corner
+/// (trailing for your own messages, leading for others): a curved crescent that
+/// hooks down off the bottom edge with a rounded tip and an inward curl, matching
+/// the current-iOS tail rather than the older side-tail. The tip dips `tailDrop`
+/// below the bottom edge and the bubble reserves that much clearance so it stays
+/// clear of the timestamp. The curve was dialed in visually; the constants are
+/// the locked values (see git history for the tuning round).
 private struct BubbleShape: Shape {
     let isOwn: Bool
     let hasTail: Bool
-    var radius: CGFloat = 17
-    var tail: CGFloat = 7
+
+    /// Bubble corner radius (every corner except the tail-side bottom one).
+    static let radius: CGFloat = 16
+    /// Clearance reserved below the bubble so the tail clears the timestamp.
+    static let tailDrop: CGFloat = 10
+
+    /// How far the tail is pasted toward the outer corner. The tail keeps its
+    /// shape exactly; this only translates it, and the tail-side bottom corner
+    /// tightens by the same amount to make room (`radius - slide`).
+    private static let slide: CGFloat = 8.5
 
     func path(in rect: CGRect) -> Path {
-        var path = Path(roundedRect: rect, cornerRadius: radius, style: .continuous)
-        guard hasTail else { return path }
+        let r = Self.radius
+        guard hasTail else { return Path(roundedRect: rect, cornerRadius: r) }
+
+        let minX = rect.minX, maxX = rect.maxX, minY = rect.minY, maxY = rect.maxY
+        let slide = Self.slide
+        let brc = r - slide   // tightened tail-side bottom corner
+        var p = Path()
 
         if isOwn {
-            path.move(to: CGPoint(x: rect.maxX - radius, y: rect.maxY))
-            path.addQuadCurve(
-                to: CGPoint(x: rect.maxX + tail, y: rect.maxY),
-                control: CGPoint(x: rect.maxX, y: rect.maxY)
-            )
-            path.addQuadCurve(
-                to: CGPoint(x: rect.maxX - radius * 0.7, y: rect.maxY - radius * 0.6),
-                control: CGPoint(x: rect.maxX, y: rect.maxY - radius * 0.45)
-            )
+            // Tail at the bottom-right, attached at rx; the bottom-right corner is
+            // tightened to brc so the (rigid) tail sits further toward the edge.
+            let rx = maxX - r + slide
+            p.move(to: CGPoint(x: minX + r, y: maxY))
+            p.addQuadCurve(to: CGPoint(x: minX, y: maxY - r), control: CGPoint(x: minX, y: maxY))
+            p.addLine(to: CGPoint(x: minX, y: minY + r))
+            p.addQuadCurve(to: CGPoint(x: minX + r, y: minY), control: CGPoint(x: minX, y: minY))
+            p.addLine(to: CGPoint(x: maxX - r, y: minY))
+            p.addQuadCurve(to: CGPoint(x: maxX, y: minY + r), control: CGPoint(x: maxX, y: minY))
+            p.addLine(to: CGPoint(x: maxX, y: maxY - brc))
+            p.addQuadCurve(to: CGPoint(x: rx, y: maxY), control: CGPoint(x: maxX, y: maxY))
+            // The tail: outer edge to the rounded tip, the tip cap, then the curl.
+            p.addQuadCurve(to: CGPoint(x: rx - 0.5, y: maxY + 8), control: CGPoint(x: rx - 4, y: maxY + 5))
+            p.addQuadCurve(to: CGPoint(x: rx - 5.5, y: maxY + 8), control: CGPoint(x: rx - 1.75, y: maxY + 10.5))
+            p.addQuadCurve(to: CGPoint(x: rx - 14, y: maxY), control: CGPoint(x: rx - 8, y: maxY + 7))
+            p.addLine(to: CGPoint(x: minX + r, y: maxY))
         } else {
-            path.move(to: CGPoint(x: rect.minX + radius, y: rect.maxY))
-            path.addQuadCurve(
-                to: CGPoint(x: rect.minX - tail, y: rect.maxY),
-                control: CGPoint(x: rect.minX, y: rect.maxY)
-            )
-            path.addQuadCurve(
-                to: CGPoint(x: rect.minX + radius * 0.7, y: rect.maxY - radius * 0.6),
-                control: CGPoint(x: rect.minX, y: rect.maxY - radius * 0.45)
-            )
+            // Mirror: tail at the bottom-left, attached at lx.
+            let lx = minX + r - slide
+            p.move(to: CGPoint(x: maxX - r, y: maxY))
+            p.addQuadCurve(to: CGPoint(x: maxX, y: maxY - r), control: CGPoint(x: maxX, y: maxY))
+            p.addLine(to: CGPoint(x: maxX, y: minY + r))
+            p.addQuadCurve(to: CGPoint(x: maxX - r, y: minY), control: CGPoint(x: maxX, y: minY))
+            p.addLine(to: CGPoint(x: minX + r, y: minY))
+            p.addQuadCurve(to: CGPoint(x: minX, y: minY + r), control: CGPoint(x: minX, y: minY))
+            p.addLine(to: CGPoint(x: minX, y: maxY - brc))
+            p.addQuadCurve(to: CGPoint(x: lx, y: maxY), control: CGPoint(x: minX, y: maxY))
+            p.addQuadCurve(to: CGPoint(x: lx + 0.5, y: maxY + 8), control: CGPoint(x: lx + 4, y: maxY + 5))
+            p.addQuadCurve(to: CGPoint(x: lx + 5.5, y: maxY + 8), control: CGPoint(x: lx + 1.75, y: maxY + 10.5))
+            p.addQuadCurve(to: CGPoint(x: lx + 14, y: maxY), control: CGPoint(x: lx + 8, y: maxY + 7))
+            p.addLine(to: CGPoint(x: maxX - r, y: maxY))
         }
-        path.closeSubpath()
-        return path
+        p.closeSubpath()
+        return p
     }
 }
