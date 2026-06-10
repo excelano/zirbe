@@ -18,6 +18,23 @@ public struct MailServerConfig: Sendable, Hashable {
     }
 }
 
+/// A snapshot of a mailbox used to reconcile the local cache against the server:
+/// its UID-validity (a generation marker the server bumps when it renumbers) and
+/// the full set of UIDs it currently holds. A cached message whose UID is absent
+/// here was deleted on the server and should be pruned locally.
+public struct MailboxState: Sendable, Hashable {
+    /// The server's UIDVALIDITY for the mailbox. When this changes, every UID the
+    /// server ever issued is invalidated and the whole cache must be rebuilt.
+    public var uidValidity: UInt32
+    /// Every UID the mailbox holds right now.
+    public var uids: Set<UInt32>
+
+    public init(uidValidity: UInt32, uids: Set<UInt32>) {
+        self.uidValidity = uidValidity
+        self.uids = uids
+    }
+}
+
 /// A message's envelope, including the RFC 5322 threading headers that decide
 /// which conversation a message belongs to. `from`/`to` are raw header strings
 /// for now; parsing into participants belongs to the domain layer.

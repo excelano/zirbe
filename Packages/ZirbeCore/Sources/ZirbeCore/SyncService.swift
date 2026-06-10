@@ -24,8 +24,16 @@ public actor SyncService {
         self.sender = MailSender(config: MailServerConfig(host: account.smtpHost, port: account.smtpPort))
     }
 
-    /// Fetch the most recent `limit` messages from `mailbox`, persist them, and
-    /// recompute conversations. Returns the resulting inbox summaries.
+    /// Fetch the most recent `limit` messages from `mailbox`, reconcile the cache
+    /// against the server, and recompute conversations. Returns the resulting
+    /// inbox summaries.
+    ///
+    /// Reconciliation is what makes a refresh reflect deletions made in another
+    /// client, not just additions. First the server's UIDVALIDITY is compared to
+    /// the one last stored: a change means the mailbox was renumbered and every
+    /// cached UID is stale, so the local copy is cleared and rebuilt. Then, after
+    /// saving the freshly fetched headers, any cached message whose UID the server
+    /// no longer reports is pruned, so a thread deleted elsewhere disappears here.
     ///
     /// The password is passed in per call and never stored on the service; it
     /// comes from the Keychain at the call site and is used only for the IMAP
@@ -38,11 +46,33 @@ public actor SyncService {
         limit: Int = 50
     ) async throws -> [ThreadSummary] {
         try await engine.connect(username: account.username, password: password)
+
+        // The server's current identity and contents for this mailbox: its
+        // UIDVALIDITY and the full set of UIDs it holds right now.
+        let state = try await engine.mailboxState(in: mailbox)
+        let cachedValidity = try await store.uidValidity(accountID: account.id, mailboxName: mailbox)
+
         let envelopes = try await engine.fetchRecentEnvelopes(in: mailbox, limit: limit)
 
         try await store.upsert(account)
         try await store.upsert(Mailbox(accountID: account.id, name: mailbox, role: .inbox))
+
+        // A changed UIDVALIDITY invalidates every cached UID for the mailbox; the
+        // cache can't be reconciled, only rebuilt, so drop it before re-saving.
+        if let cachedValidity, cachedValidity != Int64(state.uidValidity) {
+            try await store.clearMessages(accountID: account.id, mailboxName: mailbox)
+        }
+        try await store.setUIDValidity(Int64(state.uidValidity), accountID: account.id, mailboxName: mailbox)
+
         try await store.save(envelopes.map(Message.init), accountID: account.id, mailboxName: mailbox)
+        // Drop anything the server no longer has, so deletions made elsewhere
+        // take effect locally. The keep-set is the server's full UID list, not
+        // just the fetched window, so older mail still on the server survives.
+        try await store.pruneMessages(
+            accountID: account.id,
+            mailboxName: mailbox,
+            keepingUIDs: Set(state.uids.map(Int64.init))
+        )
         try await store.rethread(accountID: account.id)
 
         return try await store.threadSummaries(accountID: account.id)

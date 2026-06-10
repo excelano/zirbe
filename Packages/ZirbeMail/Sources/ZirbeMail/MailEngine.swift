@@ -56,6 +56,24 @@ public actor MailEngine {
         }
     }
 
+    /// A mailbox's identity and current contents, for reconciling deletions: the
+    /// server's UID-validity and the full set of UIDs it holds right now. The UID
+    /// list is cheap (a UID `SEARCH ALL` returns identifiers only, no envelopes),
+    /// so comparing it against the cached UIDs to prune mail deleted elsewhere is
+    /// affordable even on a large mailbox. A change in `uidValidity` means the
+    /// server renumbered the mailbox and every cached UID is stale.
+    public func mailboxState(in mailbox: String) async throws -> MailboxState {
+        try await perform {
+            let selection = try await self.server.selectMailbox(mailbox)
+            guard selection.messageCount > 0 else {
+                return MailboxState(uidValidity: selection.uidValidity.value, uids: [])
+            }
+            let result: ExtendedSearchResult<UID> = try await self.server.extendedSearch(criteria: [.all])
+            let uids = (result.all ?? result.partial?.results)?.toArray().map(\.value) ?? []
+            return MailboxState(uidValidity: selection.uidValidity.value, uids: Set(uids))
+        }
+    }
+
     /// Fetches the readable text bodies of several messages in one mailbox,
     /// reusing the warm session. Selects the mailbox once, reads each message's
     /// body structure, then downloads all the chosen text parts in a single

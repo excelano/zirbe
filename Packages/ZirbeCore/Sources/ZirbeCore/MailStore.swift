@@ -169,6 +169,62 @@ public final class MailStore: @unchecked Sendable {
         }
     }
 
+    /// Prune the cached messages for one mailbox down to what the server still
+    /// holds: delete every row in (accountID, mailboxName) whose UID is not in
+    /// `keepingUIDs`. Rows with no UID are left alone (a locally-composed Sent
+    /// copy has none and is not the server's to delete), and the prune is scoped
+    /// to the one mailbox so syncing INBOX never touches Sent. Returns the number
+    /// of rows deleted. Call `rethread` after, so threads emptied by the prune
+    /// drop out of the inbox.
+    @discardableResult
+    public func pruneMessages(accountID: String, mailboxName: String, keepingUIDs: Set<Int64>) async throws -> Int {
+        try await dbQueue.write { db in
+            let stale = try MessageRow
+                .filter(Column("accountID") == accountID && Column("mailboxName") == mailboxName && Column("uid") != nil)
+                .fetchAll(db)
+                .filter { row in row.uid.map { !keepingUIDs.contains($0) } ?? false }
+            for row in stale { try row.delete(db) }
+            return stale.count
+        }
+    }
+
+    /// Drop every cached message in one mailbox. Used when the server's
+    /// UIDVALIDITY changes, which invalidates every UID we hold for it, so the
+    /// cache must be rebuilt from scratch rather than reconciled.
+    public func clearMessages(accountID: String, mailboxName: String) async throws {
+        try await dbQueue.write { db in
+            _ = try MessageRow
+                .filter(Column("accountID") == accountID && Column("mailboxName") == mailboxName)
+                .deleteAll(db)
+        }
+    }
+
+    /// The UID-validity last recorded for a mailbox, or nil if none is stored yet
+    /// (a mailbox never synced). Compared against the server's current value to
+    /// decide whether the cache can be reconciled or must be rebuilt.
+    public func uidValidity(accountID: String, mailboxName: String) async throws -> Int64? {
+        try await dbQueue.read { db in
+            try Int64.fetchOne(
+                db,
+                sql: "SELECT uidValidity FROM mailbox WHERE accountID = ? AND name = ?",
+                arguments: [accountID, mailboxName]
+            )
+        }
+    }
+
+    /// Record the server's current UID-validity for a mailbox. The mailbox row
+    /// must already exist (sync upserts it first); this only stamps the value,
+    /// rather than going through `upsert(Mailbox)`, because the domain `Mailbox`
+    /// type intentionally carries no IMAP bookkeeping.
+    public func setUIDValidity(_ validity: Int64, accountID: String, mailboxName: String) async throws {
+        try await dbQueue.write { db in
+            try db.execute(
+                sql: "UPDATE mailbox SET uidValidity = ? WHERE accountID = ? AND name = ?",
+                arguments: [validity, accountID, mailboxName]
+            )
+        }
+    }
+
     /// Persist fetched text bodies, keyed by message id. Used by the lazy-body
     /// path when a conversation is opened, so the bodies are cached and the next
     /// open is offline.
@@ -313,6 +369,15 @@ public final class MailStore: @unchecked Sendable {
         migrator.registerMigration("v2-cc") { db in
             try db.alter(table: "message") { t in
                 t.add(column: "ccParticipants", .text).notNull().defaults(to: "[]")
+            }
+        }
+        // Sync reconciliation (M3+): a mailbox now remembers the server's
+        // UIDVALIDITY so a later sync can tell a renumbered mailbox (rebuild the
+        // cache) from a reconcilable one (prune deleted UIDs). Nullable: an
+        // existing row predates the value and gets it on the next sync.
+        migrator.registerMigration("v3-uidvalidity") { db in
+            try db.alter(table: "mailbox") { t in
+                t.add(column: "uidValidity", .integer)
             }
         }
         return migrator

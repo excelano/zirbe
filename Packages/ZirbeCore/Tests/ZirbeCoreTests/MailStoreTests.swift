@@ -164,6 +164,113 @@ final class MailStoreTests: XCTestCase {
         XCTAssertEqual(convo?.messages.first?.bodyText, "Hello there")
     }
 
+    // MARK: - Sync reconciliation
+
+    private func uidMsg(id: String, uid: UInt32, subject: String, minutes: Int) -> Message {
+        Message(
+            messageID: id,
+            uid: uid,
+            subject: subject,
+            from: Participant(address: "p@x.com"),
+            date: Date(timeIntervalSince1970: TimeInterval(minutes * 60)),
+            flags: [.seen]
+        )
+    }
+
+    func testPruneRemovesServerDeletedMessages() async throws {
+        let store = try MailStore()
+        let acct = account()
+        try await store.upsert(acct)
+        try await store.upsert(Mailbox(accountID: acct.id, name: "INBOX", role: .inbox))
+
+        let a = uidMsg(id: "<a@x>", uid: 1, subject: "Alpha", minutes: 0)
+        let b = uidMsg(id: "<b@x>", uid: 2, subject: "Bravo", minutes: 1)
+        let c = uidMsg(id: "<c@x>", uid: 3, subject: "Charlie", minutes: 2)
+        try await store.save([a, b, c], accountID: acct.id, mailboxName: "INBOX")
+
+        // The server now reports only UIDs 1 and 3; UID 2 was deleted elsewhere.
+        let pruned = try await store.pruneMessages(accountID: acct.id, mailboxName: "INBOX", keepingUIDs: [1, 3])
+        XCTAssertEqual(pruned, 1)
+        try await store.rethread(accountID: acct.id)
+
+        let subjects = try await store.threadSummaries(accountID: acct.id).map(\.subject)
+        XCTAssertEqual(Set(subjects), ["Alpha", "Charlie"])
+    }
+
+    func testPruneIsScopedToMailbox() async throws {
+        let store = try MailStore()
+        let acct = account()
+        try await store.upsert(acct)
+
+        // The same UID can exist in two mailboxes; pruning INBOX must not reach Sent.
+        let inbox = uidMsg(id: "<i@x>", uid: 1, subject: "Inbox item", minutes: 0)
+        let sent = uidMsg(id: "<s@x>", uid: 1, subject: "Sent item", minutes: 1)
+        try await store.save([inbox], accountID: acct.id, mailboxName: "INBOX")
+        try await store.save([sent], accountID: acct.id, mailboxName: "Sent")
+
+        let pruned = try await store.pruneMessages(accountID: acct.id, mailboxName: "INBOX", keepingUIDs: [])
+        XCTAssertEqual(pruned, 1)
+        try await store.rethread(accountID: acct.id)
+
+        let subjects = try await store.threadSummaries(accountID: acct.id).map(\.subject)
+        XCTAssertEqual(subjects, ["Sent item"])
+    }
+
+    func testPrunePreservesMessagesWithoutUID() async throws {
+        let store = try MailStore()
+        let acct = account()
+        try await store.upsert(acct)
+
+        // A locally-composed copy has no server UID and is not the server's to delete.
+        let local = msg(id: "<local@x>", subject: "Draft reply", from: "me@x.com", minutes: 0)
+        try await store.save([local], accountID: acct.id, mailboxName: "INBOX")
+
+        let pruned = try await store.pruneMessages(accountID: acct.id, mailboxName: "INBOX", keepingUIDs: [])
+        XCTAssertEqual(pruned, 0)
+        try await store.rethread(accountID: acct.id)
+        let remaining = try await store.threadSummaries(accountID: acct.id).count
+        XCTAssertEqual(remaining, 1)
+    }
+
+    func testClearMessagesIsScopedToMailbox() async throws {
+        let store = try MailStore()
+        let acct = account()
+        try await store.upsert(acct)
+
+        let inbox = uidMsg(id: "<i@x>", uid: 1, subject: "Inbox item", minutes: 0)
+        let sent = uidMsg(id: "<s@x>", uid: 9, subject: "Sent item", minutes: 1)
+        try await store.save([inbox], accountID: acct.id, mailboxName: "INBOX")
+        try await store.save([sent], accountID: acct.id, mailboxName: "Sent")
+
+        try await store.clearMessages(accountID: acct.id, mailboxName: "INBOX")
+        try await store.rethread(accountID: acct.id)
+
+        let subjects = try await store.threadSummaries(accountID: acct.id).map(\.subject)
+        XCTAssertEqual(subjects, ["Sent item"])
+    }
+
+    func testUIDValidityRoundTrips() async throws {
+        let store = try MailStore()
+        let acct = account()
+        try await store.upsert(acct)
+
+        // No mailbox row yet, then a row whose validity column is still unset.
+        let none = try await store.uidValidity(accountID: acct.id, mailboxName: "INBOX")
+        XCTAssertNil(none)
+        try await store.upsert(Mailbox(accountID: acct.id, name: "INBOX", role: .inbox))
+        let unset = try await store.uidValidity(accountID: acct.id, mailboxName: "INBOX")
+        XCTAssertNil(unset)
+
+        try await store.setUIDValidity(123456, accountID: acct.id, mailboxName: "INBOX")
+        let stored = try await store.uidValidity(accountID: acct.id, mailboxName: "INBOX")
+        XCTAssertEqual(stored, 123456)
+
+        // Re-upserting the mailbox row must not clobber the recorded validity.
+        try await store.upsert(Mailbox(accountID: acct.id, name: "INBOX", role: .inbox))
+        let afterUpsert = try await store.uidValidity(accountID: acct.id, mailboxName: "INBOX")
+        XCTAssertEqual(afterUpsert, 123456)
+    }
+
     func testCcPersistsAndJoinsParticipants() async throws {
         let store = try MailStore()
         let acct = account()
