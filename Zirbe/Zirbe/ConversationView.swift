@@ -53,8 +53,10 @@ struct ConversationView: View {
             }
         }
         .task {
-            thread = await model.conversation(id: summary.id)
+            let loaded = await model.conversation(id: summary.id)
+            thread = loaded
             isLoading = false
+            if let loaded { await model.markReadOnOpen(loaded) }
         }
     }
 
@@ -64,13 +66,21 @@ struct ConversationView: View {
                 .map { ($0.messageID, $0) },
             uniquingKeysWith: { first, _ in first }
         )
+        let messages = thread.messages
         return ScrollView {
-            LazyVStack(spacing: 10) {
-                ForEach(thread.messages) { message in
+            LazyVStack(spacing: 2) {
+                ForEach(Array(messages.enumerated()), id: \.element.id) { index, message in
                     if let delta = deltas[message.id] {
                         ParticipantChangeLine(delta: delta)
+                            .padding(.vertical, 8)
                     }
-                    MessageBubble(message: message, isOwn: isOwn(message))
+                    MessageBubble(
+                        message: message,
+                        isOwn: isOwn(message),
+                        hasTail: isLastInRun(at: index, in: messages),
+                        showSender: !isOwn(message) && isFirstOfRun(at: index, in: messages)
+                    )
+                    .padding(.top, index > 0 && isFirstOfRun(at: index, in: messages) ? 8 : 0)
                 }
             }
             .padding()
@@ -79,6 +89,22 @@ struct ConversationView: View {
 
     private func isOwn(_ message: Message) -> Bool {
         message.from?.address == model.account.emailAddress
+    }
+
+    /// Whether this message ends a run of consecutive messages from one sender,
+    /// so it carries the tail and the timestamp. True for the last message
+    /// overall and whenever the next message is from someone else.
+    private func isLastInRun(at index: Int, in messages: [Message]) -> Bool {
+        guard index < messages.count - 1 else { return true }
+        return messages[index].from?.address != messages[index + 1].from?.address
+    }
+
+    /// Whether this message begins a run from a new sender, so the sender name
+    /// shows once atop the run and a little space separates it from the one
+    /// before. True for the very first message.
+    private func isFirstOfRun(at index: Int, in messages: [Message]) -> Bool {
+        guard index > 0 else { return true }
+        return messages[index].from?.address != messages[index - 1].from?.address
     }
 
     /// The reply-all recipients with the user's removals applied, for the header.
@@ -231,6 +257,11 @@ private struct ReplyBar: View {
 private struct MessageBubble: View {
     let message: Message
     let isOwn: Bool
+    /// Whether this bubble ends a run, so it gets the tail and the timestamp.
+    let hasTail: Bool
+    /// Whether to show the sender's name above, set once atop a run of incoming
+    /// messages.
+    let showSender: Bool
 
     @State private var quoteExpanded = false
 
@@ -238,16 +269,18 @@ private struct MessageBubble: View {
         HStack {
             if isOwn { Spacer(minLength: 40) }
             VStack(alignment: isOwn ? .trailing : .leading, spacing: 3) {
-                if !isOwn, let name = message.from?.label {
+                if showSender, let name = message.from?.label {
                     Text(name)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .padding(.leading, 12)
                 }
                 bubble
-                if let date = message.date {
+                if hasTail, let date = message.date {
                     Text(date, format: .dateTime.month().day().hour().minute())
                         .font(.caption2)
                         .foregroundStyle(.secondary)
+                        .padding(.horizontal, 4)
                 }
             }
             if !isOwn { Spacer(minLength: 40) }
@@ -280,8 +313,10 @@ private struct MessageBubble: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(isOwn ? Color.accentColor : Color(.secondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .background(
+            isOwn ? Color.accentColor : Color(.secondarySystemBackground),
+            in: BubbleShape(isOwn: isOwn, hasTail: hasTail)
+        )
     }
 
     /// The body split into the part to show and the quoted history to fold. An
@@ -292,5 +327,45 @@ private struct MessageBubble: View {
             return QuotedText.Folded(visible: "(no text content)", quoted: nil)
         }
         return QuotedText.fold(text)
+    }
+}
+
+/// A Messages-style bubble: a rounded rectangle that grows a small curved tail at
+/// its bottom outer corner (trailing for your own messages, leading for others)
+/// on the last bubble of a run. The tail is drawn just past the bubble's edge,
+/// into the gutter, so consecutive bubbles in a run stay edge-aligned.
+private struct BubbleShape: Shape {
+    let isOwn: Bool
+    let hasTail: Bool
+    var radius: CGFloat = 17
+    var tail: CGFloat = 7
+
+    func path(in rect: CGRect) -> Path {
+        var path = Path(roundedRect: rect, cornerRadius: radius, style: .continuous)
+        guard hasTail else { return path }
+
+        if isOwn {
+            path.move(to: CGPoint(x: rect.maxX - radius, y: rect.maxY))
+            path.addQuadCurve(
+                to: CGPoint(x: rect.maxX + tail, y: rect.maxY),
+                control: CGPoint(x: rect.maxX, y: rect.maxY)
+            )
+            path.addQuadCurve(
+                to: CGPoint(x: rect.maxX - radius * 0.7, y: rect.maxY - radius * 0.6),
+                control: CGPoint(x: rect.maxX, y: rect.maxY - radius * 0.45)
+            )
+        } else {
+            path.move(to: CGPoint(x: rect.minX + radius, y: rect.maxY))
+            path.addQuadCurve(
+                to: CGPoint(x: rect.minX - tail, y: rect.maxY),
+                control: CGPoint(x: rect.minX, y: rect.maxY)
+            )
+            path.addQuadCurve(
+                to: CGPoint(x: rect.minX + radius * 0.7, y: rect.maxY - radius * 0.6),
+                control: CGPoint(x: rect.minX, y: rect.maxY - radius * 0.45)
+            )
+        }
+        path.closeSubpath()
+        return path
     }
 }

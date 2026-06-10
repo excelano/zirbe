@@ -19,6 +19,24 @@ struct InboxView: View {
             } label: {
                 ThreadRow(summary: summary)
             }
+            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                Button(role: .destructive) {
+                    Task { await model.trash(summary) }
+                } label: {
+                    Label("Trash", systemImage: "trash")
+                }
+            }
+            .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                Button {
+                    Task { await model.markRead(threadID: summary.id, read: summary.isUnread) }
+                } label: {
+                    Label(
+                        summary.isUnread ? "Read" : "Unread",
+                        systemImage: summary.isUnread ? "envelope.open" : "envelope.badge"
+                    )
+                }
+                .tint(.blue)
+            }
         }
         .listStyle(.plain)
         .navigationTitle("Conversations")

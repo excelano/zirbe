@@ -81,9 +81,12 @@ public actor MailEngine {
     /// text keyed by the caller's message id; a message with no text part (or one
     /// that fails to decode) is simply absent from the result.
     ///
-    /// Only the text part is downloaded, never attachments. `text/plain` is
-    /// preferred; a message that carries only `text/html` is reduced to plain
-    /// text so a text-first bubble still has something to show.
+    /// Only text parts are downloaded, never attachments. Both the `text/plain`
+    /// and `text/html` alternatives are fetched when a message carries both,
+    /// because some senders ship an empty or stub plain part ("view in browser")
+    /// beside the real content in HTML. The non-empty plain text wins when it has
+    /// real content; otherwise the HTML is reduced to readable text. A message
+    /// that yields nothing is simply absent, so it isn't cached as empty.
     public func fetchTextBodies(
         in mailbox: String,
         messages: [(id: String, uid: UInt32)]
@@ -92,32 +95,47 @@ public actor MailEngine {
         return try await perform {
             _ = try await self.server.selectMailbox(mailbox)
 
-            // Pick the body part for each message from its (cheap) structure.
-            var chosen: [(id: String, uid: UID, part: MessagePart)] = []
+            // For each message, locate its plain and html text leaves (either may
+            // be absent) from the cheap structure.
+            var candidates: [(id: String, uid: UID, plain: MessagePart?, html: MessagePart?)] = []
             for message in messages {
                 let uid = UID(message.uid)
                 let structure = try await self.server.fetchStructure(uid)
-                if let part = Self.bodyPart(in: structure) {
-                    chosen.append((message.id, uid, part))
+                let plain = Self.textLeaf(in: structure, type: "text/plain")
+                let html = Self.textLeaf(in: structure, type: "text/html")
+                if plain != nil || html != nil {
+                    candidates.append((message.id, uid, plain, html))
                 }
             }
-            guard !chosen.isEmpty else { return [:] }
+            guard !candidates.isEmpty else { return [:] }
 
-            // Download every chosen section in one pipelined burst.
-            let requests = chosen.map { (uid: $0.uid, section: $0.part.section) }
+            // Download every candidate section in one pipelined burst.
+            var requests: [(uid: UID, section: Section)] = []
+            for c in candidates {
+                if let plain = c.plain { requests.append((c.uid, plain.section)) }
+                if let html = c.html { requests.append((c.uid, html.section)) }
+            }
             let fetched = try await self.server.fetchPartsPipelined(parts: requests)
 
-            // Decode each, matching the pipelined results back by UID and section.
-            var bodies: [String: String] = [:]
-            for entry in chosen {
-                guard let data = fetched[entry.uid]?.first(where: { $0.section == entry.part.section })?.data
-                else { continue }
-                var filled = entry.part
+            // Decode one part's bytes, matched back by UID and section.
+            func text(of part: MessagePart?, uid: UID) -> String? {
+                guard let part,
+                      let data = fetched[uid]?.first(where: { $0.section == part.section })?.data
+                else { return nil }
+                var filled = part
                 filled.data = data
-                guard let text = filled.textContent else { continue }
-                bodies[entry.id] = entry.part.contentType.lowercased().hasPrefix("text/html")
-                    ? Self.plainText(fromHTML: text)
-                    : text
+                return filled.textContent
+            }
+
+            var bodies: [String: String] = [:]
+            for c in candidates {
+                if let plain = text(of: c.plain, uid: c.uid),
+                   !plain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    bodies[c.id] = plain
+                } else if let html = text(of: c.html, uid: c.uid) {
+                    let reduced = HTMLText.plainText(from: html)
+                    if !reduced.isEmpty { bodies[c.id] = reduced }
+                }
             }
             return bodies
         }
@@ -133,6 +151,30 @@ public actor MailEngine {
         try await ensureSession()
         let mailbox = try await resolvedSentMailbox()
         try await server.append(email: Email(outgoing), to: mailbox, flags: [.seen])
+    }
+
+    /// Set or clear the `\Seen` flag on messages, over the warm session. Used to
+    /// reflect a read/unread change made locally back to the server, so every
+    /// client agrees. A no-op when no UIDs are given.
+    public func setSeen(_ seen: Bool, in mailbox: String, uids: [UInt32]) async throws {
+        guard !uids.isEmpty else { return }
+        try await perform {
+            _ = try await self.server.selectMailbox(mailbox)
+            let set = UIDSet(uids.map(UID.init))
+            try await self.server.store(flags: [.seen], on: set, operation: seen ? .add : .remove)
+        }
+    }
+
+    /// Move messages to the server's Trash, over the warm session. SwiftMail
+    /// resolves the special-use Trash mailbox (falling back to a folder named
+    /// "Trash"), so deleting a conversation here matches deleting it in any other
+    /// client. A no-op when no UIDs are given.
+    public func trash(in mailbox: String, uids: [UInt32]) async throws {
+        guard !uids.isEmpty else { return }
+        try await perform {
+            _ = try await self.server.selectMailbox(mailbox)
+            try await self.server.moveToTrash(messages: UIDSet(uids.map(UID.init)))
+        }
     }
 
     /// Close the session and forget the credentials. Call on sign-out.
@@ -188,26 +230,11 @@ public actor MailEngine {
 
     // MARK: - Body part selection
 
-    /// Picks the one part to render: the `text/plain` body, else the `text/html`
-    /// body, skipping anything marked as an attachment.
-    private static func bodyPart(in parts: [MessagePart]) -> MessagePart? {
-        func body(_ type: String) -> MessagePart? {
-            parts.first {
-                $0.contentType.lowercased().hasPrefix(type) && $0.disposition?.lowercased() != "attachment"
-            }
+    /// The first text leaf of `type` (e.g. `text/plain`), skipping anything
+    /// marked as an attachment.
+    private static func textLeaf(in parts: [MessagePart], type: String) -> MessagePart? {
+        parts.first {
+            $0.contentType.lowercased().hasPrefix(type) && $0.disposition?.lowercased() != "attachment"
         }
-        return body("text/plain") ?? body("text/html")
-    }
-
-    /// A deliberately crude HTML-to-text reduction for the html-only fallback:
-    /// strip tags and collapse whitespace. Faithful HTML rendering is M6's job;
-    /// this only keeps the bubble readable until then.
-    private static func plainText(fromHTML html: String) -> String {
-        html
-            .replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
-            .replacingOccurrences(of: "&nbsp;", with: " ")
-            .replacingOccurrences(of: "[ \\t]+", with: " ", options: .regularExpression)
-            .replacingOccurrences(of: "\\n\\s*\\n\\s*\\n+", with: "\n\n", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

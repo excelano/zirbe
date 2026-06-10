@@ -249,6 +249,75 @@ final class MailStoreTests: XCTestCase {
         XCTAssertEqual(subjects, ["Sent item"])
     }
 
+    func testSetSeenFlipsThreadUnread() async throws {
+        let store = try MailStore()
+        let acct = account()
+        try await store.upsert(acct)
+
+        let unseen = msg(id: "<a@x>", subject: "Ping", from: "p@x.com", minutes: 0, seen: false)
+        try await store.save([unseen], accountID: acct.id, mailboxName: "INBOX")
+        try await store.rethread(accountID: acct.id)
+        let initial = try await store.threadSummaries(accountID: acct.id)
+        let threadID = try XCTUnwrap(initial.first?.id)
+
+        try await store.setSeen(true, threadID: threadID)
+        try await store.rethread(accountID: acct.id)
+        var summaries = try await store.threadSummaries(accountID: acct.id)
+        XCTAssertEqual(summaries.first?.isUnread, false)
+
+        try await store.setSeen(false, threadID: threadID)
+        try await store.rethread(accountID: acct.id)
+        summaries = try await store.threadSummaries(accountID: acct.id)
+        XCTAssertEqual(summaries.first?.isUnread, true)
+    }
+
+    func testDeleteThreadRemovesOnlyThatThread() async throws {
+        let store = try MailStore()
+        let acct = account()
+        try await store.upsert(acct)
+
+        let keep = msg(id: "<a@x>", subject: "Keep", from: "p@x.com", minutes: 0)
+        let drop = msg(id: "<b@x>", subject: "Drop", from: "q@x.com", minutes: 1)
+        try await store.save([keep, drop], accountID: acct.id, mailboxName: "INBOX")
+        try await store.rethread(accountID: acct.id)
+        let beforeDelete = try await store.threadSummaries(accountID: acct.id)
+        let dropID = try XCTUnwrap(beforeDelete.first { $0.subject == "Drop" }?.id)
+
+        try await store.deleteThread(threadID: dropID)
+        try await store.rethread(accountID: acct.id)
+
+        let subjects = try await store.threadSummaries(accountID: acct.id).map(\.subject)
+        XCTAssertEqual(subjects, ["Keep"])
+    }
+
+    func testMessageRefsReturnsOnlyUIDBackedMessages() async throws {
+        let store = try MailStore()
+        let acct = account()
+        try await store.upsert(acct)
+
+        // One server message (UID 7 in INBOX) and one local-only copy (no UID),
+        // threaded together.
+        let server = uidMsg(id: "<a@x>", uid: 7, subject: "Plan", minutes: 0)
+        let local = Message(
+            messageID: "<b@x>",
+            references: ["<a@x>"],
+            subject: "Re: Plan",
+            from: Participant(address: "me@x.com"),
+            date: Date(timeIntervalSince1970: 60),
+            flags: [.seen]
+        )
+        try await store.save([server], accountID: acct.id, mailboxName: "INBOX")
+        try await store.save([local], accountID: acct.id, mailboxName: "Sent")
+        try await store.rethread(accountID: acct.id)
+        let threaded = try await store.threadSummaries(accountID: acct.id)
+        let threadID = try XCTUnwrap(threaded.first?.id)
+
+        let refs = try await store.messageRefs(threadID: threadID)
+        XCTAssertEqual(refs.count, 1)
+        XCTAssertEqual(refs.first?.uid, 7)
+        XCTAssertEqual(refs.first?.mailbox, "INBOX")
+    }
+
     func testUIDValidityRoundTrips() async throws {
         let store = try MailStore()
         let acct = account()

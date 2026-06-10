@@ -133,6 +133,38 @@ public actor SyncService {
         }
     }
 
+    /// Mark a thread read or unread: set or clear `\Seen` on its messages on the
+    /// server (grouped by mailbox), then update the local store and rethread so
+    /// the inbox unread state follows. The server update is skipped when the
+    /// thread has no server-backed messages (a purely local conversation).
+    public func setRead(threadID: String, seen: Bool, password: String) async throws {
+        let refs = try await store.messageRefs(threadID: threadID)
+        if !refs.isEmpty {
+            try await engine.connect(username: account.username, password: password)
+            for (mailbox, group) in Dictionary(grouping: refs, by: \.mailbox) {
+                try await engine.setSeen(seen, in: mailbox, uids: group.map(\.uid))
+            }
+        }
+        try await store.setSeen(seen, threadID: threadID)
+        try await store.rethread(accountID: account.id)
+    }
+
+    /// Trash a thread: move its server-backed messages to the server's Trash
+    /// (grouped by mailbox), then delete the local copies and rethread so the
+    /// conversation leaves the inbox. The server move is the gate for messages
+    /// that have it; local-only messages are simply dropped.
+    public func trash(threadID: String, password: String) async throws {
+        let refs = try await store.messageRefs(threadID: threadID)
+        if !refs.isEmpty {
+            try await engine.connect(username: account.username, password: password)
+            for (mailbox, group) in Dictionary(grouping: refs, by: \.mailbox) {
+                try await engine.trash(in: mailbox, uids: group.map(\.uid))
+            }
+        }
+        try await store.deleteThread(threadID: threadID)
+        try await store.rethread(accountID: account.id)
+    }
+
     /// Close the warm session and forget the password. Call on sign-out.
     public func disconnect() async {
         await engine.disconnect()

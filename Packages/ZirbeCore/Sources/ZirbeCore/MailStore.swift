@@ -199,6 +199,42 @@ public final class MailStore: @unchecked Sendable {
         }
     }
 
+    /// The server references (UID and mailbox) of a thread's messages that have a
+    /// UID, so the sync can mark or move them on the server. A locally-composed
+    /// copy with no UID is omitted; it has nothing to act on server-side.
+    public func messageRefs(threadID: String) async throws -> [(uid: UInt32, mailbox: String)] {
+        try await dbQueue.read { db in
+            try MessageRow
+                .filter(Column("threadID") == threadID && Column("uid") != nil)
+                .fetchAll(db)
+                .compactMap { row in row.uid.map { (uid: UInt32(truncatingIfNeeded: $0), mailbox: row.mailboxName) } }
+        }
+    }
+
+    /// Set or clear the `\Seen` flag on every message in a thread, locally. The
+    /// caller rethreads after, so the thread's unread state (derived from its
+    /// messages) updates. The server is told separately by the sync.
+    public func setSeen(_ seen: Bool, threadID: String) async throws {
+        try await dbQueue.write { db in
+            let rows = try MessageRow.filter(Column("threadID") == threadID).fetchAll(db)
+            for var row in rows {
+                var flags = Set(row.flags)
+                if seen { flags.insert(.seen) } else { flags.remove(.seen) }
+                row.flags = Array(flags)
+                try row.save(db)
+            }
+        }
+    }
+
+    /// Delete every message in a thread, locally. Used when a conversation is
+    /// trashed: after the server move, the local copies go too. The caller
+    /// rethreads after, which drops the now-empty thread from the inbox.
+    public func deleteThread(threadID: String) async throws {
+        try await dbQueue.write { db in
+            _ = try MessageRow.filter(Column("threadID") == threadID).deleteAll(db)
+        }
+    }
+
     /// The UID-validity last recorded for a mailbox, or nil if none is stored yet
     /// (a mailbox never synced). Compared against the server's current value to
     /// decide whether the cache can be reconciled or must be rebuilt.

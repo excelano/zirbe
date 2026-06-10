@@ -180,6 +180,41 @@ public final class InboxModel {
         }
     }
 
+    /// Mark a conversation read or unread, reflecting it on the server and then
+    /// refreshing the inbox rows. Errors surface in `errorMessage`.
+    public func markRead(threadID: String, read: Bool) async {
+        guard let password else {
+            errorMessage = "Connect an account first."
+            return
+        }
+        await attempt {
+            try await self.sync.setRead(threadID: threadID, seen: read, password: password)
+            self.summaries = try await self.store.threadSummaries(accountID: self.account.id)
+        }
+    }
+
+    /// Mark a conversation read once it has been opened, but only when it is
+    /// currently unread, so opening clears the inbox dot without a needless
+    /// server round trip on already-read mail.
+    public func markReadOnOpen(_ thread: Thread) async {
+        guard thread.isUnread else { return }
+        await markRead(threadID: thread.id, read: true)
+    }
+
+    /// Trash a conversation: move it to the server's Trash and drop it from the
+    /// inbox. Server-first, so a failed move leaves the conversation in place
+    /// with the reason in `errorMessage`.
+    public func trash(_ summary: ThreadSummary) async {
+        guard let password else {
+            errorMessage = "Connect an account first."
+            return
+        }
+        await attempt {
+            try await self.sync.trash(threadID: summary.id, password: password)
+            self.summaries = try await self.store.threadSummaries(accountID: self.account.id)
+        }
+    }
+
     /// Forget the session password, close the warm connection, and clear
     /// in-memory state.
     public func signOut() {
