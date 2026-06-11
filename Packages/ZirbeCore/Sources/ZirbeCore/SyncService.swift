@@ -90,17 +90,27 @@ public actor SyncService {
         let targets = try await store.messagesNeedingBodies(threadID: id)
         if !targets.isEmpty {
             try await engine.connect(username: account.username, password: password)
-            var bodies: [String: String] = [:]
+            var bodies: [String: (text: String, hasHTML: Bool)] = [:]
             for (mailbox, group) in Dictionary(grouping: targets, by: \.mailbox) {
                 let fetched = try await engine.fetchTextBodies(
                     in: mailbox,
                     messages: group.map { (id: $0.id, uid: $0.uid) }
                 )
-                bodies.merge(fetched) { _, new in new }
+                for (id, body) in fetched { bodies[id] = (text: body.text, hasHTML: body.hasHTML) }
             }
             try await store.storeBodies(bodies)
         }
         return try await store.thread(id: id)
+    }
+
+    /// Fetch one message's raw HTML for the Web View, by message id. Resolves the
+    /// message's server reference from the store, then pulls the HTML part over
+    /// the warm session. Returns nil when the message is unknown, purely local, or
+    /// carries no HTML. The password is per call, as elsewhere.
+    public func fetchHTMLBody(messageID: String, password: String) async throws -> String? {
+        guard let ref = try await store.messageRef(id: messageID) else { return nil }
+        try await engine.connect(username: account.username, password: password)
+        return try await engine.fetchHTMLBody(in: ref.mailbox, uid: ref.uid)
     }
 
     /// Send a composed draft, then make it visible immediately.

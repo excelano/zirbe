@@ -35,6 +35,20 @@ public struct MailboxState: Sendable, Hashable {
     }
 }
 
+/// A fetched message body: the readable text the bubble shows, and whether the
+/// message also carries an HTML alternative. `hasHTML` is what gates the
+/// Web View control, so it is recorded even when the plain text won as the
+/// display body, because the richer HTML is still there to open on demand.
+public struct MessageBody: Sendable, Hashable {
+    public var text: String
+    public var hasHTML: Bool
+
+    public init(text: String, hasHTML: Bool) {
+        self.text = text
+        self.hasHTML = hasHTML
+    }
+}
+
 /// A message's envelope, including the RFC 5322 threading headers that decide
 /// which conversation a message belongs to. `from`/`to` are raw header strings
 /// for now; parsing into participants belongs to the domain layer.

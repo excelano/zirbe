@@ -32,6 +32,7 @@ struct MessageRow: Codable, FetchableRecord, PersistableRecord {
     var date: Date?
     var flags: [Flag]
     var bodyText: String?
+    var hasHTML: Bool
     var threadID: String?
 
     init(_ message: Message, accountID: String, mailboxName: String) {
@@ -50,6 +51,7 @@ struct MessageRow: Codable, FetchableRecord, PersistableRecord {
         self.date = message.date
         self.flags = Array(message.flags)
         self.bodyText = message.bodyText
+        self.hasHTML = message.hasHTML
         self.threadID = nil
     }
 
@@ -65,7 +67,8 @@ struct MessageRow: Codable, FetchableRecord, PersistableRecord {
             cc: ccParticipants,
             date: date,
             flags: Set(flags),
-            bodyText: bodyText
+            bodyText: bodyText,
+            hasHTML: hasHTML
         )
     }
 }
@@ -155,14 +158,16 @@ public final class MailStore: @unchecked Sendable {
 
     /// Insert or update the given messages. Existing rows (matched by id) are
     /// refreshed, so re-fetching the same mail is idempotent. A re-synced header
-    /// carries no body, so a body already cached for that message is preserved
-    /// rather than nulled out.
+    /// carries no body, so a body already cached for that message (its text and
+    /// its `hasHTML` flag, both set together when the body was fetched) is
+    /// preserved rather than reset.
     public func save(_ messages: [Message], accountID: String, mailboxName: String) async throws {
         try await dbQueue.write { db in
             for message in messages {
                 var row = MessageRow(message, accountID: accountID, mailboxName: mailboxName)
-                if row.bodyText == nil {
-                    row.bodyText = try MessageRow.fetchOne(db, key: row.id)?.bodyText
+                if row.bodyText == nil, let existing = try MessageRow.fetchOne(db, key: row.id) {
+                    row.bodyText = existing.bodyText
+                    row.hasHTML = existing.hasHTML
                 }
                 try row.save(db)
             }
@@ -261,18 +266,28 @@ public final class MailStore: @unchecked Sendable {
         }
     }
 
-    /// Persist fetched text bodies, keyed by message id. Used by the lazy-body
-    /// path when a conversation is opened, so the bodies are cached and the next
-    /// open is offline.
-    public func storeBodies(_ bodiesByMessageID: [String: String]) async throws {
+    /// Persist fetched bodies, keyed by message id: the display text and whether
+    /// an HTML version exists. Used by the lazy-body path when a conversation is
+    /// opened, so the bodies are cached and the next open is offline.
+    public func storeBodies(_ bodiesByMessageID: [String: (text: String, hasHTML: Bool)]) async throws {
         guard !bodiesByMessageID.isEmpty else { return }
         try await dbQueue.write { db in
-            for (id, text) in bodiesByMessageID {
+            for (id, body) in bodiesByMessageID {
                 try db.execute(
-                    sql: "UPDATE message SET bodyText = ? WHERE id = ?",
-                    arguments: [text, id]
+                    sql: "UPDATE message SET bodyText = ?, hasHTML = ? WHERE id = ?",
+                    arguments: [body.text, body.hasHTML, id]
                 )
             }
+        }
+    }
+
+    /// The server reference (UID and mailbox) of one message, for the lazy Web
+    /// View fetch. Nil when the message is unknown or has no UID (a purely local
+    /// copy, which has no server-side HTML to open).
+    public func messageRef(id: String) async throws -> (uid: UInt32, mailbox: String)? {
+        try await dbQueue.read { db in
+            guard let row = try MessageRow.fetchOne(db, key: id), let uid = row.uid else { return nil }
+            return (uid: UInt32(truncatingIfNeeded: uid), mailbox: row.mailboxName)
         }
     }
 
@@ -414,6 +429,16 @@ public final class MailStore: @unchecked Sendable {
         migrator.registerMigration("v3-uidvalidity") { db in
             try db.alter(table: "mailbox") { t in
                 t.add(column: "uidValidity", .integer)
+            }
+        }
+        // HTML Web View (M3+): a message remembers whether it carries an HTML
+        // alternative, so the conversation view can offer to open it as a web
+        // page. Set when the body is fetched; defaults false, so a row
+        // synced before this (or never opened) reads as plain until its body
+        // loads and stamps the real value.
+        migrator.registerMigration("v4-hashtml") { db in
+            try db.alter(table: "message") { t in
+                t.add(column: "hasHTML", .boolean).notNull().defaults(to: false)
             }
         }
         return migrator

@@ -78,19 +78,21 @@ public actor MailEngine {
     /// reusing the warm session. Selects the mailbox once, reads each message's
     /// body structure, then downloads all the chosen text parts in a single
     /// pipelined burst rather than one round trip at a time. Returns the decoded
-    /// text keyed by the caller's message id; a message with no text part (or one
+    /// body keyed by the caller's message id; a message with no text part (or one
     /// that fails to decode) is simply absent from the result.
     ///
     /// Only text parts are downloaded, never attachments. Both the `text/plain`
     /// and `text/html` alternatives are fetched when a message carries both,
     /// because some senders ship an empty or stub plain part ("view in browser")
     /// beside the real content in HTML. The non-empty plain text wins when it has
-    /// real content; otherwise the HTML is reduced to readable text. A message
-    /// that yields nothing is simply absent, so it isn't cached as empty.
+    /// real content; otherwise the HTML is reduced to readable text. Either way
+    /// the body records whether an HTML alternative exists, so the UI can offer
+    /// the Web View without re-deriving it. A message that yields nothing is
+    /// simply absent, so it isn't cached as empty.
     public func fetchTextBodies(
         in mailbox: String,
         messages: [(id: String, uid: UInt32)]
-    ) async throws -> [String: String] {
+    ) async throws -> [String: MessageBody] {
         guard !messages.isEmpty else { return [:] }
         return try await perform {
             _ = try await self.server.selectMailbox(mailbox)
@@ -127,17 +129,38 @@ public actor MailEngine {
                 return filled.textContent
             }
 
-            var bodies: [String: String] = [:]
+            var bodies: [String: MessageBody] = [:]
             for c in candidates {
+                let hasHTML = c.html != nil
                 if let plain = text(of: c.plain, uid: c.uid),
                    !plain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    bodies[c.id] = plain
+                    bodies[c.id] = MessageBody(text: plain, hasHTML: hasHTML)
                 } else if let html = text(of: c.html, uid: c.uid) {
                     let reduced = HTMLText.plainText(from: html)
-                    if !reduced.isEmpty { bodies[c.id] = reduced }
+                    if !reduced.isEmpty { bodies[c.id] = MessageBody(text: reduced, hasHTML: true) }
                 }
             }
             return bodies
+        }
+    }
+
+    /// Fetch one message's raw HTML body, over the warm session, for the Web
+    /// View. Unlike `fetchTextBodies` this returns the markup verbatim (not
+    /// reduced to text), so a `WKWebView` can render it. Returns nil when the
+    /// message has no HTML alternative. Only the HTML text part is downloaded,
+    /// never attachments, and no remote resources it references are touched here;
+    /// loading those is the renderer's decision, off by default.
+    public func fetchHTMLBody(in mailbox: String, uid: UInt32) async throws -> String? {
+        try await perform {
+            _ = try await self.server.selectMailbox(mailbox)
+            let u = UID(uid)
+            let structure = try await self.server.fetchStructure(u)
+            guard let html = Self.textLeaf(in: structure, type: "text/html") else { return nil }
+            let fetched = try await self.server.fetchPartsPipelined(parts: [(u, html.section)])
+            guard let data = fetched[u]?.first(where: { $0.section == html.section })?.data else { return nil }
+            var filled = html
+            filled.data = data
+            return filled.textContent
         }
     }
 

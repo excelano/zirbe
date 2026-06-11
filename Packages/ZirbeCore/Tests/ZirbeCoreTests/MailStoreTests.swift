@@ -150,18 +150,44 @@ final class MailStoreTests: XCTestCase {
         XCTAssertEqual(needs.map(\.uid), [42])
         XCTAssertEqual(needs.first?.mailbox, "INBOX")
 
-        // Cache the fetched body: it no longer needs one and the conversation shows it.
-        try await store.storeBodies([header.id: "Hello there"])
+        // Cache the fetched body: it no longer needs one and the conversation
+        // shows it, with the HTML-original flag recorded alongside the text.
+        try await store.storeBodies([header.id: (text: "Hello there", hasHTML: true)])
         let afterCache = try await store.messagesNeedingBodies(threadID: threadID)
         XCTAssertTrue(afterCache.isEmpty)
         var convo = try await store.thread(id: threadID)
         XCTAssertEqual(convo?.messages.first?.bodyText, "Hello there")
+        XCTAssertEqual(convo?.messages.first?.hasHTML, true)
 
-        // A later header re-sync carries no body; the cached body must survive it.
+        // A later header re-sync carries no body; the cached body and its HTML
+        // flag must both survive it, not reset to nil/false.
         try await store.save([header], accountID: acct.id, mailboxName: "INBOX")
         try await store.rethread(accountID: acct.id)
         convo = try await store.thread(id: threadID)
         XCTAssertEqual(convo?.messages.first?.bodyText, "Hello there")
+        XCTAssertEqual(convo?.messages.first?.hasHTML, true)
+    }
+
+    func testMessageRefResolvesUIDAndMailbox() async throws {
+        let store = try MailStore()
+        let acct = account()
+        try await store.upsert(acct)
+
+        // A server message has a ref; a local-only copy (no UID) resolves to nil.
+        let server = uidMsg(id: "<a@x>", uid: 88, subject: "Has original", minutes: 0)
+        let local = msg(id: "<b@x>", subject: "Local only", from: "me@x.com", minutes: 1)
+        try await store.save([server], accountID: acct.id, mailboxName: "INBOX")
+        try await store.save([local], accountID: acct.id, mailboxName: "Sent")
+
+        let ref = try await store.messageRef(id: server.id)
+        XCTAssertEqual(ref?.uid, 88)
+        XCTAssertEqual(ref?.mailbox, "INBOX")
+
+        let localRef = try await store.messageRef(id: local.id)
+        XCTAssertNil(localRef)
+
+        let unknownRef = try await store.messageRef(id: "mid:<nope@x>")
+        XCTAssertNil(unknownRef)
     }
 
     // MARK: - Sync reconciliation

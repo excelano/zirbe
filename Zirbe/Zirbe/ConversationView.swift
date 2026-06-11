@@ -21,6 +21,16 @@ struct ConversationView: View {
     @State private var isSending = false
     @State private var removedAddresses: Set<String> = []
     @State private var showRecipients = false
+    /// The message currently shown as its HTML web view, taking over the whole
+    /// conversation tray; nil when the tray shows the normal chat of bubbles.
+    @State private var activeWeb: ActiveWeb?
+
+    /// A message switched to its web view: the fetched HTML and whether remote
+    /// images are shown. Replaces the chat tray while set.
+    private struct ActiveWeb {
+        var html: String
+        var showImages: Bool
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -31,7 +41,11 @@ struct ConversationView: View {
                     isNoteToSelf: isNoteToSelf(in: thread)
                 ) { showRecipients = true }
                 Divider()
-                conversation(thread)
+                if let active = activeWeb {
+                    webTray(active)
+                } else {
+                    conversation(thread)
+                }
                 Divider()
                 ReplyBar(text: $replyText, isSending: isSending, onSend: { send(into: thread) })
             } else if isLoading {
@@ -75,15 +89,47 @@ struct ConversationView: View {
                             .padding(.vertical, 8)
                     }
                     MessageBubble(
+                        model: model,
                         message: message,
                         isOwn: isOwn(message),
                         hasTail: isLastInRun(at: index, in: messages),
-                        showSender: !isOwn(message) && isFirstOfRun(at: index, in: messages)
+                        showSender: !isOwn(message) && isFirstOfRun(at: index, in: messages),
+                        onShowWeb: { html, showImages in
+                            activeWeb = ActiveWeb(html: html, showImages: showImages)
+                        }
                     )
                     .padding(.top, index > 0 && isFirstOfRun(at: index, in: messages) ? 8 : 0)
                 }
             }
             .padding()
+        }
+    }
+
+    /// The web view taking over the whole tray: a toggle bar across the top
+    /// (switch back to the chat, show or hide images) and the message's HTML
+    /// filling everything below. No bubble chrome, sender, or timestamp here, the
+    /// way the web view stands alone.
+    private func webTray(_ active: ActiveWeb) -> some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                WebControlButton(title: "Text View", systemImage: "text.alignleft", edge: .leading) {
+                    activeWeb = nil
+                }
+                Divider().frame(height: 18)
+                WebControlButton(
+                    title: active.showImages ? "Hide Images" : "Show Images",
+                    systemImage: active.showImages ? "eye.slash" : "eye",
+                    edge: .trailing
+                ) {
+                    activeWeb?.showImages.toggle()
+                }
+            }
+            .foregroundStyle(.tint)
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+            Divider()
+            HTMLWebView(html: active.html, allowRemoteContent: active.showImages)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
@@ -255,6 +301,7 @@ private struct ReplyBar: View {
 /// history is folded behind a "Show quoted text" control so the reply reads
 /// first, with the original one tap away.
 private struct MessageBubble: View {
+    let model: InboxModel
     let message: Message
     let isOwn: Bool
     /// Whether this bubble ends a run, so it gets the tail and the timestamp.
@@ -262,8 +309,14 @@ private struct MessageBubble: View {
     /// Whether to show the sender's name above, set once atop a run of incoming
     /// messages.
     let showSender: Bool
+    /// Hand the fetched HTML up so the conversation can take over its tray with
+    /// the web view: the markup and whether to show images on open.
+    let onShowWeb: (_ html: String, _ showImages: Bool) -> Void
 
     @State private var quoteExpanded = false
+    /// Which action is fetching, so only the tapped button shows a spinner: nil
+    /// when idle, true for the show-images button, false for the plain one.
+    @State private var loadingWithImages: Bool?
 
     var body: some View {
         HStack {
@@ -291,6 +344,7 @@ private struct MessageBubble: View {
 
     private var bubble: some View {
         VStack(alignment: .leading, spacing: 6) {
+            if message.hasHTML { webViewControls }
             Text(folded.visible.isEmpty ? "(quoted message)" : folded.visible)
                 .foregroundStyle(folded.visible.isEmpty ? AnyShapeStyle(.secondary) : AnyShapeStyle(isOwn ? .white : .primary))
             if let quoted = folded.quoted {
@@ -323,6 +377,41 @@ private struct MessageBubble: View {
         // reserves the row's bottom space (and clears the tail horizontally), so
         // explicit clearance is only needed for a tailed bubble with no date.
         .padding(.bottom, (hasTail && message.date == nil) ? BubbleShape.tailDrop : 0)
+    }
+
+    /// The "Web View" affordances, shown when the message carries an HTML
+    /// alternative: two buttons spanning the bubble's top, one opening the HTML
+    /// with remote images blocked (the safe default) and one opening it with
+    /// images already shown, so the reader who wants them needn't ask twice.
+    private var webViewControls: some View {
+        HStack(spacing: 0) {
+            WebControlButton(
+                title: "Web View", systemImage: "safari", edge: .leading,
+                isLoading: loadingWithImages == false
+            ) { openWebView(showImages: false) }
+            Divider().frame(height: 18)
+            WebControlButton(
+                title: "Show Images", systemImage: "eye", edge: .trailing,
+                isLoading: loadingWithImages == true
+            ) { openWebView(showImages: true) }
+        }
+        .disabled(loadingWithImages != nil)
+        // Same size as the email body, in a tone sitting between the faint
+        // accessory color and the full-strength body text.
+        .foregroundStyle(isOwn ? AnyShapeStyle(Color.white.opacity(0.85)) : AnyShapeStyle(.secondary))
+    }
+
+    /// Fetch the message's raw HTML, then hand it up so the conversation takes
+    /// over its tray with the web view, with images on or off per the button
+    /// tapped. A failure is left to the model (it sets `errorMessage`); nothing
+    /// happens here.
+    private func openWebView(showImages: Bool) {
+        loadingWithImages = showImages
+        Task {
+            let html = await model.htmlBody(for: message.id)
+            loadingWithImages = nil
+            if let html { onShowWeb(html, showImages) }
+        }
     }
 
     /// The body split into the part to show and the quoted history to fold. An
@@ -402,5 +491,41 @@ private struct BubbleShape: Shape {
         }
         p.closeSubpath()
         return p
+    }
+}
+
+/// One of a pair of web controls: an icon and label that hugs the given outer
+/// edge, so two of them span a row with symmetric outside padding. Shared by the
+/// text bubble (open the web view, show images) and the web view's own top bar
+/// (back to text, show or hide images), so both rows look and sit the same.
+private struct WebControlButton: View {
+    let title: String
+    let systemImage: String
+    let edge: HorizontalEdge
+    var isLoading: Bool = false
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                if isLoading {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: systemImage)
+                }
+                Text(title)
+                    // Keep the label on one line; the bubble widens to fit it
+                    // rather than wrapping "Show Images" in a narrow bubble.
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            // Half the width each for a big tap target, label hugging the outer
+            // edge so the row's outside padding is symmetric and the leading icon
+            // lines up under the body text's left margin.
+            .frame(maxWidth: .infinity, alignment: edge == .leading ? .leading : .trailing)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(isLoading)
     }
 }

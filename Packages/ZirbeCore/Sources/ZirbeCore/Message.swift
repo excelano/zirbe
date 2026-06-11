@@ -30,6 +30,10 @@ public struct Message: Sendable, Hashable, Identifiable {
     /// store, so this is populated for messages in a conversation the user has
     /// viewed and nil for inbox rows that have only been synced as headers.
     public var bodyText: String?
+    /// Whether the message carries an HTML alternative, so the UI can offer the
+    /// Web View. Set when the body is fetched; false for header-only rows and for
+    /// plain-text-only mail.
+    public var hasHTML: Bool
 
     public init(
         messageID: String? = nil,
@@ -42,7 +46,8 @@ public struct Message: Sendable, Hashable, Identifiable {
         cc: [Participant] = [],
         date: Date? = nil,
         flags: Set<Flag> = [],
-        bodyText: String? = nil
+        bodyText: String? = nil,
+        hasHTML: Bool = false
     ) {
         self.messageID = messageID
         self.uid = uid
@@ -55,6 +60,7 @@ public struct Message: Sendable, Hashable, Identifiable {
         self.date = date
         self.flags = flags
         self.bodyText = bodyText
+        self.hasHTML = hasHTML
     }
 
     /// Whether the message has been read.
