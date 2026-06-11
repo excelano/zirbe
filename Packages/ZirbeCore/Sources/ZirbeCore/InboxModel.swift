@@ -180,17 +180,26 @@ public final class InboxModel {
         }
     }
 
-    /// Mark a conversation read or unread, reflecting it on the server and then
-    /// refreshing the inbox rows. Errors surface in `errorMessage`.
-    public func markRead(threadID: String, read: Bool) async {
+    /// Mark one or more conversations read or unread, reflecting each on the
+    /// server and then refreshing the inbox rows once. The server updates loop
+    /// over the warm session; the single store re-read at the end reflects them
+    /// all at once. Errors surface in `errorMessage`.
+    public func markRead(threadIDs: [String], read: Bool) async {
         guard let password else {
             errorMessage = "Connect an account first."
             return
         }
         await attempt {
-            try await self.sync.setRead(threadID: threadID, seen: read, password: password)
+            for id in threadIDs {
+                try await self.sync.setRead(threadID: id, seen: read, password: password)
+            }
             self.summaries = try await self.store.threadSummaries(accountID: self.account.id)
         }
+    }
+
+    /// Mark a single conversation read or unread.
+    public func markRead(threadID: String, read: Bool) async {
+        await markRead(threadIDs: [threadID], read: read)
     }
 
     /// Mark a conversation read once it has been opened, but only when it is
@@ -219,18 +228,26 @@ public final class InboxModel {
         }
     }
 
-    /// Trash a conversation: move it to the server's Trash and drop it from the
-    /// inbox. Server-first, so a failed move leaves the conversation in place
-    /// with the reason in `errorMessage`.
-    public func trash(_ summary: ThreadSummary) async {
+    /// Trash one or more conversations: move each to the server's Trash and drop
+    /// it from the inbox, refreshing the rows once at the end. Server-first, so a
+    /// failed move leaves that conversation in place with the reason in
+    /// `errorMessage`.
+    public func trash(threadIDs: [String]) async {
         guard let password else {
             errorMessage = "Connect an account first."
             return
         }
         await attempt {
-            try await self.sync.trash(threadID: summary.id, password: password)
+            for id in threadIDs {
+                try await self.sync.trash(threadID: id, password: password)
+            }
             self.summaries = try await self.store.threadSummaries(accountID: self.account.id)
         }
+    }
+
+    /// Trash a single conversation.
+    public func trash(_ summary: ThreadSummary) async {
+        await trash(threadIDs: [summary.id])
     }
 
     /// Forget the session password, close the warm connection, and clear

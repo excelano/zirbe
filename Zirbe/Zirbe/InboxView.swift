@@ -11,9 +11,23 @@ import ZirbeCore
 struct InboxView: View {
     let model: InboxModel
     @State private var isComposing = false
+    /// When set, the list shows only conversations with unread mail.
+    @State private var showUnreadOnly = false
+    /// The conversations picked in selection mode, by thread id.
+    @State private var selection = Set<String>()
+    /// Drives selection mode: `.active` shows the per-row circles and the bulk
+    /// action bar, and turns row taps into selection rather than navigation.
+    @State private var editMode: EditMode = .inactive
+
+    private var isSelecting: Bool { editMode == .active }
+
+    /// The rows actually shown, narrowed to unread when the filter is on.
+    private var visibleSummaries: [ThreadSummary] {
+        showUnreadOnly ? model.summaries.filter(\.isUnread) : model.summaries
+    }
 
     var body: some View {
-        List(model.summaries) { summary in
+        List(visibleSummaries, selection: $selection) { summary in
             NavigationLink {
                 ConversationView(model: model, summary: summary)
             } label: {
@@ -39,36 +53,14 @@ struct InboxView: View {
             }
         }
         .listStyle(.plain)
-        .navigationTitle("Conversations")
-        .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
-                Button("Sign Out") { model.signOut() }
-            }
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    isComposing = true
-                } label: {
-                    Image(systemName: "square.and.pencil")
-                }
-                .accessibilityLabel("New Conversation")
-            }
-        }
+        .environment(\.editMode, $editMode)
+        .navigationTitle(navigationTitle)
+        .navigationBarTitleDisplayMode(isSelecting ? .inline : .large)
+        .toolbar { toolbarContent }
         .sheet(isPresented: $isComposing) {
             ComposeView(model: model)
         }
-        .overlay {
-            if model.summaries.isEmpty {
-                if model.isSyncing {
-                    ProgressView("Syncing…")
-                } else {
-                    ContentUnavailableView(
-                        "No conversations",
-                        systemImage: "tray",
-                        description: Text(model.errorMessage ?? "Pull down to refresh.")
-                    )
-                }
-            }
-        }
+        .overlay { emptyState }
         .refreshable { await model.refresh() }
         .task {
             await model.loadCached()
@@ -76,6 +68,110 @@ struct InboxView: View {
                 await model.refresh()
             }
         }
+    }
+
+    private var navigationTitle: String {
+        guard isSelecting else { return "Conversations" }
+        return selection.isEmpty ? "Select" : "\(selection.count) Selected"
+    }
+
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        if isSelecting {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Done") { endSelecting() }
+            }
+            ToolbarItemGroup(placement: .bottomBar) {
+                Button {
+                    Task { await bulkRead(true) }
+                } label: {
+                    Label("Read", systemImage: "envelope.open")
+                        .labelStyle(.titleAndIcon)
+                }
+                .disabled(selection.isEmpty)
+                Spacer()
+                Button {
+                    Task { await bulkRead(false) }
+                } label: {
+                    Label("Unread", systemImage: "envelope.badge")
+                        .labelStyle(.titleAndIcon)
+                }
+                .disabled(selection.isEmpty)
+                Spacer()
+                Button(role: .destructive) {
+                    Task { await bulkTrash() }
+                } label: {
+                    Label("Trash", systemImage: "trash")
+                        .labelStyle(.titleAndIcon)
+                }
+                .disabled(selection.isEmpty)
+            }
+        } else {
+            ToolbarItem(placement: .topBarLeading) {
+                Button("Sign Out") { model.signOut() }
+            }
+            ToolbarItemGroup(placement: .topBarTrailing) {
+                Button {
+                    showUnreadOnly.toggle()
+                } label: {
+                    Image(systemName: showUnreadOnly
+                        ? "line.3.horizontal.decrease.circle.fill"
+                        : "line.3.horizontal.decrease.circle")
+                }
+                .accessibilityLabel(showUnreadOnly ? "Show all conversations" : "Show unread only")
+                Button {
+                    isComposing = true
+                } label: {
+                    Image(systemName: "square.and.pencil")
+                }
+                .accessibilityLabel("New Conversation")
+                Button("Select") { editMode = .active }
+                    .disabled(model.summaries.isEmpty)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var emptyState: some View {
+        if model.summaries.isEmpty {
+            if model.isSyncing {
+                ProgressView("Syncing…")
+            } else {
+                ContentUnavailableView(
+                    "No conversations",
+                    systemImage: "tray",
+                    description: Text(model.errorMessage ?? "Pull down to refresh.")
+                )
+            }
+        } else if showUnreadOnly && visibleSummaries.isEmpty {
+            ContentUnavailableView(
+                "No unread conversations",
+                systemImage: "envelope.open",
+                description: Text("You’re all caught up.")
+            )
+        }
+    }
+
+    /// Leave selection mode and clear the picked rows.
+    private func endSelecting() {
+        editMode = .inactive
+        selection.removeAll()
+    }
+
+    /// Mark the selected conversations read or unread, then leave selection mode.
+    /// The ids are captured before exiting so clearing the selection can't race
+    /// the server work.
+    private func bulkRead(_ read: Bool) async {
+        let ids = Array(selection)
+        endSelecting()
+        await model.markRead(threadIDs: ids, read: read)
+    }
+
+    /// Trash the selected conversations, then leave selection mode.
+    private func bulkTrash() async {
+        let ids = Array(selection)
+        endSelecting()
+        await model.trash(threadIDs: ids)
     }
 }
 

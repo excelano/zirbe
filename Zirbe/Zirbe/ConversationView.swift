@@ -9,12 +9,14 @@
 // bar sends a reply-all back into the thread.
 
 import SwiftUI
+import UIKit
 import ZirbeCore
 
 struct ConversationView: View {
     let model: InboxModel
     let summary: ThreadSummary
 
+    @Environment(\.dismiss) private var dismiss
     @State private var thread: ZirbeCore.Thread?
     @State private var isLoading = true
     @State private var replyText = ""
@@ -34,6 +36,20 @@ struct ConversationView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // A custom top bar in place of the system navigation bar, so the
+            // subject can read on two left-justified lines (the inline bar is
+            // fixed-height, centered, and single-line). Trash pops back
+            // optimistically and moves on the server in the background; a failed
+            // move (server-first) just leaves the conversation in the inbox.
+            ConversationTopBar(
+                title: subjectTitle,
+                onBack: { dismiss() },
+                onTrash: {
+                    dismiss()
+                    Task { await model.trash(summary) }
+                }
+            )
+            Divider()
             if let thread {
                 RecipientHeader(
                     to: activeTo(in: thread),
@@ -58,8 +74,7 @@ struct ConversationView: View {
                 )
             }
         }
-        .navigationTitle(summary.subject.isEmpty ? "(no subject)" : summary.subject)
-        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.hidden, for: .navigationBar)
         .sheet(isPresented: $showRecipients) {
             if let thread {
                 let (to, cc) = ReplyBuilder.replyAllRecipients(to: thread, as: model.account)
@@ -72,6 +87,10 @@ struct ConversationView: View {
             isLoading = false
             if let loaded { await model.markReadOnOpen(loaded) }
         }
+    }
+
+    private var subjectTitle: String {
+        summary.subject.isEmpty ? "(no subject)" : summary.subject
     }
 
     private func conversation(_ thread: ZirbeCore.Thread) -> some View {
@@ -183,6 +202,121 @@ struct ConversationView: View {
                 replyText = ""
             }
         }
+    }
+}
+
+/// The conversation's own top bar, in place of the system navigation bar so the
+/// subject can read on two left-justified lines (the inline bar is fixed-height,
+/// centered, and single-line). The back chevron and trash sit on the first line
+/// with the subject between them; a subject too long for one line wraps to a
+/// second line below, still left-justified. When even two lines truncate, the
+/// title turns tappable and the whole subject opens in a popover.
+private struct ConversationTopBar: View {
+    let title: String
+    let onBack: () -> Void
+    let onTrash: () -> Void
+
+    @State private var isTruncated = false
+    @State private var showingFull = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            circleButton(systemName: "chevron.left", tint: .accentColor, action: onBack)
+                .accessibilityLabel("Back")
+
+            Button {
+                // Only the truncated title has more to show; an untruncated one is
+                // a no-op tap rather than a disabled (dimmed) control.
+                if isTruncated { showingFull = true }
+            } label: {
+                Text(title)
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+                    .multilineTextAlignment(.leading)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(truncationProbe)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onPreferenceChange(SubjectTruncationKey.self) { isTruncated = $0 }
+            .popover(isPresented: $showingFull) {
+                ScrollView {
+                    Text(title)
+                        .font(.headline)
+                        .multilineTextAlignment(.leading)
+                        // A fixed width plus vertical fixedSize makes the popover
+                        // text wrap to as many lines as it needs, not one long row.
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(width: 280, alignment: .leading)
+                        .padding()
+                }
+                .presentationCompactAdaptation(.popover)
+            }
+
+            circleButton(systemName: "trash", tint: .red, action: onTrash)
+                .accessibilityLabel("Trash Conversation")
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 8)
+    }
+
+    /// A round, tappable button matching the compose sheet's header circles, sized
+    /// for a comfortable tap target. Its centre is pinned to the subject's first
+    /// line (via the `.top` alignment guide) so a wrapped two-line subject doesn't
+    /// drag it down to the block's middle.
+    private func circleButton(
+        systemName: String,
+        tint: Color,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: 40, height: 40)
+                .background(Color(.secondarySystemFill), in: Circle())
+        }
+        .alignmentGuide(.top) { dims in (dims.height - titleLineHeight) / 2 }
+    }
+
+    /// One line of the title's height, used to centre the round buttons on the
+    /// subject's first line.
+    private var titleLineHeight: CGFloat {
+        UIFont.preferredFont(forTextStyle: .headline).lineHeight
+    }
+
+    /// Invisible measurement behind the two-line title: it lays the full subject
+    /// out at the title's exact width and compares its height to the displayed
+    /// (two-line-capped) height, raising the truncation flag only when the full
+    /// text is genuinely taller. Deterministic, so a one-line subject never reads
+    /// as truncated.
+    private var truncationProbe: some View {
+        GeometryReader { shown in
+            Text(title)
+                .font(.headline)
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(width: shown.size.width, alignment: .leading)
+                .background(
+                    GeometryReader { full in
+                        Color.clear.preference(
+                            key: SubjectTruncationKey.self,
+                            value: full.size.height > shown.size.height + 1
+                        )
+                    }
+                )
+                .hidden()
+        }
+    }
+}
+
+/// Raised when the full subject can't fit the title's two lines, so the title
+/// turns into a tappable control that reveals the whole subject.
+private struct SubjectTruncationKey: PreferenceKey {
+    static let defaultValue = false
+    static func reduce(value: inout Bool, nextValue: () -> Bool) {
+        value = value || nextValue()
     }
 }
 
