@@ -10,7 +10,10 @@ import ZirbeCore
 
 struct InboxView: View {
     let model: InboxModel
+    /// Routes a full sign-out up to the session (forget credential + wipe cache).
+    let onSignOut: () -> Void
     @State private var isComposing = false
+    @State private var showingSettings = false
     /// When set, the list shows only conversations with unread mail.
     @State private var showUnreadOnly = false
     /// The conversations picked in selection mode, by thread id.
@@ -60,6 +63,9 @@ struct InboxView: View {
         .sheet(isPresented: $isComposing) {
             ComposeView(model: model)
         }
+        .sheet(isPresented: $showingSettings) {
+            SettingsView(account: model.account, onSignOut: onSignOut)
+        }
         .overlay { emptyState }
         .refreshable { await model.refresh() }
         .task {
@@ -108,7 +114,12 @@ struct InboxView: View {
             }
         } else {
             ToolbarItem(placement: .topBarLeading) {
-                Button("Sign Out") { model.signOut() }
+                Button {
+                    showingSettings = true
+                } label: {
+                    Image(systemName: "gearshape")
+                }
+                .accessibilityLabel("Settings")
             }
             ToolbarItemGroup(placement: .topBarTrailing) {
                 Button {

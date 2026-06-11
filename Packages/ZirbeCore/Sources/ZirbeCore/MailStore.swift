@@ -152,6 +152,19 @@ public final class MailStore: @unchecked Sendable {
         try await dbQueue.write { db in try account.save(db) }
     }
 
+    /// Every persisted account, for restoring a session on launch. Today there
+    /// is at most one; returning a list keeps the door open for multiple.
+    public func accounts() async throws -> [Account] {
+        try await dbQueue.read { db in try Account.fetchAll(db) }
+    }
+
+    /// Wipe the whole store back to an empty, migrated state. Used on sign-out,
+    /// where the privacy posture calls for leaving no cached mail behind.
+    public func eraseAll() async throws {
+        try await dbQueue.erase()
+        try Self.migrator.migrate(dbQueue)
+    }
+
     public func upsert(_ mailbox: Mailbox) async throws {
         try await dbQueue.write { db in try MailboxRow(mailbox).save(db) }
     }
