@@ -27,13 +27,14 @@ public enum QuotedText {
         }
     }
 
-    /// Split `body` at the first quoted-history boundary via Klartext. Signature
-    /// separation is left off so the fold stays a pure new-vs-quoted split,
-    /// matching the bubble's long-standing behavior: the new content keeps any
-    /// trailing signature inline. (Turning separation on is a deliberate UX change
-    /// for a later pass, not part of this migration.)
+    /// Split `body` at the first quoted-history boundary via Klartext, and drop a
+    /// trailing signature from the visible text so the bubble shows just the new
+    /// words. Klartext separates the signature on conservative markers only (the
+    /// RFC 3676 `-- ` delimiter, mobile/auto footers), so a mid-message "Thanks,"
+    /// is never mistaken for one. The signature is only hidden from this glance,
+    /// not lost: the raw body and the HTML Web View still carry it in full.
     public static func fold(_ body: String) -> Folded {
-        let parsed = Klartext.parse(plainText: body, options: .init(separateSignature: false))
+        let parsed = Klartext.parse(plainText: body)
         return Folded(visible: parsed.visible, quoted: parsed.quoted)
     }
 

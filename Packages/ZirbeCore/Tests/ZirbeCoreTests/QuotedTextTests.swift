@@ -51,6 +51,22 @@ final class QuotedTextTests: XCTestCase {
         XCTAssertEqual(folded.quoted, "-----Original Message-----\nFrom: Pat")
     }
 
+    func testFoldDropsTrailingSignature() {
+        // A `-- ` delimited signature is split off the bubble's visible text; the
+        // delimiter and the lines under it do not show. No quote here.
+        let body = "Sounds good, shipping it.\n\n--\nDavid Anderson\nConsultant"
+        let folded = QuotedText.fold(body)
+        XCTAssertEqual(folded.visible, "Sounds good, shipping it.")
+        XCTAssertNil(folded.quoted)
+    }
+
+    func testFoldDropsMobileFooterSignature() {
+        let body = "On my way.\n\nSent from my iPhone"
+        let folded = QuotedText.fold(body)
+        XCTAssertEqual(folded.visible, "On my way.")
+        XCTAssertNil(folded.quoted)
+    }
+
     func testFoldReturnsNoQuoteWhenNoneFound() {
         let body = "Just a plain note with no history."
         let folded = QuotedText.fold(body)
