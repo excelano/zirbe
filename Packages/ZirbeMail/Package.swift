@@ -32,12 +32,16 @@ let package = Package(
             url: "https://github.com/apple/swift-nio-ssl",
             revision: "407d82d5b6cc00e1c3fb83a81b1539b70c788c5e"
         ),
+        // Klartext reduces an HTML body to text (MailEngine's fetch path). Content
+        // only, on-device, SwiftSoup-backed.
+        .package(url: "https://github.com/excelano/klartext", from: "0.2.0"),
     ],
     targets: [
         .target(
             name: "ZirbeMail",
             dependencies: [
                 .product(name: "SwiftMail", package: "SwiftMail"),
+                .product(name: "Klartext", package: "klartext"),
             ]
         ),
         // macOS-only example. Exercises the adapter against a real account

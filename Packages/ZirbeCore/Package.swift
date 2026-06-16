@@ -18,6 +18,9 @@ let package = Package(
     dependencies: [
         .package(path: "../ZirbeMail"),
         .package(url: "https://github.com/groue/GRDB.swift", from: "7.0.0"),
+        // Klartext owns quote seam detection and trailer synthesis; QuotedText is
+        // now the Zirbe-domain adapter over it.
+        .package(url: "https://github.com/excelano/klartext", from: "0.2.0"),
     ],
     targets: [
         .target(
@@ -25,6 +28,7 @@ let package = Package(
             dependencies: [
                 .product(name: "ZirbeMail", package: "ZirbeMail"),
                 .product(name: "GRDB", package: "GRDB.swift"),
+                .product(name: "Klartext", package: "klartext"),
             ]
         ),
         // macOS-only example: fetch a real INBOX, store it, and print the

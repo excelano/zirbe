@@ -10,6 +10,7 @@
 // between operations can be transparently restored. Nothing is persisted.
 
 import Foundation
+import Klartext
 import Logging
 import SwiftMail
 
@@ -136,7 +137,7 @@ public actor MailEngine {
                    !plain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     bodies[c.id] = MessageBody(text: plain, hasHTML: hasHTML)
                 } else if let html = text(of: c.html, uid: c.uid) {
-                    let reduced = HTMLText.plainText(from: html)
+                    let reduced = Klartext.plainText(fromHTML: html)
                     if !reduced.isEmpty { bodies[c.id] = MessageBody(text: reduced, hasHTML: true) }
                 }
             }
