@@ -26,6 +26,12 @@ struct ConversationView: View {
     /// The message currently shown as its HTML web view, taking over the whole
     /// conversation tray; nil when the tray shows the normal chat of bubbles.
     @State private var activeWeb: ActiveWeb?
+    /// When set, an HTML email opens straight in its Web View instead of the text
+    /// bubble (the user opted out of the text-first default in Settings).
+    @AppStorage(SettingsKeys.openHTMLInWebView) private var openHTMLInWebView = false
+    /// When set, the Web View loads remote images by default rather than blocking
+    /// them.
+    @AppStorage(SettingsKeys.loadRemoteImages) private var loadRemoteImages = false
 
     /// A message switched to its web view: the fetched HTML and whether remote
     /// images are shown. Replaces the chat tray while set.
@@ -85,12 +91,27 @@ struct ConversationView: View {
             let loaded = await model.conversation(id: summary.id)
             thread = loaded
             isLoading = false
-            if let loaded { await model.markReadOnOpen(loaded) }
+            if let loaded {
+                await model.markReadOnOpen(loaded)
+                await openWebViewIfPreferred(loaded)
+            }
         }
     }
 
     private var subjectTitle: String {
         summary.subject.isEmpty ? "(no subject)" : summary.subject
+    }
+
+    /// With the "open HTML in Web View" preference on, render the conversation's
+    /// newest message in its Web View right away when that message is HTML, images
+    /// per the image preference. The tray's "Text View" button returns to the
+    /// chat of bubbles, so this is just the starting view, not a one-way door.
+    private func openWebViewIfPreferred(_ thread: ZirbeCore.Thread) async {
+        guard openHTMLInWebView, activeWeb == nil,
+              let latest = thread.messages.last, latest.hasHTML else { return }
+        if let html = await model.htmlBody(for: latest.id) {
+            activeWeb = ActiveWeb(html: html, showImages: loadRemoteImages)
+        }
     }
 
     private func conversation(_ thread: ZirbeCore.Thread) -> some View {
@@ -449,8 +470,12 @@ private struct MessageBubble: View {
 
     @State private var quoteExpanded = false
     /// Which action is fetching, so only the tapped button shows a spinner: nil
-    /// when idle, true for the show-images button, false for the plain one.
+    /// when idle, true for an images-on open, false for an images-blocked one.
     @State private var loadingWithImages: Bool?
+    /// Whether the Web View loads remote images by default. When on, the single
+    /// "Web View" button opens with images and the separate "Show Images" shortcut
+    /// is dropped as redundant.
+    @AppStorage(SettingsKeys.loadRemoteImages) private var loadRemoteImages = false
 
     var body: some View {
         HStack {
@@ -521,13 +546,18 @@ private struct MessageBubble: View {
         HStack(spacing: 0) {
             WebControlButton(
                 title: "Web View", systemImage: "safari", edge: .leading,
-                isLoading: loadingWithImages == false
-            ) { openWebView(showImages: false) }
-            Divider().frame(height: 18)
-            WebControlButton(
-                title: "Show Images", systemImage: "eye", edge: .trailing,
-                isLoading: loadingWithImages == true
-            ) { openWebView(showImages: true) }
+                isLoading: loadingWithImages == loadRemoteImages
+            ) { openWebView(showImages: loadRemoteImages) }
+            // When images already load by default the second button would just
+            // repeat the first, so it only appears in the privacy-default mode as
+            // the one-tap way to bring images in.
+            if !loadRemoteImages {
+                Divider().frame(height: 18)
+                WebControlButton(
+                    title: "Show Images", systemImage: "eye", edge: .trailing,
+                    isLoading: loadingWithImages == true
+                ) { openWebView(showImages: true) }
+            }
         }
         .disabled(loadingWithImages != nil)
         // Same size as the email body, in a tone sitting between the faint
