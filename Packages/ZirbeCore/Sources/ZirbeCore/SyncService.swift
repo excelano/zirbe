@@ -103,14 +103,21 @@ public actor SyncService {
         return try await store.thread(id: id)
     }
 
-    /// Fetch one message's raw HTML for the Web View, by message id. Resolves the
-    /// message's server reference from the store, then pulls the HTML part over
-    /// the warm session. Returns nil when the message is unknown, purely local, or
+    /// Fetch one message's HTML for the Web View, by message id, with its inline
+    /// images resolved to bytes. Resolves the message's server reference from the
+    /// store, then pulls the HTML part and any `cid:`-referenced images over the
+    /// warm session. Returns nil when the message is unknown, purely local, or
     /// carries no HTML. The password is per call, as elsewhere.
-    public func fetchHTMLBody(messageID: String, password: String) async throws -> String? {
+    public func fetchHTMLBody(messageID: String, password: String) async throws -> WebViewBody? {
         guard let ref = try await store.messageRef(id: messageID) else { return nil }
         try await engine.connect(username: account.username, password: password)
-        return try await engine.fetchHTMLBody(in: ref.mailbox, uid: ref.uid)
+        guard let body = try await engine.fetchHTMLBody(in: ref.mailbox, uid: ref.uid) else { return nil }
+        return WebViewBody(
+            html: body.html,
+            inlineImages: body.images.map {
+                InlineImage(contentID: $0.contentID, mimeType: $0.mimeType, data: $0.data)
+            }
+        )
     }
 
     /// Send a composed draft, then make it visible immediately.

@@ -11,6 +11,7 @@
 import SwiftUI
 import UIKit
 import ZirbeCore
+import KlartextUI
 
 struct ConversationView: View {
     let model: InboxModel
@@ -33,10 +34,14 @@ struct ConversationView: View {
     /// them.
     @AppStorage(SettingsKeys.loadRemoteImages) private var loadRemoteImages = false
 
-    /// A message switched to its web view: the fetched HTML and whether remote
-    /// images are shown. Replaces the chat tray while set.
+    /// A message switched to its web view: which message, the fetched body (HTML
+    /// plus inline images), and whether remote images are shown. Replaces the chat
+    /// tray while set. The message id keys the web view's identity so SwiftUI
+    /// rebuilds it (a fresh `cid:` handler) when a different message opens, per
+    /// EmailHTMLView's contract.
     private struct ActiveWeb {
-        var html: String
+        var messageID: String
+        var body: WebViewBody
         var showImages: Bool
     }
 
@@ -114,8 +119,8 @@ struct ConversationView: View {
     private func prepareInitialWebView(_ thread: ZirbeCore.Thread) async {
         guard openHTMLInWebView,
               let latest = thread.messages.last, latest.hasHTML else { return }
-        if let html = await model.htmlBody(for: latest.id) {
-            activeWeb = ActiveWeb(html: html, showImages: loadRemoteImages)
+        if let body = await model.htmlBody(for: latest.id) {
+            activeWeb = ActiveWeb(messageID: latest.id, body: body, showImages: loadRemoteImages)
         }
     }
 
@@ -139,8 +144,8 @@ struct ConversationView: View {
                         isOwn: isOwn(message),
                         hasTail: isLastInRun(at: index, in: messages),
                         showSender: !isOwn(message) && isFirstOfRun(at: index, in: messages),
-                        onShowWeb: { html, showImages in
-                            activeWeb = ActiveWeb(html: html, showImages: showImages)
+                        onShowWeb: { body, showImages in
+                            activeWeb = ActiveWeb(messageID: message.id, body: body, showImages: showImages)
                         }
                     )
                     .padding(.top, index > 0 && isFirstOfRun(at: index, in: messages) ? 8 : 0)
@@ -173,8 +178,22 @@ struct ConversationView: View {
             .padding(.horizontal)
             .padding(.vertical, 8)
             Divider()
-            HTMLWebView(html: active.html, allowRemoteContent: active.showImages)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            EmailHTMLView(
+                content: EmailContent(
+                    html: active.body.html,
+                    parts: active.body.inlineImages.map {
+                        EmailPart(
+                            mimeType: $0.mimeType,
+                            contentID: $0.contentID,
+                            disposition: .inline,
+                            data: $0.data
+                        )
+                    }
+                ),
+                allowRemoteContent: active.showImages
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .id(active.messageID)
         }
     }
 
@@ -469,9 +488,10 @@ private struct MessageBubble: View {
     /// Whether to show the sender's name above, set once atop a run of incoming
     /// messages.
     let showSender: Bool
-    /// Hand the fetched HTML up so the conversation can take over its tray with
-    /// the web view: the markup and whether to show images on open.
-    let onShowWeb: (_ html: String, _ showImages: Bool) -> Void
+    /// Hand the fetched body up so the conversation can take over its tray with
+    /// the web view: the HTML plus inline images, and whether to show remote
+    /// images on open.
+    let onShowWeb: (_ body: WebViewBody, _ showImages: Bool) -> Void
 
     @State private var quoteExpanded = false
     /// Which action is fetching, so only the tapped button shows a spinner: nil
@@ -570,16 +590,16 @@ private struct MessageBubble: View {
         .foregroundStyle(isOwn ? AnyShapeStyle(Color.white.opacity(0.85)) : AnyShapeStyle(.secondary))
     }
 
-    /// Fetch the message's raw HTML, then hand it up so the conversation takes
-    /// over its tray with the web view, with images on or off per the button
-    /// tapped. A failure is left to the model (it sets `errorMessage`); nothing
-    /// happens here.
+    /// Fetch the message's HTML and inline images, then hand them up so the
+    /// conversation takes over its tray with the web view, with remote images on
+    /// or off per the button tapped. A failure is left to the model (it sets
+    /// `errorMessage`); nothing happens here.
     private func openWebView(showImages: Bool) {
         loadingWithImages = showImages
         Task {
-            let html = await model.htmlBody(for: message.id)
+            let body = await model.htmlBody(for: message.id)
             loadingWithImages = nil
-            if let html { onShowWeb(html, showImages) }
+            if let body { onShowWeb(body, showImages) }
         }
     }
 

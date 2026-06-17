@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		6BD51CE72FD7C5660091C368 /* ZirbeCore in Frameworks */ = {isa = PBXBuildFile; productRef = 6BD51CE62FD7C5660091C368 /* ZirbeCore */; };
+		6BD51CF22FD7C5660091C368 /* KlartextUI in Frameworks */ = {isa = PBXBuildFile; productRef = 6BD51CF12FD7C5660091C368 /* KlartextUI */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -28,6 +29,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				6BD51CE72FD7C5660091C368 /* ZirbeCore in Frameworks */,
+				6BD51CF22FD7C5660091C368 /* KlartextUI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -71,6 +73,7 @@
 			name = Zirbe;
 			packageProductDependencies = (
 				6BD51CE62FD7C5660091C368 /* ZirbeCore */,
+				6BD51CF12FD7C5660091C368 /* KlartextUI */,
 			);
 			productName = Zirbe;
 			productReference = 6BD51CD72FD7C4D60091C368 /* Zirbe.app */;
@@ -102,6 +105,7 @@
 			minimizedProjectReferenceProxies = 1;
 			packageReferences = (
 				6BD51CE52FD7C5660091C368 /* XCLocalSwiftPackageReference "../Packages/ZirbeCore" */,
+				6BD51CF02FD7C5660091C368 /* XCRemoteSwiftPackageReference "klartext" */,
 			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 6BD51CD82FD7C4D60091C368 /* Products */;
@@ -351,10 +355,26 @@
 		};
 /* End XCLocalSwiftPackageReference section */
 
+/* Begin XCRemoteSwiftPackageReference section */
+		6BD51CF02FD7C5660091C368 /* XCRemoteSwiftPackageReference "klartext" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/excelano/klartext";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 1.0.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
 /* Begin XCSwiftPackageProductDependency section */
 		6BD51CE62FD7C5660091C368 /* ZirbeCore */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = ZirbeCore;
+		};
+		6BD51CF12FD7C5660091C368 /* KlartextUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 6BD51CF02FD7C5660091C368 /* XCRemoteSwiftPackageReference "klartext" */;
+			productName = KlartextUI;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

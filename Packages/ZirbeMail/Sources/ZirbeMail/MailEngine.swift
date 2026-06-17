@@ -147,22 +147,76 @@ public actor MailEngine {
 
     /// Fetch one message's raw HTML body, over the warm session, for the Web
     /// View. Unlike `fetchTextBodies` this returns the markup verbatim (not
-    /// reduced to text), so a `WKWebView` can render it. Returns nil when the
-    /// message has no HTML alternative. Only the HTML text part is downloaded,
-    /// never attachments, and no remote resources it references are touched here;
-    /// loading those is the renderer's decision, off by default.
-    public func fetchHTMLBody(in mailbox: String, uid: UInt32) async throws -> String? {
+    /// reduced to text), so a `WKWebView` can render it, along with the inline
+    /// images the markup references by `cid:` so the renderer can paint embedded
+    /// logos and signature graphics from on-device bytes. Returns nil when the
+    /// message has no HTML alternative.
+    ///
+    /// The HTML part and the referenced inline images are pulled in one pipelined
+    /// round trip. Only `image/*` parts carrying a Content-ID the HTML actually
+    /// references are kept; unreferenced inline parts and real attachments are
+    /// never carried out. No remote resources the markup points at are touched
+    /// here; loading those is the renderer's decision, off by default.
+    public func fetchHTMLBody(in mailbox: String, uid: UInt32) async throws -> HTMLBody? {
         try await perform {
             _ = try await self.server.selectMailbox(mailbox)
             let u = UID(uid)
             let structure = try await self.server.fetchStructure(u)
-            guard let html = Self.textLeaf(in: structure, type: "text/html") else { return nil }
-            let fetched = try await self.server.fetchPartsPipelined(parts: [(u, html.section)])
-            guard let data = fetched[u]?.first(where: { $0.section == html.section })?.data else { return nil }
-            var filled = html
-            filled.data = data
-            return filled.textContent
+            guard let htmlPart = Self.textLeaf(in: structure, type: "text/html") else { return nil }
+
+            // Inline image candidates: image parts carrying a Content-ID. Fetch
+            // them alongside the HTML in one round trip, then keep only the ones
+            // the rendered HTML references once we can read it.
+            let imageParts = structure.filter {
+                $0.contentId != nil && $0.contentType.lowercased().hasPrefix("image/")
+            }
+            let requests = [(u, htmlPart.section)] + imageParts.map { (u, $0.section) }
+            let fetched = try await self.server.fetchPartsPipelined(parts: requests)
+            func bytes(of part: MessagePart) -> Data? {
+                fetched[u]?.first(where: { $0.section == part.section })?.data
+            }
+
+            guard let htmlData = bytes(of: htmlPart) else { return nil }
+            var filledHTML = htmlPart
+            filledHTML.data = htmlData
+            guard let html = filledHTML.textContent else { return nil }
+
+            let referenced = Self.referencedCIDs(in: html)
+            let images: [InlineImagePart] = imageParts.compactMap { part in
+                guard let cid = part.contentId,
+                      referenced.contains(Self.normalizeCID(cid)),
+                      let raw = bytes(of: part) else { return nil }
+                var filled = part
+                filled.data = raw
+                guard let decoded = filled.decodedData() else { return nil }
+                let mime = part.contentType.components(separatedBy: ";").first?
+                    .trimmingCharacters(in: .whitespaces) ?? part.contentType
+                return InlineImagePart(contentID: cid, mimeType: mime, data: decoded)
+            }
+            return HTMLBody(html: html, images: images)
         }
+    }
+
+    /// The normalized Content-IDs an HTML body references via `cid:` URLs (in an
+    /// `<img src>`, a CSS `url()`, anywhere), so only inline parts the page
+    /// actually paints are shipped to the renderer.
+    private static func referencedCIDs(in html: String) -> Set<String> {
+        guard let regex = try? NSRegularExpression(
+            pattern: "cid:([^\"'\\s)>]+)", options: .caseInsensitive
+        ) else { return [] }
+        let range = NSRange(html.startIndex..., in: html)
+        var ids: Set<String> = []
+        for match in regex.matches(in: html, range: range) {
+            guard let r = Range(match.range(at: 1), in: html) else { continue }
+            ids.insert(normalizeCID(String(html[r])))
+        }
+        return ids
+    }
+
+    /// Strip angle brackets and whitespace and lowercase, so a part's `<id@host>`
+    /// matches the HTML's bare `cid:id@host`. Mirrors KlartextUI's normalization.
+    private static func normalizeCID(_ contentID: String) -> String {
+        contentID.trimmingCharacters(in: CharacterSet(charactersIn: "<> \t")).lowercased()
     }
 
     /// Save a copy of a just-sent message to the server's Sent mailbox, over the

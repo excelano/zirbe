@@ -210,12 +210,12 @@ public final class InboxModel {
         await markRead(threadID: thread.id, read: true)
     }
 
-    /// Fetch one message's raw HTML for the Web View, on demand when the user
-    /// taps it. Returns nil if not connected, the message is unknown, or it has no
-    /// HTML, with any error in `errorMessage`. The markup is not cached; it is
-    /// pulled fresh each open, since it is only needed while the reader is looking
-    /// at it.
-    public func htmlBody(for messageID: String) async -> String? {
+    /// Fetch one message's HTML for the Web View, with its inline images, on
+    /// demand when the user taps it. Returns nil if not connected, the message is
+    /// unknown, or it has no HTML, with any error in `errorMessage`. The body is
+    /// not cached; it is pulled fresh each open, since it is only needed while the
+    /// reader is looking at it.
+    public func htmlBody(for messageID: String) async -> WebViewBody? {
         guard let password else {
             errorMessage = "Connect an account first."
             return nil
