@@ -89,12 +89,14 @@ struct ConversationView: View {
         }
         .task {
             let loaded = await model.conversation(id: summary.id)
+            // Decide the starting view before revealing anything: with the HTML-in-
+            // Web-View preference on, fetch the newest message's HTML while the
+            // loading spinner is still up, so the conversation opens straight into
+            // the web view instead of flashing the text bubbles first.
+            if let loaded { await prepareInitialWebView(loaded) }
             thread = loaded
             isLoading = false
-            if let loaded {
-                await model.markReadOnOpen(loaded)
-                await openWebViewIfPreferred(loaded)
-            }
+            if let loaded { await model.markReadOnOpen(loaded) }
         }
     }
 
@@ -102,12 +104,15 @@ struct ConversationView: View {
         summary.subject.isEmpty ? "(no subject)" : summary.subject
     }
 
-    /// With the "open HTML in Web View" preference on, render the conversation's
-    /// newest message in its Web View right away when that message is HTML, images
-    /// per the image preference. The tray's "Text View" button returns to the
-    /// chat of bubbles, so this is just the starting view, not a one-way door.
-    private func openWebViewIfPreferred(_ thread: ZirbeCore.Thread) async {
-        guard openHTMLInWebView, activeWeb == nil,
+    /// With the "open HTML in Web View" preference on, fetch the newest message's
+    /// HTML and set it as the active web view BEFORE the conversation is revealed,
+    /// so it opens straight into the web view with no flash of the text bubbles.
+    /// Falls through to the chat of bubbles when the preference is off, the newest
+    /// message isn't HTML, or the fetch fails. The tray's "Text View" button still
+    /// returns to the bubbles, so this is only the starting view, not a one-way
+    /// door. Images load per the image preference.
+    private func prepareInitialWebView(_ thread: ZirbeCore.Thread) async {
+        guard openHTMLInWebView,
               let latest = thread.messages.last, latest.hasHTML else { return }
         if let html = await model.htmlBody(for: latest.id) {
             activeWeb = ActiveWeb(html: html, showImages: loadRemoteImages)
