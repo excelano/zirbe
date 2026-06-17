@@ -81,6 +81,40 @@ final class QuotedTextTests: XCTestCase {
         XCTAssertEqual(folded.quoted, body)
     }
 
+    // MARK: - Snippet (inbox preview)
+
+    func testSnippetIsTheNewContentOnly() {
+        // The quoted history and a trailing signature are dropped, leaving just
+        // the new words for the row.
+        let body = """
+        Thanks David, I pulled the numbers and they hold up.
+
+        --
+        Pat
+
+        On Jan 1, 1970, at 12:00 AM, David wrote:
+        > what did the budget look like
+        """
+        XCTAssertEqual(QuotedText.snippet(body), "Thanks David, I pulled the numbers and they hold up.")
+    }
+
+    func testSnippetCollapsesToOneLine() {
+        let body = "First paragraph.\n\nSecond paragraph."
+        XCTAssertFalse(QuotedText.snippet(body).contains("\n"))
+        XCTAssertEqual(QuotedText.snippet(body), "First paragraph. Second paragraph.")
+    }
+
+    func testSnippetBoundsLengthOnWordBoundary() {
+        let body = String(repeating: "word ", count: 100)
+        let snippet = QuotedText.snippet(body, maxLength: 40)
+        XCTAssertLessThanOrEqual(snippet.count, 40)
+        XCTAssertFalse(snippet.hasSuffix("wor"))
+    }
+
+    func testSnippetOfEmptyBodyIsEmpty() {
+        XCTAssertEqual(QuotedText.snippet(""), "")
+    }
+
     // MARK: - Quote trailer (outgoing)
 
     func testQuoteTrailerHasAttributionAndPrefixedBody() {

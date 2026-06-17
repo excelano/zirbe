@@ -186,7 +186,8 @@ struct InboxView: View {
     }
 }
 
-/// One inbox row: unread dot, subject, relative time, and the participants.
+/// One inbox row: unread dot, subject, relative time, the participants, and a
+/// one-line preview of the newest message when its body has been fetched.
 private struct ThreadRow: View {
     let summary: ThreadSummary
 
@@ -213,6 +214,12 @@ private struct ThreadRow: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
+                if let preview = summary.preview, !preview.isEmpty {
+                    Text(preview)
+                        .font(.footnote)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
             }
         }
         .padding(.vertical, 4)

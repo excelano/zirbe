@@ -54,6 +54,11 @@ public struct ThreadSummary: Sendable, Hashable, Identifiable {
     public var lastActivity: Date?
     public var isUnread: Bool
     public var messageCount: Int
+    /// A one-line preview of the thread's most recent message, shown under the
+    /// participants in the inbox row. Nil until the latest message's body has
+    /// been fetched (the sync backfills it), or when that body reduces to nothing
+    /// worth showing.
+    public var preview: String?
 
     public init(
         id: String,
@@ -61,7 +66,8 @@ public struct ThreadSummary: Sendable, Hashable, Identifiable {
         participants: [Participant],
         lastActivity: Date?,
         isUnread: Bool,
-        messageCount: Int
+        messageCount: Int,
+        preview: String? = nil
     ) {
         self.id = id
         self.subject = subject
@@ -69,5 +75,6 @@ public struct ThreadSummary: Sendable, Hashable, Identifiable {
         self.lastActivity = lastActivity
         self.isUnread = isUnread
         self.messageCount = messageCount
+        self.preview = preview
     }
 }

@@ -85,6 +85,10 @@ struct ThreadRow: Codable, FetchableRecord, PersistableRecord {
     var isUnread: Bool
     var messageCount: Int
     var participants: [Participant]
+    /// A one-line preview of the thread's newest message, computed from its
+    /// cached body so the inbox list reads it directly without parsing per row.
+    /// Recomputed on every rethread; nil until that body is fetched.
+    var snippet: String?
 
     init(_ thread: Thread, accountID: String) {
         self.id = thread.id
@@ -94,6 +98,11 @@ struct ThreadRow: Codable, FetchableRecord, PersistableRecord {
         self.isUnread = thread.isUnread
         self.messageCount = thread.messageCount
         self.participants = thread.participants
+        let latest = thread.messages.max {
+            ($0.date ?? .distantPast) < ($1.date ?? .distantPast)
+        }
+        let glance = latest?.bodyText.map { QuotedText.snippet($0) } ?? ""
+        self.snippet = glance.isEmpty ? nil : glance
     }
 
     var summary: ThreadSummary {
@@ -103,7 +112,8 @@ struct ThreadRow: Codable, FetchableRecord, PersistableRecord {
             participants: participants,
             lastActivity: lastActivity,
             isUnread: isUnread,
-            messageCount: messageCount
+            messageCount: messageCount,
+            preview: snippet
         )
     }
 }
@@ -359,6 +369,27 @@ public final class MailStore: @unchecked Sendable {
         }
     }
 
+    /// The latest message of each thread that still lacks a cached body but has a
+    /// server UID, so a sync can fetch just those to fill the inbox preview
+    /// snippets. At most one row per thread (the most recent), keeping the extra
+    /// fetch proportional to the thread count rather than the message count, and
+    /// skipping threads whose newest message is already cached.
+    public func latestMessagesNeedingBodies(accountID: String) async throws -> [(id: String, uid: UInt32, mailbox: String)] {
+        try await dbQueue.read { db in
+            let rows = try MessageRow
+                .filter(Column("accountID") == accountID && Column("threadID") != nil)
+                .fetchAll(db)
+            return Dictionary(grouping: rows, by: { $0.threadID ?? "" })
+                .compactMap { _, group -> (id: String, uid: UInt32, mailbox: String)? in
+                    guard let latest = group.max(by: {
+                        ($0.date ?? .distantPast) < ($1.date ?? .distantPast)
+                    }) else { return nil }
+                    guard latest.bodyText == nil, let uid = latest.uid else { return nil }
+                    return (id: latest.id, uid: UInt32(truncatingIfNeeded: uid), mailbox: latest.mailboxName)
+                }
+        }
+    }
+
     /// A full conversation: the thread and its messages, oldest first.
     public func thread(id: String) async throws -> Thread? {
         try await dbQueue.read { db in
@@ -452,6 +483,15 @@ public final class MailStore: @unchecked Sendable {
         migrator.registerMigration("v4-hashtml") { db in
             try db.alter(table: "message") { t in
                 t.add(column: "hasHTML", .boolean).notNull().defaults(to: false)
+            }
+        }
+        // Inbox preview snippets: a thread now caches a one-line glance of its
+        // newest message for the list row. Nullable and recomputed on every
+        // rethread (which rewrites the thread rows wholesale), so existing rows
+        // get a snippet on the next sync as their latest body is backfilled.
+        migrator.registerMigration("v5-thread-snippet") { db in
+            try db.alter(table: "thread") { t in
+                t.add(column: "snippet", .text)
             }
         }
         return migrator

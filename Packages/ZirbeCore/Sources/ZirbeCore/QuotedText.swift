@@ -38,6 +38,21 @@ public enum QuotedText {
         return Folded(visible: parsed.visible, quoted: parsed.quoted)
     }
 
+    /// A one-line glance of a body for the inbox row. Klartext's preview strips
+    /// the salutation, signature, and quoted history down to just the new
+    /// content, which is exactly what a list row wants; this collapses that to a
+    /// single line and bounds it so a long paragraph doesn't bloat the stored
+    /// snippet. Empty when the body reduces to nothing shown (an image-only mail),
+    /// which the caller treats as "no preview" rather than a blank line.
+    public static func snippet(_ body: String, maxLength: Int = 160) -> String {
+        Klartext.parse(plainText: body)
+            .preview(maxLength: maxLength)
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+    }
+
     /// Compose the body of a reply: the user's words, then a blank line, then the
     /// conventional quote trailer for the message being answered (normally the
     /// conversation's most recent). Locale and time zone control the attribution

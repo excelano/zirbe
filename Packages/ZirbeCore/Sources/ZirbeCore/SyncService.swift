@@ -75,6 +75,32 @@ public actor SyncService {
         )
         try await store.rethread(accountID: account.id)
 
+        // Backfill each thread's newest message body so the inbox row shows a
+        // preview snippet. Only threads whose latest message isn't already cached
+        // are fetched, grouped by mailbox over the warm session; a second
+        // rethread then recomputes the snippets from the fresh bodies. This also
+        // makes the first open of those threads instant, since the body is now
+        // cached. Best effort: a fetch failure here leaves the snippet empty
+        // rather than failing the whole sync, so the inbox still updates.
+        do {
+            let needing = try await store.latestMessagesNeedingBodies(accountID: account.id)
+            if !needing.isEmpty {
+                var bodies: [String: (text: String, hasHTML: Bool)] = [:]
+                for (mailbox, group) in Dictionary(grouping: needing, by: \.mailbox) {
+                    let fetched = try await engine.fetchTextBodies(
+                        in: mailbox,
+                        messages: group.map { (id: $0.id, uid: $0.uid) }
+                    )
+                    for (id, body) in fetched { bodies[id] = (text: body.text, hasHTML: body.hasHTML) }
+                }
+                try await store.storeBodies(bodies)
+                try await store.rethread(accountID: account.id)
+            }
+        } catch {
+            // Snippets are a convenience; a failure to backfill them must not
+            // sink a sync that already reconciled the inbox.
+        }
+
         return try await store.threadSummaries(accountID: account.id)
     }
 
