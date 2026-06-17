@@ -29,8 +29,16 @@ struct HTMLWebView: UIViewRepresentable {
     func makeUIView(context: Context) -> WKWebView {
         let webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
         webView.navigationDelegate = context.coordinator
-        webView.isOpaque = false
-        webView.backgroundColor = .clear
+        // Email HTML is authored for a light canvas: senders set dark text against
+        // an assumed white background and rarely supply one of their own. Render on
+        // an opaque white canvas in a forced-light context (the way Apple Mail
+        // does) so a plain text-as-HTML mail can't come out dark-on-dark in Dark
+        // Mode, and the sender's own dark Web View backdrop never shows through.
+        // The document declares color-scheme: light too (see prepared()).
+        webView.isOpaque = true
+        webView.backgroundColor = .white
+        webView.scrollView.backgroundColor = .white
+        webView.overrideUserInterfaceStyle = .light
         return webView
     }
 
@@ -87,7 +95,13 @@ struct HTMLWebView: UIViewRepresentable {
                 of: "name=[\"']?viewport", options: [.regularExpression, .caseInsensitive]
             ) != nil
             let head = (hasViewport ? "" : #"<meta name="viewport" content="width=device-width, initial-scale=1">"#)
-                + "<style>img,video{max-width:100%;height:auto;}body{margin:0;-webkit-text-size-adjust:100%;}</style>"
+                // Render light: declare the page light-only so WebKit won't auto-
+                // darken it and the sender's own prefers-color-scheme:dark rules stay
+                // dormant, and default the canvas to white so a mail that sets text
+                // color but no background reads as dark-on-white, not dark-on-dark. A
+                // mail that supplies its own background still wins (no !important).
+                + #"<meta name="color-scheme" content="light">"#
+                + "<style>img,video{max-width:100%;height:auto;}html,body{background:#fff;}body{margin:0;-webkit-text-size-adjust:100%;}</style>"
 
             // Slip the head into the document where one belongs, or wrap a bare
             // fragment in a minimal document.
@@ -100,12 +114,18 @@ struct HTMLWebView: UIViewRepresentable {
             return "<!DOCTYPE html><html><head>\(head)</head><body>\(html)</body></html>"
         }
 
-        /// Once the page is laid out, shrink it to fit when its content is wider
-        /// than the tray. The viewport injection handles emails that simply lacked
-        /// one, but a fixed-width layout (a hard-coded wide table, common in order
-        /// and newsletter mail) still overflows. Measuring the real content width
-        /// and rewriting the viewport to lay out at that width and scale down zooms
-        /// the whole page to fit without reflowing or distorting its layout.
+        /// The smallest the fit-to-width zoom is allowed to shrink a page. Below
+        /// this, the text would be too small to read, so the page stops scaling and
+        /// its over-wide content scrolls sideways instead. Tunable; dialed in on
+        /// device (lower = fits more across but smaller text; higher = bigger text
+        /// but more horizontal scroll on very wide mail).
+        /// Once the page is laid out, zoom it to fit when its content is wider than
+        /// the tray. The viewport injection handles emails that simply lacked one,
+        /// but a fixed-width layout (a hard-coded wide table, common in order and
+        /// newsletter mail like AliExpress receipts) still overflows. Measuring the
+        /// real content width and rewriting the viewport to lay out at that width
+        /// and scale down zooms the whole page to fit without reflowing or
+        /// distorting its layout, so it never needs sideways scrolling.
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             let js = """
             (function() {
