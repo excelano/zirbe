@@ -289,6 +289,18 @@ public actor MailEngine {
         }
     }
 
+    /// Set or clear the `\Flagged` flag on messages, over the warm session, so a
+    /// flag toggled locally is reflected on the server and every client agrees. A
+    /// no-op when no UIDs are given.
+    public func setFlagged(_ flagged: Bool, in mailbox: String, uids: [UInt32]) async throws {
+        guard !uids.isEmpty else { return }
+        try await perform {
+            _ = try await self.server.selectMailbox(mailbox)
+            let set = UIDSet(uids.map(UID.init))
+            try await self.server.store(flags: [.flagged], on: set, operation: flagged ? .add : .remove)
+        }
+    }
+
     /// Move messages to the server's Trash, over the warm session. SwiftMail
     /// resolves the special-use Trash mailbox (falling back to a folder named
     /// "Trash"), so deleting a conversation here matches deleting it in any other

@@ -40,6 +40,10 @@ public struct Thread: Sendable, Hashable, Identifiable {
     /// A thread is unread if any of its messages is unread.
     public var isUnread: Bool { messages.contains { !$0.isSeen } }
 
+    /// A thread is flagged if any of its messages is flagged, mirroring how
+    /// unread reads across the thread.
+    public var isFlagged: Bool { messages.contains(where: \.isFlagged) }
+
     public var messageCount: Int { messages.count }
 }
 
@@ -53,6 +57,8 @@ public struct ThreadSummary: Sendable, Hashable, Identifiable {
     public var participants: [Participant]
     public var lastActivity: Date?
     public var isUnread: Bool
+    /// Whether the thread is flagged, for the triage marker on the inbox row.
+    public var isFlagged: Bool
     public var messageCount: Int
     /// A one-line preview of the thread's most recent message, shown under the
     /// participants in the inbox row. Nil until the latest message's body has
@@ -66,6 +72,7 @@ public struct ThreadSummary: Sendable, Hashable, Identifiable {
         participants: [Participant],
         lastActivity: Date?,
         isUnread: Bool,
+        isFlagged: Bool = false,
         messageCount: Int,
         preview: String? = nil
     ) {
@@ -74,6 +81,7 @@ public struct ThreadSummary: Sendable, Hashable, Identifiable {
         self.participants = participants
         self.lastActivity = lastActivity
         self.isUnread = isUnread
+        self.isFlagged = isFlagged
         self.messageCount = messageCount
         self.preview = preview
     }

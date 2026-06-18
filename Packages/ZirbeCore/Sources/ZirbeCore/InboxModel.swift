@@ -227,6 +227,27 @@ public final class InboxModel {
         await markRead(threadID: thread.id, read: true)
     }
 
+    /// Flag or unflag one or more conversations, reflecting each on the server
+    /// and then refreshing the inbox rows once, mirroring `markRead`. Errors
+    /// surface in `errorMessage`.
+    public func markFlagged(threadIDs: [String], flagged: Bool) async {
+        guard let password else {
+            errorMessage = "Connect an account first."
+            return
+        }
+        await attempt {
+            for id in threadIDs {
+                try await self.sync.setFlagged(threadID: id, flagged: flagged, password: password)
+            }
+            self.summaries = try await self.store.threadSummaries(accountID: self.account.id)
+        }
+    }
+
+    /// Flag or unflag a single conversation.
+    public func markFlagged(threadID: String, flagged: Bool) async {
+        await markFlagged(threadIDs: [threadID], flagged: flagged)
+    }
+
     /// Fetch one message's HTML for the Web View, with its inline images, on
     /// demand when the user taps it. Returns nil if not connected, the message is
     /// unknown, or it has no HTML, with any error in `errorMessage`. The body is

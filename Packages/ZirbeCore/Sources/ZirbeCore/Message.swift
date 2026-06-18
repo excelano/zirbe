@@ -72,6 +72,9 @@ public struct Message: Sendable, Hashable, Identifiable {
     /// Whether the message has been read.
     public var isSeen: Bool { flags.contains(.seen) }
 
+    /// Whether the message is flagged (`\Flagged`), the lightweight triage marker.
+    public var isFlagged: Bool { flags.contains(.flagged) }
+
     /// Stable identity for lists and storage: the Message-ID when present, then
     /// the UID, then a content-derived fallback for the rare header-less case.
     public var id: String {

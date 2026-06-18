@@ -29,6 +29,14 @@ struct InboxView: View {
 
     private var isSelecting: Bool { editMode == .active }
 
+    /// Whether every selected conversation is already flagged, so the bulk Flag
+    /// button reads as Unflag and clears them rather than re-flagging.
+    private var allSelectedFlagged: Bool {
+        !selection.isEmpty && selection.allSatisfy { id in
+            model.summaries.first { $0.id == id }?.isFlagged ?? false
+        }
+    }
+
     /// Whether a search is active (the query has non-whitespace content).
     private var isSearching: Bool {
         !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
@@ -115,6 +123,17 @@ struct InboxView: View {
                 }
                 .disabled(selection.isEmpty)
                 Spacer()
+                Button {
+                    Task { await bulkFlag(!allSelectedFlagged) }
+                } label: {
+                    Label(
+                        allSelectedFlagged ? "Unflag" : "Flag",
+                        systemImage: allSelectedFlagged ? "flag.slash" : "flag"
+                    )
+                    .labelStyle(.titleAndIcon)
+                }
+                .disabled(selection.isEmpty)
+                Spacer()
                 Button(role: .destructive) {
                     Task { await bulkTrash() }
                 } label: {
@@ -193,6 +212,15 @@ struct InboxView: View {
         await model.markRead(threadIDs: ids, read: read)
     }
 
+    /// Flag or unflag the selected conversations, then leave selection mode. The
+    /// ids are captured before exiting so clearing the selection can't race the
+    /// server work.
+    private func bulkFlag(_ flagged: Bool) async {
+        let ids = Array(selection)
+        endSelecting()
+        await model.markFlagged(threadIDs: ids, flagged: flagged)
+    }
+
     /// Trash the selected conversations, then leave selection mode.
     private func bulkTrash() async {
         let ids = Array(selection)
@@ -218,6 +246,15 @@ private struct RowActions: ViewModifier {
                     } label: {
                         Label("Trash", systemImage: "trash")
                     }
+                    Button {
+                        Task { await model.markFlagged(threadID: summary.id, flagged: !summary.isFlagged) }
+                    } label: {
+                        Label(
+                            summary.isFlagged ? "Unflag" : "Flag",
+                            systemImage: summary.isFlagged ? "flag.slash" : "flag"
+                        )
+                    }
+                    .tint(.orange)
                 }
                 .swipeActions(edge: .leading, allowsFullSwipe: true) {
                     Button {
@@ -254,6 +291,12 @@ private struct ThreadRow: View {
                         .fontWeight(summary.isUnread ? .bold : .regular)
                         .lineLimit(1)
                     Spacer(minLength: 8)
+                    if summary.isFlagged {
+                        Image(systemName: "flag.fill")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .accessibilityLabel("Flagged")
+                    }
                     if let date = summary.lastActivity {
                         Text(date, format: .relative(presentation: .named))
                             .font(.caption)

@@ -208,6 +208,22 @@ public actor SyncService {
         try await store.rethread(accountID: account.id)
     }
 
+    /// Flag or unflag a thread: set or clear `\Flagged` on its messages on the
+    /// server (grouped by mailbox), then update the local store and rethread so
+    /// the inbox flagged state follows. The server update is skipped when the
+    /// thread has no server-backed messages (a purely local conversation).
+    public func setFlagged(threadID: String, flagged: Bool, password: String) async throws {
+        let refs = try await store.messageRefs(threadID: threadID)
+        if !refs.isEmpty {
+            try await engine.connect(username: account.username, password: password)
+            for (mailbox, group) in Dictionary(grouping: refs, by: \.mailbox) {
+                try await engine.setFlagged(flagged, in: mailbox, uids: group.map(\.uid))
+            }
+        }
+        try await store.setFlagged(flagged, threadID: threadID)
+        try await store.rethread(accountID: account.id)
+    }
+
     /// Trash a thread: move its server-backed messages to the server's Trash
     /// (grouped by mailbox), then delete the local copies and rethread so the
     /// conversation leaves the inbox. The server move is the gate for messages

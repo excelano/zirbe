@@ -301,6 +301,75 @@ final class MailStoreTests: XCTestCase {
         XCTAssertEqual(summaries.first?.isUnread, true)
     }
 
+    func testSetFlaggedFlipsThreadFlagged() async throws {
+        let store = try MailStore()
+        let acct = account()
+        try await store.upsert(acct)
+
+        let m = msg(id: "<a@x>", subject: "Ping", from: "p@x.com", minutes: 0)
+        try await store.save([m], accountID: acct.id, mailboxName: "INBOX")
+        try await store.rethread(accountID: acct.id)
+        let initial = try await store.threadSummaries(accountID: acct.id)
+        let threadID = try XCTUnwrap(initial.first?.id)
+        XCTAssertEqual(initial.first?.isFlagged, false)
+
+        try await store.setFlagged(true, threadID: threadID)
+        try await store.rethread(accountID: acct.id)
+        var summaries = try await store.threadSummaries(accountID: acct.id)
+        XCTAssertEqual(summaries.first?.isFlagged, true)
+
+        try await store.setFlagged(false, threadID: threadID)
+        try await store.rethread(accountID: acct.id)
+        summaries = try await store.threadSummaries(accountID: acct.id)
+        XCTAssertEqual(summaries.first?.isFlagged, false)
+    }
+
+    func testFlaggedAndUnreadAreIndependent() async throws {
+        let store = try MailStore()
+        let acct = account()
+        try await store.upsert(acct)
+
+        // A read, unflagged message: flagging it must not make it unread, and
+        // marking it unread must not flag it.
+        let m = msg(id: "<a@x>", subject: "Ping", from: "p@x.com", minutes: 0, seen: true)
+        try await store.save([m], accountID: acct.id, mailboxName: "INBOX")
+        try await store.rethread(accountID: acct.id)
+        let initial = try await store.threadSummaries(accountID: acct.id)
+        let threadID = try XCTUnwrap(initial.first?.id)
+
+        try await store.setFlagged(true, threadID: threadID)
+        try await store.rethread(accountID: acct.id)
+        let flagged = try await store.threadSummaries(accountID: acct.id)
+        XCTAssertEqual(flagged.first?.isFlagged, true)
+        XCTAssertEqual(flagged.first?.isUnread, false)
+
+        try await store.setSeen(false, threadID: threadID)
+        try await store.rethread(accountID: acct.id)
+        let unread = try await store.threadSummaries(accountID: acct.id)
+        XCTAssertEqual(unread.first?.isUnread, true)
+        XCTAssertEqual(unread.first?.isFlagged, true)
+    }
+
+    func testSetFlaggedMarksEveryMessageInThread() async throws {
+        let store = try MailStore()
+        let acct = account()
+        try await store.upsert(acct)
+
+        let a = msg(id: "<a@x>", subject: "Lunch", from: "p@x.com", minutes: 0)
+        let b = msg(id: "<b@x>", references: ["<a@x>"], subject: "Re: Lunch", from: "q@x.com", minutes: 1)
+        try await store.save([a, b], accountID: acct.id, mailboxName: "INBOX")
+        try await store.rethread(accountID: acct.id)
+        let summaries = try await store.threadSummaries(accountID: acct.id)
+        let threadID = try XCTUnwrap(summaries.first?.id)
+
+        try await store.setFlagged(true, threadID: threadID)
+        let loaded = try await store.thread(id: threadID)
+        let thread = try XCTUnwrap(loaded)
+        XCTAssertEqual(thread.messages.count, 2)
+        XCTAssertTrue(thread.messages.allSatisfy(\.isFlagged))
+        XCTAssertTrue(thread.isFlagged)
+    }
+
     func testDeleteThreadRemovesOnlyThatThread() async throws {
         let store = try MailStore()
         let acct = account()

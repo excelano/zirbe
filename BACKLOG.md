@@ -9,8 +9,6 @@ until OAuth lands).
 
 ## In priority order
 
-- **Flag and star.** Surface IMAP `\Flagged` as a lightweight triage marker, cheap
-  since `\Seen` is already managed. A quick win promoted up for momentum.
 - **M5 — offline and IDLE.** Foreground live refresh while the inbox is open, and
   a best-effort background poll for new mail via BGTaskScheduler. More than polish:
   a Messages-style app that doesn't auto-update breaks the illusion. But there is

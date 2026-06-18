@@ -21,6 +21,9 @@ struct ConversationView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var thread: ZirbeCore.Thread?
+    /// The flagged state shown in the top bar. Seeded from the inbox summary for
+    /// an instant read, refined once the thread loads, and toggled optimistically.
+    @State private var isFlagged = false
     @State private var isLoading = true
     @State private var replyText = ""
     @State private var isSending = false
@@ -59,6 +62,11 @@ struct ConversationView: View {
             // move (server-first) just leaves the conversation in the inbox.
             ConversationTopBar(
                 title: subjectTitle,
+                isFlagged: isFlagged,
+                onToggleFlag: {
+                    isFlagged.toggle()
+                    Task { await model.markFlagged(threadID: summary.id, flagged: isFlagged) }
+                },
                 onBack: { dismiss() },
                 onTrash: {
                     dismiss()
@@ -103,6 +111,7 @@ struct ConversationView: View {
             }
         }
         .task {
+            isFlagged = summary.isFlagged
             let loaded = await model.conversation(id: summary.id)
             // Decide the starting view before revealing anything: with the HTML-in-
             // Web-View preference on, fetch the newest message's HTML while the
@@ -111,7 +120,10 @@ struct ConversationView: View {
             if let loaded { await prepareInitialWebView(loaded) }
             thread = loaded
             isLoading = false
-            if let loaded { await model.markReadOnOpen(loaded) }
+            if let loaded {
+                isFlagged = loaded.isFlagged
+                await model.markReadOnOpen(loaded)
+            }
         }
     }
 
@@ -269,6 +281,8 @@ struct ConversationView: View {
 /// title turns tappable and the whole subject opens in a popover.
 private struct ConversationTopBar: View {
     let title: String
+    let isFlagged: Bool
+    let onToggleFlag: () -> Void
     let onBack: () -> Void
     let onTrash: () -> Void
 
@@ -309,6 +323,13 @@ private struct ConversationTopBar: View {
                 }
                 .presentationCompactAdaptation(.popover)
             }
+
+            circleButton(
+                systemName: isFlagged ? "flag.fill" : "flag",
+                tint: isFlagged ? .orange : .secondary,
+                action: onToggleFlag
+            )
+            .accessibilityLabel(isFlagged ? "Unflag Conversation" : "Flag Conversation")
 
             circleButton(systemName: "trash", tint: .red, action: onTrash)
                 .accessibilityLabel("Trash Conversation")

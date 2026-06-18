@@ -86,6 +86,7 @@ struct ThreadRow: Codable, FetchableRecord, PersistableRecord {
     var subject: String
     var lastActivity: Date?
     var isUnread: Bool
+    var isFlagged: Bool
     var messageCount: Int
     var participants: [Participant]
     /// A one-line preview of the thread's newest message, computed from its
@@ -99,6 +100,7 @@ struct ThreadRow: Codable, FetchableRecord, PersistableRecord {
         self.subject = thread.subject
         self.lastActivity = thread.lastActivity
         self.isUnread = thread.isUnread
+        self.isFlagged = thread.isFlagged
         self.messageCount = thread.messageCount
         self.participants = thread.participants
         let latest = thread.messages.max {
@@ -115,6 +117,7 @@ struct ThreadRow: Codable, FetchableRecord, PersistableRecord {
             participants: participants,
             lastActivity: lastActivity,
             isUnread: isUnread,
+            isFlagged: isFlagged,
             messageCount: messageCount,
             preview: snippet
         )
@@ -252,6 +255,21 @@ public final class MailStore: @unchecked Sendable {
             for var row in rows {
                 var flags = Set(row.flags)
                 if seen { flags.insert(.seen) } else { flags.remove(.seen) }
+                row.flags = Array(flags)
+                try row.save(db)
+            }
+        }
+    }
+
+    /// Set or clear the `\Flagged` flag on every message in a thread, locally.
+    /// The caller rethreads after, so the thread's flagged state (derived from
+    /// its messages) updates. The server is told separately by the sync.
+    public func setFlagged(_ flagged: Bool, threadID: String) async throws {
+        try await dbQueue.write { db in
+            let rows = try MessageRow.filter(Column("threadID") == threadID).fetchAll(db)
+            for var row in rows {
+                var flags = Set(row.flags)
+                if flagged { flags.insert(.flagged) } else { flags.remove(.flagged) }
                 row.flags = Array(flags)
                 try row.save(db)
             }
@@ -573,6 +591,16 @@ public final class MailStore: @unchecked Sendable {
         // the next open. Same shape as v7; pre-release data only.
         migrator.registerMigration("v8-reextract-attachments") { db in
             try db.execute(sql: "UPDATE message SET bodyText = NULL, attachments = '[]' WHERE attachments <> '[]'")
+        }
+        // Flag and star (the `\Flagged` triage marker): the thread row now carries
+        // its flagged state, derived from its messages, so the inbox list reads it
+        // without loading them. Additive with a false default; the next rethread
+        // (the thread table is rewritten wholesale) stamps the real value from the
+        // messages' flags.
+        migrator.registerMigration("v9-thread-flagged") { db in
+            try db.alter(table: "thread") { t in
+                t.add(column: "isFlagged", .boolean).notNull().defaults(to: false)
+            }
         }
         return migrator
     }()
