@@ -72,6 +72,11 @@ final class AttachmentClassificationTests: XCTestCase {
             in: parts, bodySections: [plain.section, html.section], html: markup
         )
         XCTAssertEqual(Set(resolved.map(\.filename)), ["photo.jpg", "report.pdf"])
+        // Each surviving attachment carries its own MIME section as the partID the
+        // byte fetch targets, recovered through the cid join by index.
+        let partIDsByName = Dictionary(uniqueKeysWithValues: resolved.map { ($0.filename, $0.partID) })
+        XCTAssertEqual(partIDsByName["photo.jpg"], "4")
+        XCTAssertEqual(partIDsByName["report.pdf"], "5")
     }
 
     func testWithoutHTMLEveryPartIsAnAttachment() {
@@ -86,6 +91,39 @@ final class AttachmentClassificationTests: XCTestCase {
             in: parts, bodySections: [plain.section], html: nil
         )
         XCTAssertEqual(resolved.map(\.filename), ["logo.png"])
+        XCTAssertEqual(resolved.first?.partID, "2")
+    }
+
+    func testTrailingInlineTextPartIsNotAnAttachment() {
+        // Apple Mail's inline-attachment layout: a multipart/mixed wrapping body
+        // text, the file, then a trailing text segment. The trailing text/plain is
+        // inline body content, not an attachment, even though it isn't the part
+        // chosen for display. Only the PDF is a real attachment.
+        let body = part("1", "text/plain; charset=us-ascii")
+        let parts = [
+            body,
+            part("2", "application/pdf", disposition: "attachment", filename: "Scanned Document.pdf"),
+            part("3", "text/plain; charset=us-ascii"),
+        ]
+        let resolved = MailEngine.userFacingAttachments(
+            in: parts, bodySections: [body.section], html: nil
+        )
+        XCTAssertEqual(resolved.map(\.filename), ["Scanned Document.pdf"])
+        XCTAssertEqual(resolved.first?.partID, "2")
+    }
+
+    func testAttachedTextFileIsKept() {
+        // A genuinely attached .txt carries a filename (or an attachment
+        // disposition), so it is a real attachment, unlike a bare body text part.
+        let body = part("1", "text/plain")
+        let parts = [
+            body,
+            part("2", "text/plain", disposition: "attachment", filename: "notes.txt"),
+        ]
+        let resolved = MailEngine.userFacingAttachments(
+            in: parts, bodySections: [body.section], html: nil
+        )
+        XCTAssertEqual(resolved.map(\.filename), ["notes.txt"])
     }
 
     func testUnnamedAttachmentGetsTypeFallbackName() {

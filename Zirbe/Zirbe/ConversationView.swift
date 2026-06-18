@@ -10,6 +10,8 @@
 
 import SwiftUI
 import UIKit
+import QuickLook
+import UniformTypeIdentifiers
 import ZirbeCore
 import KlartextUI
 
@@ -534,7 +536,7 @@ private struct MessageBubble: View {
             if !message.attachments.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(Array(message.attachments.enumerated()), id: \.offset) { _, attachment in
-                        AttachmentChip(attachment: attachment, isOwn: isOwn)
+                        AttachmentChip(model: model, messageID: message.id, attachment: attachment, isOwn: isOwn)
                     }
                 }
                 .padding(.top, 2)
@@ -623,29 +625,63 @@ private struct MessageBubble: View {
 }
 
 /// One attachment shown under a message bubble: a small capsule with a
-/// type-appropriate icon and the file's name. Display only for now (no tap to
-/// open), so it reads as a label, not a button. Tinted to sit on its bubble:
-/// light on an own (accent) bubble, secondary on an incoming one. Long names
-/// truncate in the middle so the extension stays visible.
+/// type-appropriate icon and the file's name. Tapping fetches its bytes over the
+/// warm session and opens them in QuickLook; the icon becomes a spinner while the
+/// fetch is in flight. Tinted to sit on its bubble: light on an own (accent)
+/// bubble, secondary on an incoming one. Long names truncate in the middle so the
+/// extension stays visible.
 private struct AttachmentChip: View {
+    let model: InboxModel
+    let messageID: String
     let attachment: MessageAttachment
     let isOwn: Bool
 
+    @State private var isLoading = false
+    /// The temp file the fetched bytes were written to; setting it presents the
+    /// QuickLook preview, and it clears when the preview is dismissed.
+    @State private var previewURL: URL?
+
     var body: some View {
-        HStack(spacing: 5) {
-            Image(systemName: icon)
-            Text(attachment.filename)
-                .lineLimit(1)
-                .truncationMode(.middle)
+        Button(action: open) {
+            HStack(spacing: 5) {
+                if isLoading {
+                    ProgressView().controlSize(.mini)
+                } else {
+                    Image(systemName: icon)
+                }
+                Text(attachment.filename)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .font(.footnote)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(
+                isOwn ? AnyShapeStyle(Color.white.opacity(0.18)) : AnyShapeStyle(Color(.tertiarySystemFill)),
+                in: Capsule()
+            )
+            .foregroundStyle(isOwn ? AnyShapeStyle(Color.white) : AnyShapeStyle(.secondary))
+            .contentShape(Capsule())
         }
-        .font(.footnote)
-        .padding(.horizontal, 9)
-        .padding(.vertical, 5)
-        .background(
-            isOwn ? AnyShapeStyle(Color.white.opacity(0.18)) : AnyShapeStyle(Color(.tertiarySystemFill)),
-            in: Capsule()
-        )
-        .foregroundStyle(isOwn ? AnyShapeStyle(Color.white) : AnyShapeStyle(.secondary))
+        .buttonStyle(.plain)
+        // A chip cached before part ids were tracked can't be opened (its body
+        // re-fetches on next open); until then it's a plain, non-tappable label.
+        .disabled(isLoading || attachment.partID.isEmpty)
+        .quickLookPreview($previewURL)
+    }
+
+    /// Fetch the attachment's bytes over the warm session, write them to a temp
+    /// file named for the attachment, and open it in QuickLook. A failure leaves
+    /// the model's `errorMessage` set; nothing opens.
+    private func open() {
+        guard !isLoading, !attachment.partID.isEmpty else { return }
+        isLoading = true
+        Task {
+            let data = await model.attachmentData(messageID: messageID, partID: attachment.partID)
+            isLoading = false
+            guard let data else { return }
+            previewURL = try? AttachmentFile.write(data, filename: attachment.filename, mimeType: attachment.mimeType)
+        }
     }
 
     /// An SF Symbol matching the attachment's MIME family, falling back to a
@@ -662,6 +698,30 @@ private struct AttachmentChip: View {
         if type.hasPrefix("audio/") { return "waveform" }
         if type.hasPrefix("video/") { return "film" }
         return "paperclip"
+    }
+}
+
+/// Writes an attachment's decoded bytes to a temp file so QuickLook can open it.
+/// The file is named for the attachment, with an extension supplied from the MIME
+/// type when the name carries none, so QuickLook picks the right type. Files land
+/// in a dedicated temp subdirectory the OS reclaims; a repeat open overwrites in
+/// place.
+private enum AttachmentFile {
+    static func write(_ data: Data, filename: String, mimeType: String) throws -> URL {
+        var name = filename
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: ":", with: "_")
+        if name.isEmpty { name = "Attachment" }
+        if (name as NSString).pathExtension.isEmpty,
+           let ext = UTType(mimeType: mimeType)?.preferredFilenameExtension {
+            name += ".\(ext)"
+        }
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("attachments", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent(name)
+        try data.write(to: url, options: .atomic)
+        return url
     }
 }
 

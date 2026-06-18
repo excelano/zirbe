@@ -512,6 +512,22 @@ public final class MailStore: @unchecked Sendable {
                 t.add(column: "attachments", .text).notNull().defaults(to: "[]")
             }
         }
+        // Openable attachments: a chip now carries the MIME part id its bytes are
+        // fetched by. Chips cached before this carry none and so can't be opened;
+        // clear the cached body of any message that has them so the next open
+        // re-fetches and re-extracts the attachments with their part ids. Bodies
+        // with no attachments are untouched. Pre-release data only.
+        migrator.registerMigration("v7-attachment-partid") { db in
+            try db.execute(sql: "UPDATE message SET bodyText = NULL, attachments = '[]' WHERE attachments <> '[]'")
+        }
+        // Attachment extraction was corrected to drop the trailing inline-text
+        // segment a multipart/mixed wraps around a file (Apple Mail's inline-
+        // attachment layout), which had leaked as a phantom chip. Clear the cached
+        // body of any message that has chips so the corrected extraction re-runs on
+        // the next open. Same shape as v7; pre-release data only.
+        migrator.registerMigration("v8-reextract-attachments") { db in
+            try db.execute(sql: "UPDATE message SET bodyText = NULL, attachments = '[]' WHERE attachments <> '[]'")
+        }
         return migrator
     }()
 }

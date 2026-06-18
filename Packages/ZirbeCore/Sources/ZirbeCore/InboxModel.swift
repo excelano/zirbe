@@ -228,6 +228,24 @@ public final class InboxModel {
         }
     }
 
+    /// Fetch one attachment's decoded bytes, by message id and MIME part id, on
+    /// demand when the user taps its chip. Returns nil if not connected, the
+    /// message is unknown or purely local, or the fetch fails, with any error in
+    /// `errorMessage`. The bytes are not cached; they're pulled fresh each open and
+    /// the caller writes them to a temp file for the preview.
+    public func attachmentData(messageID: String, partID: String) async -> Data? {
+        guard let password else {
+            errorMessage = "Connect an account first."
+            return nil
+        }
+        do {
+            return try await sync.fetchAttachment(messageID: messageID, partID: partID, password: password)
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
     /// Trash one or more conversations: move each to the server's Trash and drop
     /// it from the inbox, refreshing the rows once at the end. Server-first, so a
     /// failed move leaves that conversation in place with the reason in

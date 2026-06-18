@@ -153,7 +153,7 @@ final class MailStoreTests: XCTestCase {
         // Cache the fetched body: it no longer needs one and the conversation
         // shows it, with the HTML-original flag and the attachments recorded
         // alongside the text.
-        let attachment = MessageAttachment(filename: "report.pdf", mimeType: "application/pdf")
+        let attachment = MessageAttachment(filename: "report.pdf", mimeType: "application/pdf", partID: "2")
         try await store.storeBodies([header.id: (text: "Hello there", hasHTML: true, attachments: [attachment])])
         let afterCache = try await store.messagesNeedingBodies(threadID: threadID)
         XCTAssertTrue(afterCache.isEmpty)

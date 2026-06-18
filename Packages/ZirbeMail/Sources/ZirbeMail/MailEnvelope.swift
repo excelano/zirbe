@@ -35,19 +35,25 @@ public struct MailboxState: Sendable, Hashable {
     }
 }
 
-/// One user-facing attachment, resolved for display: the name to show and the
-/// MIME type the UI picks an icon from. Bytes are not carried here; this is the
-/// metadata the chip needs, extracted from the message's MIME structure during
-/// the body fetch. "User-facing" means the cid join already dropped the inline
-/// parts the body references (signature logos, embedded images), so only real
-/// attachments remain.
+/// One user-facing attachment, resolved for display and on-demand opening: the
+/// name to show, the MIME type the UI picks an icon from, and the MIME part
+/// identifier the bytes are fetched by. The bytes themselves are not carried
+/// here; this is the metadata extracted from the message's MIME structure during
+/// the body fetch, and the `partID` lets the byte fetch target the right part
+/// when the chip is tapped. "User-facing" means the cid join already dropped the
+/// inline parts the body references (signature logos, embedded images), so only
+/// real attachments remain.
 public struct AttachmentInfo: Sendable, Hashable {
     public var filename: String
     public var mimeType: String
+    /// The IMAP body section of this part (e.g. "2" or "3.1"), so its bytes can
+    /// be fetched on demand. Stable for the message's lifetime on the server.
+    public var partID: String
 
-    public init(filename: String, mimeType: String) {
+    public init(filename: String, mimeType: String, partID: String) {
         self.filename = filename
         self.mimeType = mimeType
+        self.partID = partID
     }
 }
 

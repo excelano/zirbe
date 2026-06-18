@@ -150,6 +150,18 @@ public actor SyncService {
         )
     }
 
+    /// Fetch and decode one attachment's bytes, by message id and MIME part id,
+    /// over the warm session, for opening it in a preview. Resolves the message's
+    /// server reference from the store, then pulls just that part. Returns nil when
+    /// the message is unknown or purely local (no UID, so nothing to fetch); a
+    /// missing part or undecodable bytes throw from the engine. The password is per
+    /// call, as elsewhere.
+    public func fetchAttachment(messageID: String, partID: String, password: String) async throws -> Data? {
+        guard let ref = try await store.messageRef(id: messageID) else { return nil }
+        try await engine.connect(username: account.username, password: password)
+        return try await engine.fetchAttachment(in: ref.mailbox, uid: ref.uid, partID: partID)
+    }
+
     /// Send a composed draft, then make it visible immediately.
     ///
     /// The SMTP send is the gate: if it throws, nothing was delivered and nothing

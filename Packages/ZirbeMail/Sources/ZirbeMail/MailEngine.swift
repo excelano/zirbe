@@ -17,6 +17,11 @@ import SwiftMail
 public enum MailEngineError: Error {
     /// An operation was attempted before `connect(username:password:)`.
     case notConnected
+    /// The requested MIME part wasn't found in the message's structure, e.g. the
+    /// message changed on the server since its attachments were listed.
+    case partNotFound
+    /// The part's bytes couldn't be decoded with its transfer encoding.
+    case decodeFailed
 }
 
 public actor MailEngine {
@@ -210,6 +215,34 @@ public actor MailEngine {
         }
     }
 
+    /// Fetch and decode one attachment's bytes, over the warm session, identified
+    /// by its MIME part section (the `partID` the chip carries). Re-reads the
+    /// message's structure to recover the part's transfer encoding, downloads that
+    /// one part, and returns its decoded bytes ready to write to a file. Re-reading
+    /// the structure (rather than trusting a stored encoding) keeps the open robust
+    /// and is cheap. Throws `partNotFound` when the section is gone (the message
+    /// changed server-side) and `decodeFailed` when the bytes won't decode.
+    public func fetchAttachment(in mailbox: String, uid: UInt32, partID: String) async throws -> Data {
+        try await perform {
+            _ = try await self.server.selectMailbox(mailbox)
+            let u = UID(uid)
+            let structure = try await self.server.fetchStructure(u)
+            guard let part = structure.first(where: { $0.section.description == partID }) else {
+                throw MailEngineError.partNotFound
+            }
+            let fetched = try await self.server.fetchPartsPipelined(parts: [(u, part.section)])
+            guard let raw = fetched[u]?.first(where: { $0.section == part.section })?.data else {
+                throw MailEngineError.partNotFound
+            }
+            var filled = part
+            filled.data = raw
+            guard let decoded = filled.decodedData() else {
+                throw MailEngineError.decodeFailed
+            }
+            return decoded
+        }
+    }
+
     /// The normalized Content-IDs an HTML body references via `cid:` URLs (in an
     /// `<img src>`, a CSS `url()`, anywhere), so only inline parts the page
     /// actually paints are shipped to the renderer.
@@ -341,30 +374,63 @@ public actor MailEngine {
         bodySections: [Section],
         html: String?
     ) -> [AttachmentInfo] {
-        let inputs = attachmentInputs(in: parts, excluding: bodySections)
-        guard !inputs.isEmpty else { return [] }
-        return Klartext.parse(html: html, attachments: inputs)
-            .attachments.userFacing
-            .map { AttachmentInfo(filename: $0.filename ?? fallbackName(for: $0.mimeType), mimeType: $0.mimeType) }
-    }
-
-    /// Build raw attachment inputs from a message's MIME parts for the cid join,
-    /// excluding the body text leaves the reader already sees inline and the
-    /// container multiparts. Everything else (files, and inline images the join
-    /// will then classify) is a candidate. Size is omitted: IMAP BODYSTRUCTURE
-    /// carries it but SwiftMail doesn't surface it, and the chip shows only a name.
-    static func attachmentInputs(in parts: [MessagePart], excluding bodySections: [Section]) -> [RawAttachmentInput] {
-        parts.compactMap { part in
-            guard !bodySections.contains(part.section) else { return nil }
-            guard !part.contentType.lowercased().hasPrefix("multipart/") else { return nil }
-            return RawAttachmentInput(
-                filename: part.filename,
-                mimeType: baseMIMEType(part.contentType),
-                size: nil,
-                contentID: part.contentId,
-                disposition: disposition(part.disposition)
+        // The candidate parts and the inputs derived from them stay index-aligned
+        // (Klartext's classify maps inputs 1:1 in order), so zipping the resolved
+        // attachments back to their source parts recovers each one's section for
+        // the partID. The cid join then drops the parts the body references inline.
+        let candidates = attachmentParts(in: parts, excluding: bodySections)
+        guard !candidates.isEmpty else { return [] }
+        let resolved = Klartext.parse(html: html, attachments: candidates.map(rawInput)).attachments
+        return zip(resolved, candidates).compactMap { attachment, part in
+            guard !attachment.isTrulyInline else { return nil }
+            return AttachmentInfo(
+                filename: attachment.filename ?? fallbackName(for: attachment.mimeType),
+                mimeType: attachment.mimeType,
+                partID: part.section.description
             )
         }
+    }
+
+    /// A message's candidate attachment parts: everything but inline body content.
+    /// Excluded are the chosen body leaves, the container multiparts, and any bare
+    /// text part. Files, and the inline images the cid join will then classify, are
+    /// all candidates.
+    static func attachmentParts(in parts: [MessagePart], excluding bodySections: [Section]) -> [MessagePart] {
+        parts.filter { part in
+            !bodySections.contains(part.section)
+                && !part.contentType.lowercased().hasPrefix("multipart/")
+                && !isBareInlineText(part)
+        }
+    }
+
+    /// Whether a part is inline body text rather than an attachment: a text/plain
+    /// or text/html leaf with no filename and not flagged as an attachment. These
+    /// are body content even when they aren't the single part chosen for display,
+    /// such as the trailing text segment a multipart/mixed wraps around a file (an
+    /// "inline attachment" layout). A genuinely attached .txt or .html carries a
+    /// filename or an attachment disposition, so it is not bare and stays a
+    /// candidate.
+    private static func isBareInlineText(_ part: MessagePart) -> Bool {
+        let type = part.contentType.lowercased()
+        guard type.hasPrefix("text/plain") || type.hasPrefix("text/html") else { return false }
+        return part.filename == nil && part.disposition?.lowercased() != "attachment"
+    }
+
+    /// Build raw attachment inputs from a message's MIME parts for the cid join.
+    static func attachmentInputs(in parts: [MessagePart], excluding bodySections: [Section]) -> [RawAttachmentInput] {
+        attachmentParts(in: parts, excluding: bodySections).map(rawInput)
+    }
+
+    /// One part as a cid-join input. Size is omitted: IMAP BODYSTRUCTURE carries
+    /// it but SwiftMail doesn't surface it, and the chip shows only a name.
+    private static func rawInput(_ part: MessagePart) -> RawAttachmentInput {
+        RawAttachmentInput(
+            filename: part.filename,
+            mimeType: baseMIMEType(part.contentType),
+            size: nil,
+            contentID: part.contentId,
+            disposition: disposition(part.disposition)
+        )
     }
 
     /// Map a Content-Disposition header value to Klartext's enum. The header is

@@ -29,6 +29,6 @@ extension Message {
 extension MessageAttachment {
     /// Build a domain attachment from the mail layer's resolved transport value.
     init(_ info: AttachmentInfo) {
-        self.init(filename: info.filename, mimeType: info.mimeType)
+        self.init(filename: info.filename, mimeType: info.mimeType, partID: info.partID)
     }
 }
