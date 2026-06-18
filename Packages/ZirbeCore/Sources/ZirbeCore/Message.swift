@@ -34,6 +34,10 @@ public struct Message: Sendable, Hashable, Identifiable {
     /// Web View. Set when the body is fetched; false for header-only rows and for
     /// plain-text-only mail.
     public var hasHTML: Bool
+    /// The message's user-facing attachments, for the chips under the bubble.
+    /// Read off the MIME structure when the body is fetched and cached alongside
+    /// it, so empty for header-only rows and for mail with no real attachments.
+    public var attachments: [MessageAttachment]
 
     public init(
         messageID: String? = nil,
@@ -47,7 +51,8 @@ public struct Message: Sendable, Hashable, Identifiable {
         date: Date? = nil,
         flags: Set<Flag> = [],
         bodyText: String? = nil,
-        hasHTML: Bool = false
+        hasHTML: Bool = false,
+        attachments: [MessageAttachment] = []
     ) {
         self.messageID = messageID
         self.uid = uid
@@ -61,6 +66,7 @@ public struct Message: Sendable, Hashable, Identifiable {
         self.flags = flags
         self.bodyText = bodyText
         self.hasHTML = hasHTML
+        self.attachments = attachments
     }
 
     /// Whether the message has been read.

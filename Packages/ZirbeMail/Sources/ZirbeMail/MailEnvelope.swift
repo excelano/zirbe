@@ -35,17 +35,37 @@ public struct MailboxState: Sendable, Hashable {
     }
 }
 
-/// A fetched message body: the readable text the bubble shows, and whether the
-/// message also carries an HTML alternative. `hasHTML` is what gates the
-/// Web View control, so it is recorded even when the plain text won as the
-/// display body, because the richer HTML is still there to open on demand.
+/// One user-facing attachment, resolved for display: the name to show and the
+/// MIME type the UI picks an icon from. Bytes are not carried here; this is the
+/// metadata the chip needs, extracted from the message's MIME structure during
+/// the body fetch. "User-facing" means the cid join already dropped the inline
+/// parts the body references (signature logos, embedded images), so only real
+/// attachments remain.
+public struct AttachmentInfo: Sendable, Hashable {
+    public var filename: String
+    public var mimeType: String
+
+    public init(filename: String, mimeType: String) {
+        self.filename = filename
+        self.mimeType = mimeType
+    }
+}
+
+/// A fetched message body: the readable text the bubble shows, whether the
+/// message also carries an HTML alternative, and its user-facing attachments.
+/// `hasHTML` is what gates the Web View control, so it is recorded even when the
+/// plain text won as the display body, because the richer HTML is still there to
+/// open on demand. The attachments come free with the same fetch (read off the
+/// MIME structure, no extra round trip).
 public struct MessageBody: Sendable, Hashable {
     public var text: String
     public var hasHTML: Bool
+    public var attachments: [AttachmentInfo]
 
-    public init(text: String, hasHTML: Bool) {
+    public init(text: String, hasHTML: Bool, attachments: [AttachmentInfo] = []) {
         self.text = text
         self.hasHTML = hasHTML
+        self.attachments = attachments
     }
 }
 

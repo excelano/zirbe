@@ -99,15 +99,16 @@ public actor MailEngine {
             _ = try await self.server.selectMailbox(mailbox)
 
             // For each message, locate its plain and html text leaves (either may
-            // be absent) from the cheap structure.
-            var candidates: [(id: String, uid: UID, plain: MessagePart?, html: MessagePart?)] = []
+            // be absent) from the cheap structure. The full structure is kept too,
+            // so the attachment parts can be read off it without a second fetch.
+            var candidates: [(id: String, uid: UID, plain: MessagePart?, html: MessagePart?, structure: [MessagePart])] = []
             for message in messages {
                 let uid = UID(message.uid)
                 let structure = try await self.server.fetchStructure(uid)
                 let plain = Self.textLeaf(in: structure, type: "text/plain")
                 let html = Self.textLeaf(in: structure, type: "text/html")
                 if plain != nil || html != nil {
-                    candidates.append((message.id, uid, plain, html))
+                    candidates.append((message.id, uid, plain, html, structure))
                 }
             }
             guard !candidates.isEmpty else { return [:] }
@@ -132,13 +133,25 @@ public actor MailEngine {
 
             var bodies: [String: MessageBody] = [:]
             for c in candidates {
+                // The HTML markup, if any, drives both the readable-text fallback
+                // and the attachment cid join (which parts the body references and
+                // so are inline, not real attachments).
+                let htmlMarkup = c.html != nil ? text(of: c.html, uid: c.uid) : nil
+                let attachments = Self.userFacingAttachments(
+                    in: c.structure,
+                    bodySections: [c.plain?.section, c.html?.section].compactMap { $0 },
+                    html: htmlMarkup
+                )
+
                 let hasHTML = c.html != nil
                 if let plain = text(of: c.plain, uid: c.uid),
                    !plain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    bodies[c.id] = MessageBody(text: plain, hasHTML: hasHTML)
-                } else if let html = text(of: c.html, uid: c.uid) {
-                    let reduced = Klartext.plainText(fromHTML: html)
-                    if !reduced.isEmpty { bodies[c.id] = MessageBody(text: reduced, hasHTML: true) }
+                    bodies[c.id] = MessageBody(text: plain, hasHTML: hasHTML, attachments: attachments)
+                } else if let htmlMarkup {
+                    let reduced = Klartext.plainText(fromHTML: htmlMarkup)
+                    if !reduced.isEmpty {
+                        bodies[c.id] = MessageBody(text: reduced, hasHTML: true, attachments: attachments)
+                    }
                 }
             }
             return bodies
@@ -314,5 +327,70 @@ public actor MailEngine {
         parts.first {
             $0.contentType.lowercased().hasPrefix(type) && $0.disposition?.lowercased() != "attachment"
         }
+    }
+
+    // MARK: - Attachments
+
+    /// The user-facing attachments of a message: its non-body parts, resolved
+    /// against the HTML so the parts the body references inline (signature logos,
+    /// embedded images) are dropped and only real attachments remain. The cid join
+    /// is Klartext's, the single matching rule both apps trust; with no HTML every
+    /// part is a real attachment. Names with no filename fall back to a type label.
+    static func userFacingAttachments(
+        in parts: [MessagePart],
+        bodySections: [Section],
+        html: String?
+    ) -> [AttachmentInfo] {
+        let inputs = attachmentInputs(in: parts, excluding: bodySections)
+        guard !inputs.isEmpty else { return [] }
+        return Klartext.parse(html: html, attachments: inputs)
+            .attachments.userFacing
+            .map { AttachmentInfo(filename: $0.filename ?? fallbackName(for: $0.mimeType), mimeType: $0.mimeType) }
+    }
+
+    /// Build raw attachment inputs from a message's MIME parts for the cid join,
+    /// excluding the body text leaves the reader already sees inline and the
+    /// container multiparts. Everything else (files, and inline images the join
+    /// will then classify) is a candidate. Size is omitted: IMAP BODYSTRUCTURE
+    /// carries it but SwiftMail doesn't surface it, and the chip shows only a name.
+    static func attachmentInputs(in parts: [MessagePart], excluding bodySections: [Section]) -> [RawAttachmentInput] {
+        parts.compactMap { part in
+            guard !bodySections.contains(part.section) else { return nil }
+            guard !part.contentType.lowercased().hasPrefix("multipart/") else { return nil }
+            return RawAttachmentInput(
+                filename: part.filename,
+                mimeType: baseMIMEType(part.contentType),
+                size: nil,
+                contentID: part.contentId,
+                disposition: disposition(part.disposition)
+            )
+        }
+    }
+
+    /// Map a Content-Disposition header value to Klartext's enum. The header is
+    /// only a claim; the cid join, not this, decides whether a part is truly
+    /// inline.
+    static func disposition(_ raw: String?) -> Disposition {
+        switch raw?.lowercased() {
+        case "inline": return .inline
+        case "attachment": return .attachment
+        default: return .unknown
+        }
+    }
+
+    /// A display name for an attachment that arrived without a filename, by type
+    /// family, so a chip never reads blank.
+    static func fallbackName(for mimeType: String) -> String {
+        let type = mimeType.lowercased()
+        if type.hasPrefix("image/") { return "Image" }
+        if type == "application/pdf" { return "PDF" }
+        return "Attachment"
+    }
+
+    /// The bare MIME type without parameters (e.g. `image/png` from
+    /// `image/png; name=logo.png`).
+    private static func baseMIMEType(_ contentType: String) -> String {
+        contentType.components(separatedBy: ";").first?
+            .trimmingCharacters(in: .whitespaces) ?? contentType
     }
 }

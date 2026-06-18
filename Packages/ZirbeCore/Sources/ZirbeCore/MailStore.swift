@@ -33,6 +33,7 @@ struct MessageRow: Codable, FetchableRecord, PersistableRecord {
     var flags: [Flag]
     var bodyText: String?
     var hasHTML: Bool
+    var attachments: [MessageAttachment]
     var threadID: String?
 
     init(_ message: Message, accountID: String, mailboxName: String) {
@@ -52,6 +53,7 @@ struct MessageRow: Codable, FetchableRecord, PersistableRecord {
         self.flags = Array(message.flags)
         self.bodyText = message.bodyText
         self.hasHTML = message.hasHTML
+        self.attachments = message.attachments
         self.threadID = nil
     }
 
@@ -68,7 +70,8 @@ struct MessageRow: Codable, FetchableRecord, PersistableRecord {
             date: date,
             flags: Set(flags),
             bodyText: bodyText,
-            hasHTML: hasHTML
+            hasHTML: hasHTML,
+            attachments: attachments
         )
     }
 }
@@ -181,9 +184,9 @@ public final class MailStore: @unchecked Sendable {
 
     /// Insert or update the given messages. Existing rows (matched by id) are
     /// refreshed, so re-fetching the same mail is idempotent. A re-synced header
-    /// carries no body, so a body already cached for that message (its text and
-    /// its `hasHTML` flag, both set together when the body was fetched) is
-    /// preserved rather than reset.
+    /// carries no body, so a body already cached for that message (its text, its
+    /// `hasHTML` flag, and its attachments, all set together when the body was
+    /// fetched) is preserved rather than reset.
     public func save(_ messages: [Message], accountID: String, mailboxName: String) async throws {
         try await dbQueue.write { db in
             for message in messages {
@@ -191,6 +194,7 @@ public final class MailStore: @unchecked Sendable {
                 if row.bodyText == nil, let existing = try MessageRow.fetchOne(db, key: row.id) {
                     row.bodyText = existing.bodyText
                     row.hasHTML = existing.hasHTML
+                    row.attachments = existing.attachments
                 }
                 try row.save(db)
             }
@@ -289,16 +293,20 @@ public final class MailStore: @unchecked Sendable {
         }
     }
 
-    /// Persist fetched bodies, keyed by message id: the display text and whether
-    /// an HTML version exists. Used by the lazy-body path when a conversation is
-    /// opened, so the bodies are cached and the next open is offline.
-    public func storeBodies(_ bodiesByMessageID: [String: (text: String, hasHTML: Bool)]) async throws {
+    /// Persist fetched bodies, keyed by message id: the display text, whether an
+    /// HTML version exists, and the user-facing attachments. Used by the lazy-body
+    /// path when a conversation is opened, so the bodies are cached and the next
+    /// open is offline. Attachments are stored as JSON in the same row, matching
+    /// how `MessageRow` reads them back.
+    public func storeBodies(_ bodiesByMessageID: [String: (text: String, hasHTML: Bool, attachments: [MessageAttachment])]) async throws {
         guard !bodiesByMessageID.isEmpty else { return }
+        let encoder = JSONEncoder()
         try await dbQueue.write { db in
             for (id, body) in bodiesByMessageID {
+                let attachmentsJSON = String(decoding: try encoder.encode(body.attachments), as: UTF8.self)
                 try db.execute(
-                    sql: "UPDATE message SET bodyText = ?, hasHTML = ? WHERE id = ?",
-                    arguments: [body.text, body.hasHTML, id]
+                    sql: "UPDATE message SET bodyText = ?, hasHTML = ?, attachments = ? WHERE id = ?",
+                    arguments: [body.text, body.hasHTML, attachmentsJSON, id]
                 )
             }
         }
@@ -492,6 +500,16 @@ public final class MailStore: @unchecked Sendable {
         migrator.registerMigration("v5-thread-snippet") { db in
             try db.alter(table: "thread") { t in
                 t.add(column: "snippet", .text)
+            }
+        }
+        // Attachment chips: a message now caches its user-facing attachments
+        // (names and MIME types, as JSON) alongside its body, so the conversation
+        // bubble can list them. Defaults to an empty array, so a row synced before
+        // this (or never opened) reads as no attachments until its body loads and
+        // stamps the real list.
+        migrator.registerMigration("v6-message-attachments") { db in
+            try db.alter(table: "message") { t in
+                t.add(column: "attachments", .text).notNull().defaults(to: "[]")
             }
         }
         return migrator

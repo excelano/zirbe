@@ -52,7 +52,12 @@ let package = Package(
         ),
         .testTarget(
             name: "ZirbeMailTests",
-            dependencies: ["ZirbeMail"]
+            dependencies: [
+                "ZirbeMail",
+                // The attachment tests build SwiftMail MessagePart fixtures to
+                // exercise the adapter's MIME-structure extraction directly.
+                .product(name: "SwiftMail", package: "SwiftMail"),
+            ]
         ),
     ],
     swiftLanguageModes: [.v5]

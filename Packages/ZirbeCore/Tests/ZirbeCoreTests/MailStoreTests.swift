@@ -151,21 +151,25 @@ final class MailStoreTests: XCTestCase {
         XCTAssertEqual(needs.first?.mailbox, "INBOX")
 
         // Cache the fetched body: it no longer needs one and the conversation
-        // shows it, with the HTML-original flag recorded alongside the text.
-        try await store.storeBodies([header.id: (text: "Hello there", hasHTML: true)])
+        // shows it, with the HTML-original flag and the attachments recorded
+        // alongside the text.
+        let attachment = MessageAttachment(filename: "report.pdf", mimeType: "application/pdf")
+        try await store.storeBodies([header.id: (text: "Hello there", hasHTML: true, attachments: [attachment])])
         let afterCache = try await store.messagesNeedingBodies(threadID: threadID)
         XCTAssertTrue(afterCache.isEmpty)
         var convo = try await store.thread(id: threadID)
         XCTAssertEqual(convo?.messages.first?.bodyText, "Hello there")
         XCTAssertEqual(convo?.messages.first?.hasHTML, true)
+        XCTAssertEqual(convo?.messages.first?.attachments, [attachment])
 
-        // A later header re-sync carries no body; the cached body and its HTML
-        // flag must both survive it, not reset to nil/false.
+        // A later header re-sync carries no body; the cached body, its HTML flag,
+        // and its attachments must all survive it, not reset to nil/false/empty.
         try await store.save([header], accountID: acct.id, mailboxName: "INBOX")
         try await store.rethread(accountID: acct.id)
         convo = try await store.thread(id: threadID)
         XCTAssertEqual(convo?.messages.first?.bodyText, "Hello there")
         XCTAssertEqual(convo?.messages.first?.hasHTML, true)
+        XCTAssertEqual(convo?.messages.first?.attachments, [attachment])
     }
 
     func testMessageRefResolvesUIDAndMailbox() async throws {

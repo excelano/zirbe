@@ -531,6 +531,14 @@ private struct MessageBubble: View {
             if message.hasHTML { webViewControls }
             Text(folded.visible.isEmpty ? "(quoted message)" : folded.visible)
                 .foregroundStyle(folded.visible.isEmpty ? AnyShapeStyle(.secondary) : AnyShapeStyle(isOwn ? .white : .primary))
+            if !message.attachments.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(Array(message.attachments.enumerated()), id: \.offset) { _, attachment in
+                        AttachmentChip(attachment: attachment, isOwn: isOwn)
+                    }
+                }
+                .padding(.top, 2)
+            }
             if let quoted = folded.quoted {
                 Button {
                     withAnimation(.easeInOut(duration: 0.15)) { quoteExpanded.toggle() }
@@ -611,6 +619,49 @@ private struct MessageBubble: View {
             return QuotedText.Folded(visible: "(no text content)", quoted: nil)
         }
         return QuotedText.fold(text)
+    }
+}
+
+/// One attachment shown under a message bubble: a small capsule with a
+/// type-appropriate icon and the file's name. Display only for now (no tap to
+/// open), so it reads as a label, not a button. Tinted to sit on its bubble:
+/// light on an own (accent) bubble, secondary on an incoming one. Long names
+/// truncate in the middle so the extension stays visible.
+private struct AttachmentChip: View {
+    let attachment: MessageAttachment
+    let isOwn: Bool
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon)
+            Text(attachment.filename)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .font(.footnote)
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
+        .background(
+            isOwn ? AnyShapeStyle(Color.white.opacity(0.18)) : AnyShapeStyle(Color(.tertiarySystemFill)),
+            in: Capsule()
+        )
+        .foregroundStyle(isOwn ? AnyShapeStyle(Color.white) : AnyShapeStyle(.secondary))
+    }
+
+    /// An SF Symbol matching the attachment's MIME family, falling back to a
+    /// paperclip for anything unrecognized.
+    private var icon: String {
+        let type = attachment.mimeType.lowercased()
+        if type.hasPrefix("image/") { return "photo" }
+        if type == "application/pdf" { return "doc.richtext" }
+        if type.hasPrefix("text/") { return "doc.text" }
+        if type.contains("word") || type.contains("wordprocessing") { return "doc.text" }
+        if type.contains("spreadsheet") || type.contains("excel") || type.contains("csv") { return "tablecells" }
+        if type.contains("presentation") || type.contains("powerpoint") { return "rectangle.on.rectangle" }
+        if type.contains("zip") || type.contains("compressed") { return "doc.zipper" }
+        if type.hasPrefix("audio/") { return "waveform" }
+        if type.hasPrefix("video/") { return "film" }
+        return "paperclip"
     }
 }
 

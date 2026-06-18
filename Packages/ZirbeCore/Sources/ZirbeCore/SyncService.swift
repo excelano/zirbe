@@ -85,13 +85,15 @@ public actor SyncService {
         do {
             let needing = try await store.latestMessagesNeedingBodies(accountID: account.id)
             if !needing.isEmpty {
-                var bodies: [String: (text: String, hasHTML: Bool)] = [:]
+                var bodies: [String: (text: String, hasHTML: Bool, attachments: [MessageAttachment])] = [:]
                 for (mailbox, group) in Dictionary(grouping: needing, by: \.mailbox) {
                     let fetched = try await engine.fetchTextBodies(
                         in: mailbox,
                         messages: group.map { (id: $0.id, uid: $0.uid) }
                     )
-                    for (id, body) in fetched { bodies[id] = (text: body.text, hasHTML: body.hasHTML) }
+                    for (id, body) in fetched {
+                        bodies[id] = (text: body.text, hasHTML: body.hasHTML, attachments: body.attachments.map(MessageAttachment.init))
+                    }
                 }
                 try await store.storeBodies(bodies)
                 try await store.rethread(accountID: account.id)
@@ -116,13 +118,15 @@ public actor SyncService {
         let targets = try await store.messagesNeedingBodies(threadID: id)
         if !targets.isEmpty {
             try await engine.connect(username: account.username, password: password)
-            var bodies: [String: (text: String, hasHTML: Bool)] = [:]
+            var bodies: [String: (text: String, hasHTML: Bool, attachments: [MessageAttachment])] = [:]
             for (mailbox, group) in Dictionary(grouping: targets, by: \.mailbox) {
                 let fetched = try await engine.fetchTextBodies(
                     in: mailbox,
                     messages: group.map { (id: $0.id, uid: $0.uid) }
                 )
-                for (id, body) in fetched { bodies[id] = (text: body.text, hasHTML: body.hasHTML) }
+                for (id, body) in fetched {
+                    bodies[id] = (text: body.text, hasHTML: body.hasHTML, attachments: body.attachments.map(MessageAttachment.init))
+                }
             }
             try await store.storeBodies(bodies)
         }
