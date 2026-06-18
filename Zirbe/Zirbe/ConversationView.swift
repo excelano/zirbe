@@ -26,6 +26,9 @@ struct ConversationView: View {
     @State private var isSending = false
     @State private var removedAddresses: Set<String> = []
     @State private var showRecipients = false
+    /// The message the user chose to forward, presenting the forward composer;
+    /// nil when no forward is in progress.
+    @State private var forwardingMessage: Message?
     /// The message currently shown as its HTML web view, taking over the whole
     /// conversation tray; nil when the tray shows the normal chat of bubbles.
     @State private var activeWeb: ActiveWeb?
@@ -94,6 +97,11 @@ struct ConversationView: View {
                 RecipientsView(to: to, cc: cc, removedAddresses: $removedAddresses)
             }
         }
+        .sheet(item: $forwardingMessage) { message in
+            if let thread {
+                ForwardView(model: model, message: message, thread: thread)
+            }
+        }
         .task {
             let loaded = await model.conversation(id: summary.id)
             // Decide the starting view before revealing anything: with the HTML-in-
@@ -148,7 +156,8 @@ struct ConversationView: View {
                         showSender: !isOwn(message) && isFirstOfRun(at: index, in: messages),
                         onShowWeb: { body, showImages in
                             activeWeb = ActiveWeb(messageID: message.id, body: body, showImages: showImages)
-                        }
+                        },
+                        onForward: { forwardingMessage = message }
                     )
                     .padding(.top, index > 0 && isFirstOfRun(at: index, in: messages) ? 8 : 0)
                 }
@@ -494,6 +503,8 @@ private struct MessageBubble: View {
     /// the web view: the HTML plus inline images, and whether to show remote
     /// images on open.
     let onShowWeb: (_ body: WebViewBody, _ showImages: Bool) -> Void
+    /// Forward this message: the conversation presents the forward composer.
+    let onForward: () -> Void
 
     @State private var quoteExpanded = false
     /// Which action is fetching, so only the tapped button shows a spinner: nil
@@ -571,6 +582,11 @@ private struct MessageBubble: View {
         // reserves the row's bottom space (and clears the tail horizontally), so
         // explicit clearance is only needed for a tailed bubble with no date.
         .padding(.bottom, (hasTail && message.date == nil) ? BubbleShape.tailDrop : 0)
+        .contextMenu {
+            Button { onForward() } label: {
+                Label("Forward", systemImage: "arrowshape.turn.up.right")
+            }
+        }
     }
 
     /// The "Web View" affordances, shown when the message carries an HTML

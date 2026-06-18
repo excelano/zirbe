@@ -72,4 +72,12 @@ public enum ReplyBuilder {
         let base = thread.subject.trimmingCharacters(in: .whitespaces)
         return base.isEmpty ? "Re:" : "Re: \(base)"
     }
+
+    /// A forward subject: the thread subject with a single `Fwd:` prefix. Like the
+    /// reply subject, the thread subject is already normalized (prior `Re:`/`Fwd:`
+    /// stripped), so this adds exactly one and never stacks them.
+    public static func forwardSubject(for thread: Thread) -> String {
+        let base = thread.subject.trimmingCharacters(in: .whitespaces)
+        return base.isEmpty ? "Fwd:" : "Fwd: \(base)"
+    }
 }

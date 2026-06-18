@@ -7,14 +7,6 @@ are the user's own IMAP and SMTP servers, so anything needing a server to broker
 it is off the table), and app-password-only auth today (a real adoption ceiling
 until OAuth lands).
 
-## In progress
-
-- **Opening attachments.** Tap an attachment chip to download its bytes over the
-  warm IMAP session and hand them to QuickLook for preview or share. The read
-  side of the attachment story; the chips that name them already ship.
-- **Forward.** The third compose verb beside reply and reply-all: a new message
-  carrying the original's text and attachments to fresh recipients.
-
 ## Next milestone
 
 - **M5 — offline and IDLE.** Foreground live refresh while the inbox is open, and

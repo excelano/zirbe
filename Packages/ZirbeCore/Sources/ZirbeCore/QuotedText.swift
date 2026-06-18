@@ -68,6 +68,59 @@ public enum QuotedText {
         return "\(body)\n\n\(trailer)"
     }
 
+    /// Compose the body of a forward: the user's optional note, then the
+    /// conventional forwarded-message block — a header naming the original's
+    /// sender, date, subject, and recipients, then the original body verbatim
+    /// (not `> `-quoted, the way a forward carries the message whole). Locale and
+    /// time zone control the date line and default to the device's.
+    ///
+    /// Unlike `replyBody`, the synthesis lives here rather than in Klartext: the
+    /// header's field choice is Zirbe's presentation, not content parsing. If a
+    /// `forwardQuoteTrailer` ever lands in Klartext for symmetry with
+    /// `replyQuoteTrailer`, this becomes a thin adapter over it.
+    public static func forwardBody(
+        _ userText: String,
+        forwarding message: Message,
+        locale: Locale = .current,
+        timeZone: TimeZone = .current
+    ) -> String {
+        let note = userText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let header = forwardHeader(for: message, locale: locale, timeZone: timeZone)
+        let original = (message.bodyText ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        var forwarded = "Begin forwarded message:\n\n\(header)"
+        if !original.isEmpty { forwarded += "\n\n\(original)" }
+        return note.isEmpty ? forwarded : "\(note)\n\n\(forwarded)"
+    }
+
+    /// The `From / Date / Subject / To / Cc` block atop a forwarded message. Lines
+    /// are omitted when their field is absent (no date, no cc), and the sender
+    /// falls back to "someone" when the original carries no From.
+    private static func forwardHeader(
+        for message: Message,
+        locale: Locale,
+        timeZone: TimeZone
+    ) -> String {
+        var lines = ["From: \(message.from?.addressLabel ?? "someone")"]
+        if let date = message.date {
+            let formatter = DateFormatter()
+            formatter.locale = locale
+            formatter.timeZone = timeZone
+            formatter.dateStyle = .long
+            formatter.timeStyle = .short
+            lines.append("Date: \(formatter.string(from: date))")
+        }
+        if let subject = message.subject, !subject.isEmpty {
+            lines.append("Subject: \(subject)")
+        }
+        if !message.to.isEmpty {
+            lines.append("To: \(message.to.map(\.addressLabel).joined(separator: ", "))")
+        }
+        if !message.cc.isEmpty {
+            lines.append("Cc: \(message.cc.map(\.addressLabel).joined(separator: ", "))")
+        }
+        return lines.joined(separator: "\n")
+    }
+
     /// The quote trailer for one message. Klartext builds the attribution line and
     /// the `> `-prefixed body; Zirbe supplies the sender's display label and the
     /// "someone" fallback for a message that carries no From.

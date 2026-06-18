@@ -15,7 +15,10 @@ extension Email {
             recipients: outgoing.to.map { EmailAddress(name: $0.name, address: $0.address) },
             ccRecipients: outgoing.cc.map { EmailAddress(name: $0.name, address: $0.address) },
             subject: outgoing.subject,
-            textBody: outgoing.textBody
+            textBody: outgoing.textBody,
+            attachments: outgoing.attachments.isEmpty ? nil : outgoing.attachments.map {
+                Attachment(filename: $0.filename, mimeType: $0.mimeType, data: $0.data)
+            }
         )
 
         if let id = MessageID(outgoing.messageID) {

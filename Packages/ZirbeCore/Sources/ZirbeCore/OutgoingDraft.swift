@@ -33,6 +33,11 @@ public struct OutgoingDraft: Sendable, Hashable {
     /// When the message is sent, stamped on the local copy so it sorts last in
     /// the conversation immediately.
     public var date: Date
+    /// Files sent with the message, each carrying its bytes. Empty for a reply or
+    /// a new message; a forward fills it with the original's attachments. The
+    /// optimistic local copy shows these as chips with no part section, so they
+    /// render but can't be re-opened until the Sent re-sync restamps real ones.
+    public var attachments: [OutgoingAttachment]
 
     public init(
         from: Participant,
@@ -43,7 +48,8 @@ public struct OutgoingDraft: Sendable, Hashable {
         inReplyTo: String? = nil,
         references: [String] = [],
         messageID: String,
-        date: Date
+        date: Date,
+        attachments: [OutgoingAttachment] = []
     ) {
         self.from = from
         self.to = to
@@ -54,6 +60,7 @@ public struct OutgoingDraft: Sendable, Hashable {
         self.references = references
         self.messageID = messageID
         self.date = date
+        self.attachments = attachments
     }
 
     /// The wire form handed to the mail engine for SMTP send and Sent-append.
@@ -66,7 +73,8 @@ public struct OutgoingDraft: Sendable, Hashable {
             textBody: body,
             inReplyTo: inReplyTo,
             references: references,
-            messageID: messageID
+            messageID: messageID,
+            attachments: attachments
         )
     }
 
@@ -85,7 +93,12 @@ public struct OutgoingDraft: Sendable, Hashable {
             cc: cc,
             date: date,
             flags: [.seen],
-            bodyText: body
+            bodyText: body,
+            attachments: attachments.map {
+                // No part section yet: the chip names the file but stays
+                // un-openable until the Sent re-sync supplies the real section.
+                MessageAttachment(filename: $0.filename, mimeType: $0.mimeType, partID: "")
+            }
         )
     }
 }
@@ -120,6 +133,36 @@ extension OutgoingDraft {
             references: references,
             messageID: ReplyBuilder.generateMessageID(for: account),
             date: date
+        )
+    }
+
+    /// A forward of `message` to fresh recipients, sent as `account`. A forward
+    /// starts a new conversation: it goes to different people under a `Fwd:`
+    /// subject, so it carries no threading headers and won't slot into the source
+    /// thread. The body is the user's optional note plus the forwarded-message
+    /// block; the attachments are the original's files, already refetched into
+    /// bytes by the caller. The subject is passed in already prefixed.
+    public static func forward(
+        message: Message,
+        subject: String,
+        as account: Account,
+        to recipients: [Participant],
+        cc: [Participant],
+        note: String,
+        attachments: [OutgoingAttachment],
+        sentAt date: Date,
+        locale: Locale = .current,
+        timeZone: TimeZone = .current
+    ) -> OutgoingDraft {
+        OutgoingDraft(
+            from: account.selfParticipant,
+            to: recipients,
+            cc: cc,
+            subject: subject,
+            body: QuotedText.forwardBody(note, forwarding: message, locale: locale, timeZone: timeZone),
+            messageID: ReplyBuilder.generateMessageID(for: account),
+            date: date,
+            attachments: attachments
         )
     }
 

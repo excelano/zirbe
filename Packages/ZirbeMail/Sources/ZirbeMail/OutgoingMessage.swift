@@ -27,6 +27,10 @@ public struct OutgoingMessage: Sendable, Hashable {
     /// caller before sending so the SMTP send and the Sent-folder copy carry the
     /// same value and a retry deduplicates instead of doubling.
     public var messageID: String
+    /// Files to send alongside the body, each carrying its own bytes. Empty for a
+    /// plain reply or a new message; a forward fills it with the bytes of the
+    /// original's attachments, refetched from the server.
+    public var attachments: [OutgoingAttachment]
 
     public init(
         from: OutgoingAddress,
@@ -36,7 +40,8 @@ public struct OutgoingMessage: Sendable, Hashable {
         textBody: String,
         inReplyTo: String? = nil,
         references: [String] = [],
-        messageID: String
+        messageID: String,
+        attachments: [OutgoingAttachment] = []
     ) {
         self.from = from
         self.to = to
@@ -46,6 +51,23 @@ public struct OutgoingMessage: Sendable, Hashable {
         self.inReplyTo = inReplyTo
         self.references = references
         self.messageID = messageID
+        self.attachments = attachments
+    }
+}
+
+/// One file to send: its name, type, and the bytes themselves. ZirbeMail's own
+/// type so the send path doesn't depend on SwiftMail's `Attachment`; the mapping
+/// to that lives in OutgoingMapping. Forwarded attachments are always regular
+/// (not inline), so there is no content-ID or inline flag here.
+public struct OutgoingAttachment: Sendable, Hashable {
+    public var filename: String
+    public var mimeType: String
+    public var data: Data
+
+    public init(filename: String, mimeType: String, data: Data) {
+        self.filename = filename
+        self.mimeType = mimeType
+        self.data = data
     }
 }
 

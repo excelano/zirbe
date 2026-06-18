@@ -1,4 +1,5 @@
 import XCTest
+import ZirbeMail
 @testable import ZirbeCore
 
 final class OutgoingDraftTests: XCTestCase {
@@ -77,6 +78,70 @@ final class OutgoingDraftTests: XCTestCase {
         // retry and the later Sent re-sync collapse to a single row.
         XCTAssertEqual(draft.outgoingMessage.messageID, draft.messageID)
         XCTAssertEqual(draft.localMessage.messageID, draft.messageID)
+    }
+
+    // MARK: - Forward
+
+    private func forwardDraft(
+        note: String = "FYI",
+        attachments: [OutgoingAttachment] = []
+    ) -> OutgoingDraft {
+        let t = thread()
+        return OutgoingDraft.forward(
+            message: t.messages[0],
+            subject: ReplyBuilder.forwardSubject(for: t),
+            as: account(),
+            to: [participant("new@x.com", "New")], cc: [],
+            note: note,
+            attachments: attachments,
+            sentAt: sentAt, locale: posix, timeZone: gmt
+        )
+    }
+
+    func testForwardStartsANewConversationUnderFwdSubject() {
+        let draft = forwardDraft()
+        // A forward goes to fresh recipients, so it carries no threading headers
+        // and won't slot back into the source thread.
+        XCTAssertNil(draft.inReplyTo)
+        XCTAssertTrue(draft.references.isEmpty)
+        XCTAssertEqual(draft.subject, "Fwd: Plan")
+        XCTAssertEqual(draft.to.map(\.address), ["new@x.com"])
+        XCTAssertEqual(draft.from.address, "me@x.com")
+    }
+
+    func testForwardBodyCarriesNoteThenForwardedBlock() {
+        let draft = forwardDraft(note: "Take a look")
+        XCTAssertTrue(draft.body.hasPrefix("Take a look"))
+        XCTAssertTrue(draft.body.contains("Begin forwarded message:"))
+        XCTAssertTrue(draft.body.contains("From: Pat <pat@x.com>"))
+        XCTAssertTrue(draft.body.contains("Subject: Plan"))
+        // The original body rides whole, not `> `-quoted the way a reply does.
+        XCTAssertTrue(draft.body.contains("the question"))
+        XCTAssertFalse(draft.body.contains("> the question"))
+    }
+
+    func testForwardWithEmptyNoteOmitsTheNote() {
+        let draft = forwardDraft(note: "   ")
+        XCTAssertTrue(draft.body.hasPrefix("Begin forwarded message:"))
+    }
+
+    func testForwardCarriesAttachmentBytesToWire() {
+        let bytes = Data([0x25, 0x50, 0x44, 0x46]) // "%PDF"
+        let draft = forwardDraft(attachments: [
+            OutgoingAttachment(filename: "report.pdf", mimeType: "application/pdf", data: bytes)
+        ])
+        XCTAssertEqual(draft.outgoingMessage.attachments.map(\.filename), ["report.pdf"])
+        XCTAssertEqual(draft.outgoingMessage.attachments.first?.data, bytes)
+    }
+
+    func testForwardLocalCopyShowsUnopenableChips() {
+        let draft = forwardDraft(attachments: [
+            OutgoingAttachment(filename: "report.pdf", mimeType: "application/pdf", data: Data())
+        ])
+        // The optimistic bubble names the file but can't re-open it until the Sent
+        // re-sync stamps a real part section, signaled by an empty partID.
+        XCTAssertEqual(draft.localMessage.attachments.map(\.filename), ["report.pdf"])
+        XCTAssertEqual(draft.localMessage.attachments.first?.partID, "")
     }
 
     // MARK: - Mapping to the wire and the local copy

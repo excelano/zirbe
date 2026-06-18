@@ -8,6 +8,7 @@
 
 import Foundation
 import Observation
+import ZirbeMail
 
 /// Drives the read-only conversation UI for one account. Holds the inbox
 /// summaries the list shows and loads full conversations on demand.
@@ -243,6 +244,60 @@ public final class InboxModel {
         } catch {
             errorMessage = error.localizedDescription
             return nil
+        }
+    }
+
+    /// Forward one message to fresh recipients. Refetches each of the message's
+    /// attachments into bytes over the warm session so the forward carries the
+    /// files (not just their names), then sends a new conversation under a `Fwd:`
+    /// subject with the user's optional note above the forwarded block. Returns
+    /// whether it sent; on success the inbox refreshes to show the new
+    /// conversation. The reason for any failure is in `errorMessage`.
+    ///
+    /// An attachment whose bytes can't be refetched is dropped from the forward
+    /// rather than failing the whole send; the note and the other files still go.
+    @discardableResult
+    public func sendForward(
+        _ message: Message,
+        in thread: Thread,
+        to recipients: [Participant],
+        cc: [Participant],
+        note: String
+    ) async -> Bool {
+        guard let password else {
+            errorMessage = "Connect an account first."
+            return false
+        }
+        guard !recipients.isEmpty || !cc.isEmpty else {
+            errorMessage = "Add at least one recipient."
+            return false
+        }
+        do {
+            var files: [OutgoingAttachment] = []
+            for attachment in message.attachments where !attachment.partID.isEmpty {
+                guard let data = try await sync.fetchAttachment(
+                    messageID: message.id, partID: attachment.partID, password: password
+                ) else { continue }
+                files.append(OutgoingAttachment(
+                    filename: attachment.filename, mimeType: attachment.mimeType, data: data
+                ))
+            }
+            let draft = OutgoingDraft.forward(
+                message: message,
+                subject: ReplyBuilder.forwardSubject(for: thread),
+                as: account,
+                to: recipients,
+                cc: cc,
+                note: note,
+                attachments: files,
+                sentAt: Date()
+            )
+            try await sync.send(draft, password: password)
+            summaries = try await store.threadSummaries(accountID: account.id)
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
         }
     }
 
