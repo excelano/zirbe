@@ -9,9 +9,6 @@ until OAuth lands).
 
 ## In priority order
 
-- **Search.** Find an old message by sender, subject, or text. The largest single
-  usability hole today, and the cheapest big win: local-first over the GRDB store
-  of already-synced mail, no backend, self-contained. Leads the list.
 - **Flag and star.** Surface IMAP `\Flagged` as a lightweight triage marker, cheap
   since `\Seen` is already managed. A quick win promoted up for momentum.
 - **M5 — offline and IDLE.** Foreground live refresh while the inbox is open, and
@@ -47,6 +44,11 @@ until OAuth lands).
 
 ## Held (unscheduled)
 
+- **Server-side search.** Local search (shipped) covers only mail already synced
+  into the store. A "search everything" pass over IMAP SEARCH/ESEARCH would reach
+  older mail still on the server. SwiftMail provides it; the work is merging server
+  hits with local results and fetching the matches. Pull this up when the synced
+  window proves too small in practice.
 - **Signature surfacing.** Keep the trailing signature that the quote fold
   currently discards and show it dimmed or collapsible, reusing Klartext's parsed
   `signature`. Cheap but mild — polish, not a gap.

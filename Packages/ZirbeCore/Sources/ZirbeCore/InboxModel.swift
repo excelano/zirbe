@@ -85,6 +85,22 @@ public final class InboxModel {
         summaries = try await sync.syncInbox(password: password)
     }
 
+    /// Search the synced conversations for `query`, returning the matching thread
+    /// summaries most-recent-first. Local-only over the store, so it needs no
+    /// password, is instant, and works offline; it covers only mail already
+    /// downloaded. An empty query returns nothing. Any error surfaces in
+    /// `errorMessage` and yields an empty result.
+    public func search(_ query: String) async -> [ThreadSummary] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+        do {
+            return try await store.searchThreads(accountID: account.id, query: trimmed)
+        } catch {
+            errorMessage = error.localizedDescription
+            return []
+        }
+    }
+
     /// Load a full conversation for display, fetching message bodies on first
     /// open and caching them. Returns nil if not connected or the thread is
     /// unknown. The conversation view owns its own loading indicator, so this

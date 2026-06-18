@@ -400,4 +400,114 @@ final class MailStoreTests: XCTestCase {
         let participants = try XCTUnwrap(convo?.participants)
         XCTAssertEqual(Set(participants.map(\.address)), ["p@x.com", "q@x.com", "r@x.com", "s@x.com"])
     }
+
+    // MARK: - Search
+
+    /// Seed three distinct conversations and return the store. Each carries a
+    /// different searchable field so a query can target one in isolation: a
+    /// subject, a named sender, a cached body, and a Cc'd recipient.
+    private func searchStore() async throws -> (MailStore, Account) {
+        let store = try MailStore()
+        let acct = account()
+        try await store.upsert(acct)
+
+        let budget = Message(
+            messageID: "<budget@x>", subject: "Q3 Budget",
+            from: Participant(address: "fin@x.com", displayName: "Dana Finance"),
+            to: [Participant(address: "me@x.com")],
+            date: Date(timeIntervalSince1970: 300), flags: [.seen],
+            bodyText: "The forecast spreadsheet is attached for review."
+        )
+        let lunch = Message(
+            messageID: "<lunch@x>", subject: "Lunch Thursday",
+            from: Participant(address: "pat@x.com", displayName: "Pat"),
+            to: [Participant(address: "me@x.com")],
+            cc: [Participant(address: "sam@x.com", displayName: "Sam Rivera")],
+            date: Date(timeIntervalSince1970: 200), flags: [.seen],
+            bodyText: "Want to grab tacos?"
+        )
+        let invoice = Message(
+            messageID: "<invoice@x>", subject: "Invoice 50% off",
+            from: Participant(address: "sales@x.com", displayName: "Acme"),
+            to: [Participant(address: "me@x.com")],
+            date: Date(timeIntervalSince1970: 100), flags: [.seen],
+            bodyText: "Pay within 30 days."
+        )
+        try await store.save([budget, lunch, invoice], accountID: acct.id, mailboxName: "INBOX")
+        try await store.rethread(accountID: acct.id)
+        return (store, acct)
+    }
+
+    func testSearchMatchesSubject() async throws {
+        let (store, acct) = try await searchStore()
+        let hits = try await store.searchThreads(accountID: acct.id, query: "budget")
+        XCTAssertEqual(hits.map(\.subject), ["Q3 Budget"])
+    }
+
+    func testSearchMatchesSenderNameAndAddress() async throws {
+        let (store, acct) = try await searchStore()
+        let byName = try await store.searchThreads(accountID: acct.id, query: "dana")
+        XCTAssertEqual(byName.map(\.subject), ["Q3 Budget"])
+        let byAddress = try await store.searchThreads(accountID: acct.id, query: "pat@x.com")
+        XCTAssertEqual(byAddress.map(\.subject), ["Lunch Thursday"])
+    }
+
+    func testSearchMatchesCachedBody() async throws {
+        let (store, acct) = try await searchStore()
+        let hits = try await store.searchThreads(accountID: acct.id, query: "tacos")
+        XCTAssertEqual(hits.map(\.subject), ["Lunch Thursday"])
+    }
+
+    func testSearchMatchesRecipient() async throws {
+        let (store, acct) = try await searchStore()
+        let hits = try await store.searchThreads(accountID: acct.id, query: "sam rivera")
+        XCTAssertEqual(hits.map(\.subject), ["Lunch Thursday"])
+    }
+
+    func testSearchIsCaseInsensitive() async throws {
+        let (store, acct) = try await searchStore()
+        let hits = try await store.searchThreads(accountID: acct.id, query: "FORECAST")
+        XCTAssertEqual(hits.map(\.subject), ["Q3 Budget"])
+    }
+
+    func testSearchOrdersByActivityAndIsThreadLevel() async throws {
+        let (store, acct) = try await searchStore()
+        // All three bodies/subjects contain a period-free word? Use a token in
+        // every message: each subject is distinct, but "me@x.com" is on every
+        // message's To, so the query returns all three threads, newest first.
+        let hits = try await store.searchThreads(accountID: acct.id, query: "me@x.com")
+        XCTAssertEqual(hits.map(\.subject), ["Q3 Budget", "Lunch Thursday", "Invoice 50% off"])
+    }
+
+    func testSearchTreatsWildcardCharactersLiterally() async throws {
+        let (store, acct) = try await searchStore()
+        // The literal "50%" must match only the invoice, not act as a LIKE
+        // wildcard that matches everything.
+        let hits = try await store.searchThreads(accountID: acct.id, query: "50%")
+        XCTAssertEqual(hits.map(\.subject), ["Invoice 50% off"])
+    }
+
+    func testSearchEmptyQueryReturnsNothing() async throws {
+        let (store, acct) = try await searchStore()
+        let blank = try await store.searchThreads(accountID: acct.id, query: "   ")
+        XCTAssertTrue(blank.isEmpty)
+    }
+
+    func testSearchIsScopedToTheAccount() async throws {
+        let (store, acct) = try await searchStore()
+        // A second account with its own matching mail must not leak into the first
+        // account's results.
+        let other = Account(emailAddress: "other@y.com", imapHost: "imap.y.com", smtpHost: "smtp.y.com")
+        try await store.upsert(other)
+        let theirs = Message(
+            messageID: "<o@y>", subject: "Budget secrets",
+            from: Participant(address: "z@y.com"),
+            date: Date(timeIntervalSince1970: 999), flags: [.seen]
+        )
+        try await store.save([theirs], accountID: other.id, mailboxName: "INBOX")
+        try await store.rethread(accountID: other.id)
+
+        let hits = try await store.searchThreads(accountID: acct.id, query: "budget")
+        XCTAssertEqual(hits.map(\.subject), ["Q3 Budget"])
+    }
 }

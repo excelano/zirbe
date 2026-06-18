@@ -362,6 +362,52 @@ public final class MailStore: @unchecked Sendable {
         }
     }
 
+    /// Conversations matching a free-text query, most recent activity first.
+    /// Local-only over the store, so it is instant and works offline. A thread
+    /// matches when any of its messages matches `query` (case-insensitive
+    /// substring) in its subject, its sender (name or address), its recipients,
+    /// or its cached body text. Subject and participants are always searchable;
+    /// body text only once it has been fetched (it caches when a conversation is
+    /// opened, and each thread's newest message is backfilled for the inbox
+    /// preview), so body matches are best-effort over what has been downloaded.
+    /// An empty query returns nothing.
+    public func searchThreads(accountID: String, query: String) async throws -> [ThreadSummary] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+        let pattern = "%\(Self.escapedForLike(trimmed))%"
+        return try await dbQueue.read { db in
+            // Find the threads of any matching message, then load those rows. The
+            // `\` escape lets a literal % or _ in the query match itself rather
+            // than act as a wildcard.
+            let threadIDs = try String.fetchSet(db, sql: """
+                SELECT DISTINCT threadID FROM message
+                WHERE accountID = :acct AND threadID IS NOT NULL AND (
+                    subject LIKE :p ESCAPE '\\' OR
+                    fromName LIKE :p ESCAPE '\\' OR
+                    fromAddress LIKE :p ESCAPE '\\' OR
+                    bodyText LIKE :p ESCAPE '\\' OR
+                    toParticipants LIKE :p ESCAPE '\\' OR
+                    ccParticipants LIKE :p ESCAPE '\\'
+                )
+                """, arguments: ["acct": accountID, "p": pattern])
+            guard !threadIDs.isEmpty else { return [] }
+            return try ThreadRow
+                .filter(Column("accountID") == accountID && threadIDs.contains(Column("id")))
+                .order(Column("lastActivity").desc)
+                .fetchAll(db)
+                .map(\.summary)
+        }
+    }
+
+    /// Escape a user's search text so its `%` and `_` match literally under a
+    /// `LIKE … ESCAPE '\'`. The backslash itself is escaped first so it can't
+    /// swallow a following character.
+    private static func escapedForLike(_ text: String) -> String {
+        text.replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "%", with: "\\%")
+            .replacingOccurrences(of: "_", with: "\\_")
+    }
+
     /// Messages in a thread that still need a body fetched: those with no cached
     /// body and a known server UID. Returns the row id (to cache the fetched
     /// text under), the UID to fetch, and the mailbox to select. An empty result

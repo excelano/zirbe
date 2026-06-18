@@ -21,38 +21,35 @@ struct InboxView: View {
     /// Drives selection mode: `.active` shows the per-row circles and the bulk
     /// action bar, and turns row taps into selection rather than navigation.
     @State private var editMode: EditMode = .inactive
+    /// The live search query; empty means the normal inbox is shown.
+    @State private var searchText = ""
+    /// Results for the current query, most recent first. Held separately from the
+    /// inbox summaries so search never disturbs the cached list.
+    @State private var searchResults: [ThreadSummary] = []
 
     private var isSelecting: Bool { editMode == .active }
 
-    /// The rows actually shown, narrowed to unread when the filter is on.
+    /// Whether a search is active (the query has non-whitespace content).
+    private var isSearching: Bool {
+        !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// The rows actually shown: search results while searching, otherwise the
+    /// inbox narrowed to unread when the filter is on.
     private var visibleSummaries: [ThreadSummary] {
-        showUnreadOnly ? model.summaries.filter(\.isUnread) : model.summaries
+        if isSearching { return searchResults }
+        return showUnreadOnly ? model.summaries.filter(\.isUnread) : model.summaries
     }
 
     var body: some View {
-        List(visibleSummaries, selection: $selection) { summary in
-            NavigationLink {
-                ConversationView(model: model, summary: summary)
-            } label: {
-                ThreadRow(summary: summary)
-            }
-            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
-                Button(role: .destructive) {
-                    Task { await model.trash(summary) }
+        List(selection: $selection) {
+            ForEach(visibleSummaries) { summary in
+                NavigationLink {
+                    ConversationView(model: model, summary: summary)
                 } label: {
-                    Label("Trash", systemImage: "trash")
+                    ThreadRow(summary: summary)
                 }
-            }
-            .swipeActions(edge: .leading, allowsFullSwipe: true) {
-                Button {
-                    Task { await model.markRead(threadID: summary.id, read: summary.isUnread) }
-                } label: {
-                    Label(
-                        summary.isUnread ? "Read" : "Unread",
-                        systemImage: summary.isUnread ? "envelope.open" : "envelope.badge"
-                    )
-                }
-                .tint(.blue)
+                .modifier(RowActions(model: model, summary: summary, enabled: !isSearching))
             }
         }
         .listStyle(.plain)
@@ -60,6 +57,7 @@ struct InboxView: View {
         .navigationTitle(navigationTitle)
         .navigationBarTitleDisplayMode(isSelecting ? .inline : .large)
         .toolbar { toolbarContent }
+        .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search mail")
         .sheet(isPresented: $isComposing) {
             ComposeView(model: model)
         }
@@ -74,6 +72,19 @@ struct InboxView: View {
                 await model.refresh()
             }
         }
+        .task(id: searchText) { await runSearch() }
+    }
+
+    /// Run the current query against the local store, with a short debounce so a
+    /// burst of keystrokes only issues the final search. `.task(id:)` cancels and
+    /// restarts this when the text changes, so a cancelled run never overwrites
+    /// newer results, and the previous results stay on screen until the new ones
+    /// land (no flash to empty mid-typing).
+    private func runSearch() async {
+        guard isSearching else { searchResults = []; return }
+        try? await Task.sleep(for: .milliseconds(150))
+        guard !Task.isCancelled else { return }
+        searchResults = await model.search(searchText)
     }
 
     private var navigationTitle: String {
@@ -144,7 +155,11 @@ struct InboxView: View {
 
     @ViewBuilder
     private var emptyState: some View {
-        if model.summaries.isEmpty {
+        if isSearching {
+            if searchResults.isEmpty {
+                ContentUnavailableView.search(text: searchText)
+            }
+        } else if model.summaries.isEmpty {
             if model.isSyncing {
                 ProgressView("Syncing…")
             } else {
@@ -183,6 +198,41 @@ struct InboxView: View {
         let ids = Array(selection)
         endSelecting()
         await model.trash(threadIDs: ids)
+    }
+}
+
+/// The swipe actions on an inbox row: trash trailing, read/unread toggle
+/// leading. Disabled while searching, where results are navigate-only so a
+/// mutation can't leave the result list stale.
+private struct RowActions: ViewModifier {
+    let model: InboxModel
+    let summary: ThreadSummary
+    let enabled: Bool
+
+    func body(content: Content) -> some View {
+        if enabled {
+            content
+                .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                    Button(role: .destructive) {
+                        Task { await model.trash(summary) }
+                    } label: {
+                        Label("Trash", systemImage: "trash")
+                    }
+                }
+                .swipeActions(edge: .leading, allowsFullSwipe: true) {
+                    Button {
+                        Task { await model.markRead(threadID: summary.id, read: summary.isUnread) }
+                    } label: {
+                        Label(
+                            summary.isUnread ? "Read" : "Unread",
+                            systemImage: summary.isUnread ? "envelope.open" : "envelope.badge"
+                        )
+                    }
+                    .tint(.blue)
+                }
+        } else {
+            content
+        }
     }
 }
 
