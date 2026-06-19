@@ -84,19 +84,8 @@ public final class AppSession {
 
     private func ensureStore() throws -> MailStore {
         if let store { return store }
-        let created = try MailStore(path: Self.databasePath())
+        let created = try MailStore(path: StoreLocation.databasePath())
         store = created
         return created
-    }
-
-    /// The on-device SQLite file, under Application Support.
-    private static func databasePath() throws -> String {
-        let directory = try FileManager.default.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        )
-        return directory.appendingPathComponent("zirbe.sqlite").path
     }
 }

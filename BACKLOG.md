@@ -7,14 +7,19 @@ are the user's own IMAP and SMTP servers, so anything needing a server to broker
 it is off the table), and app-password-only auth today (a real adoption ceiling
 until OAuth lands).
 
+## Shipped
+
+- **M5 — offline and IDLE.** Done in two parts. Part 1: foreground live refresh
+  while the inbox is open, a dedicated IMAP IDLE connection acting as a doorbell
+  into the existing sync. Part 2: a best-effort background poll via BGTaskScheduler
+  app-refresh, running one headless sync when iOS grants the wake. As promised
+  there is no instant push — real push needs a server the privacy posture forbids
+  — so new mail surfaces live in the foreground, at the next background poll iOS
+  allows, and on pull-to-refresh, and the Settings sheet discloses that ceiling
+  plainly.
+
 ## In priority order
 
-- **M5 — offline and IDLE.** Foreground live refresh while the inbox is open, and
-  a best-effort background poll for new mail via BGTaskScheduler. More than polish:
-  a Messages-style app that doesn't auto-update breaks the illusion. But there is
-  no instant push — real push needs a server the privacy posture forbids — so the
-  win is capped at foreground-live plus poll, and that limit must be disclosed
-  honestly.
 - **Send-side attachments.** Attach a photo or file to a compose or reply, the
   outbound complement to opening attachments — it closes the attachment story end
   to end. Design the UX from the chat metaphor first (Messages-style inline media

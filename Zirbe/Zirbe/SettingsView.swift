@@ -38,6 +38,14 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    Text("Zirbe updates live while you're reading and checks for new mail in the background when iOS allows. There's no instant push: that would need a server holding the connection, and Zirbe has none. Mail that arrives while the app is closed appears at the next background check or when you reopen it.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                } header: {
+                    Text("Refreshing")
+                }
+
+                Section {
                     Toggle("Open HTML email in Web View", isOn: $openHTMLInWebView)
                     Toggle("Load remote images", isOn: $loadRemoteImages)
                 } header: {

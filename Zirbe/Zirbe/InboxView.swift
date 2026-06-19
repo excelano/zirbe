@@ -98,10 +98,13 @@ struct InboxView: View {
                     model.startLiveRefresh()
                 }
             case .background:
-                // No foreground connection in the background, so end the watch;
-                // `.inactive` is a brief transitional state and is left alone to
-                // avoid needless connection churn.
+                // No foreground connection in the background, so end the live
+                // watch and hand off to the background poll: queue a refresh
+                // request iOS can run while we're suspended. `.inactive` is a
+                // brief transitional state and is left alone to avoid needless
+                // connection churn.
                 Task { await model.stopLiveRefresh() }
+                BackgroundRefreshScheduler.schedule()
             case .inactive:
                 break
             @unknown default:
