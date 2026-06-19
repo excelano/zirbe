@@ -229,9 +229,10 @@ struct InboxView: View {
     }
 }
 
-/// The swipe actions on an inbox row: trash trailing, read/unread toggle
-/// leading. Disabled while searching, where results are navigate-only so a
-/// mutation can't leave the result list stale.
+/// The swipe actions on an inbox row: trash trailing; read/unread toggle (full
+/// swipe) and flag/unflag together on the leading edge. Disabled while
+/// searching, where results are navigate-only so a mutation can't leave the
+/// result list stale.
 private struct RowActions: ViewModifier {
     let model: InboxModel
     let summary: ThreadSummary
@@ -246,15 +247,6 @@ private struct RowActions: ViewModifier {
                     } label: {
                         Label("Trash", systemImage: "trash")
                     }
-                    Button {
-                        Task { await model.markFlagged(threadID: summary.id, flagged: !summary.isFlagged) }
-                    } label: {
-                        Label(
-                            summary.isFlagged ? "Unflag" : "Flag",
-                            systemImage: summary.isFlagged ? "flag.slash" : "flag"
-                        )
-                    }
-                    .tint(.orange)
                 }
                 .swipeActions(edge: .leading, allowsFullSwipe: true) {
                     Button {
@@ -266,6 +258,15 @@ private struct RowActions: ViewModifier {
                         )
                     }
                     .tint(.blue)
+                    Button {
+                        Task { await model.markFlagged(threadID: summary.id, flagged: !summary.isFlagged) }
+                    } label: {
+                        Label(
+                            summary.isFlagged ? "Unflag" : "Flag",
+                            systemImage: summary.isFlagged ? "flag.slash" : "flag"
+                        )
+                    }
+                    .tint(.orange)
                 }
         } else {
             content
