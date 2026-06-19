@@ -240,6 +240,20 @@ public actor SyncService {
         try await store.rethread(accountID: account.id)
     }
 
+    /// Begin watching the inbox for server-side changes, yielding once per change
+    /// so the caller can re-sync (IMAP IDLE). Connects first, since the dedicated
+    /// IDLE connection reuses the session's authentication. Thin pass-through to
+    /// the engine; the password is per call as everywhere else.
+    public func watchInbox(password: String, mailbox: String = "INBOX") async throws -> AsyncStream<Void> {
+        try await engine.connect(username: account.username, password: password)
+        return try await engine.idleChanges(in: mailbox)
+    }
+
+    /// Stop watching the inbox and tear down the IDLE connection.
+    public func stopWatching() async {
+        await engine.stopIdle()
+    }
+
     /// Close the warm session and forget the password. Call on sign-out.
     public func disconnect() async {
         await engine.disconnect()

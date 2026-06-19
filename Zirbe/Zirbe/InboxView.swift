@@ -12,6 +12,9 @@ struct InboxView: View {
     let model: InboxModel
     /// Routes a full sign-out up to the session (forget credential + wipe cache).
     let onSignOut: () -> Void
+    /// Drives live refresh: the inbox watches the server (IMAP IDLE) only while
+    /// the app is in the foreground, and pauses when it backgrounds.
+    @Environment(\.scenePhase) private var scenePhase
     @State private var isComposing = false
     @State private var showingSettings = false
     /// When set, the list shows only conversations with unread mail.
@@ -79,8 +82,32 @@ struct InboxView: View {
             if model.summaries.isEmpty {
                 await model.refresh()
             }
+            // The first foreground doesn't fire `onChange(of: scenePhase)`, so
+            // start the live watch here; later background/foreground transitions
+            // are handled below.
+            model.startLiveRefresh()
         }
         .task(id: searchText) { await runSearch() }
+        .onChange(of: scenePhase) { _, phase in
+            switch phase {
+            case .active:
+                // Returning to the foreground: catch up on anything missed while
+                // the watch was paused, then resume it.
+                Task {
+                    await model.refresh()
+                    model.startLiveRefresh()
+                }
+            case .background:
+                // No foreground connection in the background, so end the watch;
+                // `.inactive` is a brief transitional state and is left alone to
+                // avoid needless connection churn.
+                Task { await model.stopLiveRefresh() }
+            case .inactive:
+                break
+            @unknown default:
+                break
+            }
+        }
     }
 
     /// Run the current query against the local store, with a short debounce so a

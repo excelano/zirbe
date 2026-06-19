@@ -35,6 +35,9 @@ public actor MailEngine {
     /// The resolved Sent mailbox name, cached after the first lookup so saving a
     /// sent copy doesn't re-list the server's special-use mailboxes each time.
     private var sentMailboxName: String?
+    /// The dedicated IDLE session watching a mailbox while live refresh is on.
+    /// Held so `stopIdle()` can tear it down; nil when not watching.
+    private var idleSession: IMAPIdleSession?
 
     public init(config: MailServerConfig, logger: Logger = Logger(label: "zirbe.mail")) {
         self.logger = logger
@@ -301,6 +304,48 @@ public actor MailEngine {
         }
     }
 
+    /// Watch `mailbox` for server-side changes via IMAP IDLE on a dedicated
+    /// connection, yielding once per change so the caller can re-sync. New mail
+    /// (`exists`), expunges, and QRESYNC vanishes tick the stream; housekeeping
+    /// events (flag-definition or recent-count changes, capability updates) are
+    /// ignored. A burst collapses to a single pending tick, so a flurry of
+    /// arrivals triggers one refresh, not many.
+    ///
+    /// The stream finishes when the server closes the session or `stopIdle()` is
+    /// called. A prior `connect` is required: the IDLE connection reuses the
+    /// session's authentication. SwiftMail renews IDLE and reconnects underneath,
+    /// so a dropped socket doesn't silently end the watch. The dedicated IDLE
+    /// connection is separate from the warm session, so a sync triggered in
+    /// response runs on the primary connection without disturbing the watch.
+    public func idleChanges(in mailbox: String) async throws -> AsyncStream<Void> {
+        try await ensureSession()
+        await stopIdle()
+        let session = try await server.idle(on: mailbox)
+        idleSession = session
+        return AsyncStream<Void>(bufferingPolicy: .bufferingNewest(1)) { continuation in
+            let consumer = Task.detached {
+                for await event in session.events {
+                    switch event {
+                    case .exists, .expunge, .vanished:
+                        continuation.yield()
+                    default:
+                        break
+                    }
+                }
+                continuation.finish()
+            }
+            continuation.onTermination = { _ in consumer.cancel() }
+        }
+    }
+
+    /// Tear down the IDLE session and its dedicated connection, ending the change
+    /// stream. Safe to call when not watching.
+    public func stopIdle() async {
+        guard let session = idleSession else { return }
+        idleSession = nil
+        try? await session.done()
+    }
+
     /// Move messages to the server's Trash, over the warm session. SwiftMail
     /// resolves the special-use Trash mailbox (falling back to a folder named
     /// "Trash"), so deleting a conversation here matches deleting it in any other
@@ -313,8 +358,10 @@ public actor MailEngine {
         }
     }
 
-    /// Close the session and forget the credentials. Call on sign-out.
+    /// Close the session and forget the credentials. Call on sign-out. Tears down
+    /// any live IDLE watch first, so its dedicated connection closes too.
     public func disconnect() async {
+        await stopIdle()
         isLoggedIn = false
         credentials = nil
         sentMailboxName = nil

@@ -85,6 +85,45 @@ public final class InboxModel {
         summaries = try await sync.syncInbox(password: password)
     }
 
+    /// The live-refresh monitor, running while the inbox is foreground and on
+    /// screen. Holds an IMAP IDLE watch that ticks on each server-side change and
+    /// re-syncs in response. nil when live refresh is off.
+    private var monitorTask: Task<Void, Never>?
+
+    /// Whether a live-refresh watch is currently running.
+    public var isLiveRefreshing: Bool { monitorTask != nil }
+
+    /// Start watching the inbox for new mail while it's on screen, re-syncing on
+    /// each server-side change (IMAP IDLE). Idempotent, and a no-op when not
+    /// connected. Pair with `stopLiveRefresh()` when the app leaves the
+    /// foreground. There is no instant push — the watch needs a foreground
+    /// connection — so updates pause when the app is backgrounded and resume on
+    /// return. A failed or dropped watch is non-fatal: the inbox still updates on
+    /// pull-to-refresh and on the next foreground, so nothing surfaces as an error.
+    public func startLiveRefresh() {
+        guard let password, monitorTask == nil else { return }
+        monitorTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let changes = try await self.sync.watchInbox(password: password)
+                for await _ in changes {
+                    if Task.isCancelled { break }
+                    await self.refresh()
+                }
+            } catch {
+                // Live refresh is a bonus on top of pull and foreground sync; a
+                // watch that won't start or dies is silently left off.
+            }
+        }
+    }
+
+    /// Stop the live-refresh watch and tear down its IDLE connection.
+    public func stopLiveRefresh() async {
+        monitorTask?.cancel()
+        monitorTask = nil
+        await sync.stopWatching()
+    }
+
     /// Search the synced conversations for `query`, returning the matching thread
     /// summaries most-recent-first. Local-only over the store, so it needs no
     /// password, is instant, and works offline; it covers only mail already
@@ -360,9 +399,11 @@ public final class InboxModel {
         await trash(threadIDs: [summary.id])
     }
 
-    /// Forget the session password, close the warm connection, and clear
-    /// in-memory state.
+    /// Forget the session password, stop any live-refresh watch, close the warm
+    /// connection, and clear in-memory state.
     public func signOut() {
+        monitorTask?.cancel()
+        monitorTask = nil
         password = nil
         summaries = []
         errorMessage = nil
