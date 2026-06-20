@@ -402,8 +402,8 @@ public final class MailStore: @unchecked Sendable {
     /// message filed in `mailboxName`, most recent activity first. Threading stays
     /// on, so a conversation that spans folders (a reply you sent now also living
     /// in Sent) appears in each folder it touches, carrying its whole thread. The
-    /// inbox home view uses the unscoped `threadSummaries(accountID:)` instead, to
-    /// stay the Messages-style "all conversations" list.
+    /// inbox home view passes `INBOX` here, so it shows every INBOX conversation
+    /// (the Messages-style list) without pulling in junk-only or sent-only threads.
     public func threadSummaries(accountID: String, mailboxName: String) async throws -> [ThreadSummary] {
         try await dbQueue.read { db in
             let threadIDs = try String.fetchSet(db, sql: """

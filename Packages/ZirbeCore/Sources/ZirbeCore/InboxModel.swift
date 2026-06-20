@@ -70,13 +70,13 @@ public final class InboxModel {
         }
     }
 
-    /// The current folder's conversation list: the unscoped "all conversations"
-    /// list when home (INBOX) is showing, the folder-scoped list otherwise.
+    /// The current folder's conversation list: every conversation with a message
+    /// filed in the folder showing, carrying its whole thread. Scoping the home
+    /// view to INBOX (rather than the whole store) keeps junk-only and sent-only
+    /// conversations out of the inbox while still surfacing a thread the moment it
+    /// has any INBOX message, the Messages-style behavior we want.
     private func currentSummaries() async throws -> [ThreadSummary] {
-        if isViewingInbox {
-            return try await store.threadSummaries(accountID: account.id)
-        }
-        return try await store.threadSummaries(accountID: account.id, mailboxName: currentMailbox.name)
+        try await store.threadSummaries(accountID: account.id, mailboxName: currentMailbox.name)
     }
 
     /// Re-read the visible list and the folder badge counts from the store. Called

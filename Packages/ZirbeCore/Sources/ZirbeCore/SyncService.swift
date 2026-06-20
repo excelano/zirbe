@@ -46,9 +46,10 @@ public actor SyncService {
         limit: Int = 50
     ) async throws -> [ThreadSummary] {
         try await reconcile(mailbox: mailbox, role: .inbox, password: password, limit: limit)
-        // The home view is the Messages-style "all conversations" list, not just
-        // INBOX, so it reads the unscoped summaries.
-        return try await store.threadSummaries(accountID: account.id)
+        // The home view is scoped to INBOX: every conversation with an INBOX
+        // message, carrying its whole thread. Scoping keeps junk-only and
+        // sent-only threads out of the inbox now that other folders also sync.
+        return try await store.threadSummaries(accountID: account.id, mailboxName: mailbox)
     }
 
     /// Sync one non-inbox folder and return its scoped conversation list: the
