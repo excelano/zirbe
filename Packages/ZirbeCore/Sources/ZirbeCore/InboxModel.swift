@@ -290,7 +290,8 @@ public final class InboxModel {
         cc: [Participant] = [],
         subject: String,
         body: String,
-        attachments: [DraftAttachment] = []
+        attachments: [DraftAttachment] = [],
+        discardingDraft discarding: DraftContext? = nil
     ) async -> Bool {
         guard let password else {
             errorMessage = "Connect an account first."
@@ -314,11 +315,122 @@ public final class InboxModel {
         let draft = OutgoingDraft.new(from: account, to: recipients, cc: cc, subject: trimmedSubject, body: trimmedBody, attachments: attachments.map(\.outgoing), sentAt: Date())
         do {
             try await sync.send(draft, password: password)
+            if let discarding {
+                // The message is sent, so its draft has served its purpose.
+                // Best-effort: a failed expunge leaves a stale draft to reconcile,
+                // not a failed send, so it must not turn a sent message into an
+                // error. The single reloadList below reflects both changes.
+                try? await sync.deleteDraft(threadID: discarding.threadID, password: password)
+            }
             try await reloadList()
             return true
         } catch {
             errorMessage = error.localizedDescription
             return false
+        }
+    }
+
+    /// Save the composer's current contents as a draft in the server's Drafts
+    /// folder, filing an optimistic local copy so it appears in Drafts at once.
+    /// Editing an existing draft (pass its `DraftContext`) reuses the same
+    /// Message-ID, so the save replaces the prior server copy rather than stacking
+    /// a second; a brand-new draft generates a fresh id. Returns the draft's
+    /// context for a later edit, send-delete, or discard, or nil if not connected
+    /// or the save failed (reason in `errorMessage`).
+    ///
+    /// Unlike `sendNew`, a draft has no content guardrails: a half-written message
+    /// with an empty subject, body, or recipient list still saves. The caller
+    /// decides when a composer is worth saving.
+    @discardableResult
+    public func saveDraft(
+        to recipients: [Participant],
+        cc: [Participant] = [],
+        subject: String,
+        body: String,
+        attachments: [DraftAttachment] = [],
+        editing existing: DraftContext? = nil
+    ) async -> DraftContext? {
+        guard let password else {
+            errorMessage = "Connect an account first."
+            return nil
+        }
+        let messageID = existing?.messageID ?? ReplyBuilder.generateMessageID(for: account)
+        let draft = OutgoingDraft.draft(
+            from: account,
+            to: recipients,
+            cc: cc,
+            subject: subject,
+            body: body,
+            attachments: attachments.map(\.outgoing),
+            messageID: messageID,
+            savedAt: Date()
+        )
+        do {
+            try await sync.saveDraft(draft, password: password)
+            try await reloadList()
+            return DraftContext(messageID: messageID)
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
+        }
+    }
+
+    /// Delete a draft: expunge its server copy from Drafts and drop its local copy,
+    /// refreshing the list. Called when a draft is explicitly discarded; a sent
+    /// draft is removed by `sendNew` itself. Errors surface in `errorMessage`.
+    public func deleteDraft(_ context: DraftContext) async {
+        guard let password else {
+            errorMessage = "Connect an account first."
+            return
+        }
+        await attempt {
+            try await self.sync.deleteDraft(threadID: context.threadID, password: password)
+            try await self.reloadList()
+        }
+    }
+
+    /// Load a saved draft for editing, returning its composer-ready fields and a
+    /// context to re-save or delete it. Fetches the body and re-fetches each
+    /// attachment's bytes over the warm session (mirroring `loadConversation` and
+    /// the forward path) so editing and re-saving preserves the files. Returns nil
+    /// if not connected, the draft is unknown, or it carries no Message-ID, with
+    /// any error in `errorMessage`.
+    public func loadDraft(threadID: String) async -> DraftEdit? {
+        guard let password else {
+            errorMessage = "Connect an account first."
+            return nil
+        }
+        do {
+            guard let thread = try await sync.loadConversation(id: threadID, password: password),
+                  let message = thread.messages.first,
+                  let messageID = message.messageID, !messageID.isEmpty
+            else { return nil }
+
+            // Re-fetch each attachment's bytes so a re-save carries the files, not
+            // just their names. A chip with no server part section yet (an
+            // optimistic copy not synced) is skipped; the resume flow taps a synced
+            // Drafts thread, so the parts are present.
+            var attachments: [DraftAttachment] = []
+            for attachment in message.attachments where !attachment.partID.isEmpty {
+                if let data = try await sync.fetchAttachment(
+                    messageID: message.id, partID: attachment.partID, password: password
+                ) {
+                    attachments.append(DraftAttachment(
+                        filename: attachment.filename, mimeType: attachment.mimeType, data: data
+                    ))
+                }
+            }
+            return DraftEdit(
+                context: DraftContext(messageID: messageID),
+                to: message.to,
+                cc: message.cc,
+                subject: message.subject ?? "",
+                body: message.bodyText ?? "",
+                attachments: attachments
+            )
+        } catch {
+            errorMessage = error.localizedDescription
+            return nil
         }
     }
 

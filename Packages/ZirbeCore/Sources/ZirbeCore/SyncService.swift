@@ -246,6 +246,50 @@ public actor SyncService {
         }
     }
 
+    /// Save a composed draft to the server's Drafts folder and file an optimistic
+    /// local copy so it shows in Drafts at once. APPEND is the gate, mirroring how
+    /// the SMTP send gates `send`: if it throws, nothing was stored, so the caller
+    /// can let the user retry the same draft. On success the local copy is inserted
+    /// (or refreshed, when editing) and the thread recomputed.
+    ///
+    /// Editing is implicit in the Message-ID. A prior copy of this draft is the
+    /// local row already keyed by its id; reading that row's UID gives the server
+    /// copy to expunge after the new one lands, so an edit replaces rather than
+    /// stacks. A nil prior UID (first save, or one never learned because the server
+    /// lacks UIDPLUS and Drafts hasn't synced since) skips the expunge, leaving the
+    /// old copy to be reconciled on the next Drafts sync. Returns the new server
+    /// UID when the server reported one, else nil.
+    @discardableResult
+    public func saveDraft(_ draft: OutgoingDraft, password: String) async throws -> UInt32? {
+        let priorUID = try await store.messageRef(id: draft.localMessage.id)?.uid
+
+        try await engine.connect(username: account.username, password: password)
+        let newUID = try await engine.saveToDrafts(draft.outgoingMessage, replacing: priorUID)
+
+        try await store.upsert(Mailbox(accountID: account.id, name: Self.localDraftsMailbox, role: .drafts))
+        try await store.save([draft.draftLocalMessage(uid: newUID)], accountID: account.id, mailboxName: Self.localDraftsMailbox)
+        try await store.rethread(accountID: account.id)
+        return newUID
+    }
+
+    /// Delete a draft: expunge its server copy from Drafts and drop the local copy,
+    /// then rethread so it leaves the Drafts list. Called when a draft is sent (its
+    /// content now lives as a real message) or explicitly discarded. The server
+    /// expunge runs for each of the thread's UID-bearing messages; a draft with no
+    /// known UID (never synced, no UIDPLUS) is only removed locally, and its server
+    /// copy is reconciled away on the next Drafts sync.
+    public func deleteDraft(threadID: String, password: String) async throws {
+        let refs = try await store.messageRefs(threadID: threadID)
+        if !refs.isEmpty {
+            try await engine.connect(username: account.username, password: password)
+            for ref in refs {
+                try await engine.removeDraft(uid: ref.uid)
+            }
+        }
+        try await store.deleteThread(threadID: threadID)
+        try await store.rethread(accountID: account.id)
+    }
+
     /// Mark a thread read or unread: set or clear `\Seen` on its messages on the
     /// server (grouped by mailbox), then update the local store and rethread so
     /// the inbox unread state follows. The server update is skipped when the
@@ -367,6 +411,11 @@ public actor SyncService {
     /// later Sent sync (a future milestone) will reconcile the names by
     /// Message-ID. Until then this is a stable local label, not a server folder.
     private static let localSentMailbox = "Sent"
+
+    /// The mailbox name the optimistic local Draft copy is filed under, mirroring
+    /// `localSentMailbox`. The server's real Drafts folder is resolved by the
+    /// engine on APPEND; a later Drafts sync reconciles the names by Message-ID.
+    private static let localDraftsMailbox = "Drafts"
 }
 
 /// Map the transport layer's special-use enum onto the domain's MailboxRole. The

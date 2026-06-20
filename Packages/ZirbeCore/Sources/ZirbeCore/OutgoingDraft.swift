@@ -102,6 +102,19 @@ public struct OutgoingDraft: Sendable, Hashable {
             }
         )
     }
+
+    /// The optimistic local copy of a *draft*, filed in the Drafts folder. Like
+    /// `localMessage` but flagged `\Draft` and stamped with the UID the APPEND
+    /// returned (when the server supports UIDPLUS), so the draft shows at once and
+    /// a later edit or send can replace or expunge the right server copy without
+    /// first re-syncing Drafts. A nil `uid` means the server reported none; the
+    /// UID is then learned on the next Drafts sync.
+    func draftLocalMessage(uid: UInt32?) -> Message {
+        var message = localMessage
+        message.uid = uid
+        message.flags = [.seen, .draft]
+        return message
+    }
 }
 
 extension DraftAttachment {
@@ -173,6 +186,36 @@ extension OutgoingDraft {
             subject: subject,
             body: QuotedText.forwardBody(note, forwarding: message, locale: locale, timeZone: timeZone),
             messageID: ReplyBuilder.generateMessageID(for: account),
+            date: date,
+            attachments: attachments
+        )
+    }
+
+    /// A draft of a new conversation, ready to APPEND to the Drafts folder. Same
+    /// shape as `new`, with two differences: the Message-ID is supplied rather
+    /// than generated, so editing an existing draft keeps one id (and so one local
+    /// row, one thread, and one reconciliation key) across saves; and the body is
+    /// kept verbatim rather than trimmed, since a draft is mid-composition and its
+    /// leading or trailing whitespace is the user's. No threading headers, since
+    /// reply-drafts are out of scope for v1; no content guardrails, since a draft
+    /// may be half-written with an empty subject, body, or recipient list.
+    public static func draft(
+        from account: Account,
+        to recipients: [Participant],
+        cc: [Participant] = [],
+        subject: String,
+        body: String,
+        attachments: [OutgoingAttachment] = [],
+        messageID: String,
+        savedAt date: Date
+    ) -> OutgoingDraft {
+        OutgoingDraft(
+            from: account.selfParticipant,
+            to: recipients,
+            cc: cc,
+            subject: subject,
+            body: body,
+            messageID: messageID,
             date: date,
             attachments: attachments
         )
