@@ -24,30 +24,30 @@ and the integrated inbox wait below that line.
   allows, and on pull-to-refresh, and the Settings sheet discloses that ceiling
   plainly.
 
+- **Send-side attachments.** Attach photos, camera captures, or files to a
+  compose or reply, staged as removable chips and sent over the existing send
+  pipeline (SMTP send, Sent copy, optimistic local bubble). Verified on device.
+
+- **Folder browsing, archive, and move.** Reach mailboxes beyond INBOX (Sent,
+  Archive, Drafts, custom folders), with archive and move-to-folder as
+  first-class actions beside trash. The structural foundation the rest leans on:
+  drafts need a Drafts folder, junk needs a Junk folder, and move is the
+  machinery both share. The home view stays scoped to INBOX so junk-only and
+  sent-only threads don't leak in. Verified on device.
+
 ## In flight
 
-- **Send-side attachments.** Attach photos, camera captures, or files to a
-  compose or reply, staged as removable chips and sent over the existing forward
-  pipeline (SMTP send, Sent copy, optimistic local bubble). Built and green
-  (ZirbeCore tests pass, app builds); pending on-device verification of the
-  camera path, the permission prompt, and a real send landing in a recipient's
-  inbox. Not yet committed.
+- **Drafts.** Save a half-written message and resume it, stored in the IMAP
+  Drafts folder (the source of truth, via APPEND with `\Draft`); compose is
+  send-or-discard today. Saved on composer close — Save Draft or Discard on
+  dismissing a non-empty composer, a quiet save on backgrounding — with an edit
+  replacing the server copy and a send deleting the draft. Scoped to the
+  new-conversation composer for v1; reply-drafts deferred. Resume by tapping a
+  Drafts-folder thread to reopen the composer prefilled.
 
 ## Above the multi-account line
 
-The foundation, committed and in order:
-
-- **Folder browsing, archive, and move.** Reach mailboxes beyond INBOX (Sent,
-  Archive, Drafts, custom folders), and add archive and move-to-folder as
-  first-class actions beside trash, since archive is the verb most people reach
-  for over delete (today only Trash exists). This is the structural foundation
-  the rest leans on: drafts need a Drafts folder, junk needs a Junk folder, and
-  move is the machinery both share.
-- **Drafts.** Save a half-written message and resume it, stored in the Drafts
-  folder; compose is send-or-discard today. Sits directly behind folder browsing
-  because a draft has no home without the Drafts mailbox to read it from.
-
-Then, in recommended sequence:
+In recommended sequence:
 
 - **Inline image thumbnails in bubbles.** Show sent and received images inline,
   tap for full screen, instead of as a chip. The attachment polish deliberately

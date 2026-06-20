@@ -38,6 +38,9 @@ public actor MailEngine {
     /// The resolved Archive mailbox name, cached like `sentMailboxName` so
     /// archiving doesn't re-list the special-use mailboxes on every action.
     private var archiveMailboxName: String?
+    /// The resolved Drafts mailbox name, cached like `sentMailboxName` so saving
+    /// or replacing a draft doesn't re-list the special-use mailboxes each time.
+    private var draftsMailboxName: String?
     /// The dedicated IDLE session watching a mailbox while live refresh is on.
     /// Held so `stopIdle()` can tear it down; nil when not watching.
     private var idleSession: IMAPIdleSession?
@@ -296,6 +299,55 @@ public actor MailEngine {
         try await server.append(email: Email(outgoing), to: mailbox, flags: [.seen])
     }
 
+    /// Save a composed message to the server's Drafts mailbox, over the warm
+    /// session, so a half-written message survives a quit and shows up in other
+    /// clients. SwiftMail's `createDraft` sets the `\Draft` flag and stamps the
+    /// Apple draft-ownership header, so a client that later sends it removes it
+    /// from Drafts. When `replacing` is given (the user edited an existing
+    /// draft), the new copy is appended first and the prior draft expunged
+    /// after, so an edit replaces rather than duplicates and a failure mid-way
+    /// can only leave a stray duplicate, never lose the draft. Returns the new
+    /// draft's server UID when the server supports UIDPLUS, so a later edit can
+    /// replace it in turn; nil otherwise. Like `saveToSent` this does not retry
+    /// on a dropped connection, because an APPEND that half-committed could
+    /// otherwise be doubled.
+    @discardableResult
+    public func saveToDrafts(_ outgoing: OutgoingMessage, replacing previousUID: UInt32? = nil) async throws -> UInt32? {
+        try await ensureSession()
+        let mailbox = try await resolvedDraftsMailbox()
+        let result = try await server.createDraft(from: Email(outgoing), in: mailbox)
+        if let previousUID {
+            // Best-effort cleanup: the new draft is already saved, so a failed
+            // expunge leaves a duplicate, not data loss. Don't fail the save.
+            do {
+                try await removeDraft(uid: previousUID)
+            } catch {
+                logger.debug("draft replace: couldn't expunge prior uid \(previousUID): \(error)")
+            }
+        }
+        return result.firstUID?.value
+    }
+
+    /// Permanently remove a draft from the Drafts mailbox by UID, over the warm
+    /// session: mark it `\Deleted` and expunge. Used when an edited draft is
+    /// replaced by a fresh append, and when a saved draft is sent or discarded.
+    /// Expunges just that UID where the server supports UIDPLUS; otherwise
+    /// expunges the mailbox's deleted messages, which is safe here because
+    /// Drafts holds only the user's own drafts.
+    public func removeDraft(uid: UInt32) async throws {
+        try await perform {
+            let mailbox = try await self.resolvedDraftsMailbox()
+            _ = try await self.server.selectMailbox(mailbox)
+            let set = UIDSet([UID(uid)])
+            try await self.server.store(flags: [.deleted], on: set, operation: .add)
+            if await self.server.supportsUIDPlus {
+                try await self.server.expunge(messages: set)
+            } else {
+                try await self.server.expunge()
+            }
+        }
+    }
+
     /// Set or clear the `\Seen` flag on messages, over the warm session. Used to
     /// reflect a read/unread change made locally back to the server, so every
     /// client agrees. A no-op when no UIDs are given.
@@ -422,6 +474,7 @@ public actor MailEngine {
         credentials = nil
         sentMailboxName = nil
         archiveMailboxName = nil
+        draftsMailboxName = nil
         try? await server.disconnect()
     }
 
@@ -448,6 +501,18 @@ public actor MailEngine {
         try await server.listSpecialUseMailboxes()
         let name = try await server.archiveFolder.name
         archiveMailboxName = name
+        return name
+    }
+
+    /// The server's Drafts mailbox name, resolved once and cached. Lists the
+    /// special-use mailboxes on first call (which also populates the general
+    /// list, so the name-based fallback works on a server without SPECIAL-USE),
+    /// then reads the Drafts folder. Throws if the server has no drafts folder.
+    private func resolvedDraftsMailbox() async throws -> String {
+        if let draftsMailboxName { return draftsMailboxName }
+        try await server.listSpecialUseMailboxes()
+        let name = try await server.draftsFolder.name
+        draftsMailboxName = name
         return name
     }
 
