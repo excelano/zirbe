@@ -20,12 +20,22 @@ import ZirbeMail
 @MainActor
 @Observable
 public final class InboxModel {
-    /// The inbox rows, most recent activity first. Read-only to the UI.
+    /// The current folder's rows, most recent activity first. Read-only to the UI.
     public private(set) var summaries: [ThreadSummary] = []
-    /// True while an inbox sync is in flight, for a list-level progress view.
+    /// True while a sync is in flight, for a list-level progress view.
     public private(set) var isSyncing = false
     /// The last error, if any, in a form a view can show directly.
     public private(set) var errorMessage: String?
+
+    /// The account's folders, for the mailbox switcher. Populated from the cache
+    /// and refreshed from the server when the switcher opens.
+    public private(set) var mailboxes: [Mailbox] = []
+    /// Per-folder unread badge counts, keyed by mailbox name, from the local
+    /// cache; a folder not yet visited has no entry. See `MailStore.unreadCounts`.
+    public private(set) var unreadCounts: [String: Int] = [:]
+    /// The folder currently on screen. INBOX is home and the default; selecting
+    /// another swaps the list to that folder's scoped view.
+    public private(set) var currentMailbox: Mailbox
 
     public let account: Account
     private let store: MailStore
@@ -38,17 +48,43 @@ public final class InboxModel {
         self.account = account
         self.store = store
         self.sync = SyncService(account: account, store: store)
+        self.currentMailbox = Mailbox(accountID: account.id, name: "INBOX", role: .inbox)
     }
 
     /// Whether a password is held, so refresh and conversation loads can run.
     public var isConnected: Bool { password != nil }
 
+    /// Whether the home (INBOX) view is on screen. The home view is the unscoped
+    /// "all conversations" list; every other folder is a scoped view. INBOX stays
+    /// the privileged folder synced on launch, watched over IDLE, and polled in
+    /// the background regardless of which folder is showing.
+    public var isViewingInbox: Bool {
+        currentMailbox.role == .inbox || currentMailbox.name == "INBOX"
+    }
+
     /// Show whatever is already in the store, with no network. Safe on launch to
     /// display cached mail immediately.
     public func loadCached() async {
         await attempt {
-            self.summaries = try await self.store.threadSummaries(accountID: self.account.id)
+            try await self.reloadList()
         }
+    }
+
+    /// The current folder's conversation list: the unscoped "all conversations"
+    /// list when home (INBOX) is showing, the folder-scoped list otherwise.
+    private func currentSummaries() async throws -> [ThreadSummary] {
+        if isViewingInbox {
+            return try await store.threadSummaries(accountID: account.id)
+        }
+        return try await store.threadSummaries(accountID: account.id, mailboxName: currentMailbox.name)
+    }
+
+    /// Re-read the visible list and the folder badge counts from the store. Called
+    /// after any sync or mutation, so the list and the switcher's badges stay in
+    /// step with the cache without each call path repeating the two reads.
+    private func reloadList() async throws {
+        summaries = try await currentSummaries()
+        unreadCounts = try await store.unreadCounts(accountID: account.id)
     }
 
     /// Connect with an app-specific password, then sync the inbox. Throws if the
@@ -82,7 +118,56 @@ public final class InboxModel {
     }
 
     private func performSync(password: String) async throws {
-        summaries = try await sync.syncInbox(password: password)
+        if isViewingInbox {
+            try await sync.syncInbox(password: password)
+        } else {
+            try await sync.syncFolder(mailbox: currentMailbox.name, role: currentMailbox.role, password: password)
+        }
+        try await reloadList()
+    }
+
+    /// Load the cached folder list immediately (no network), for opening the
+    /// mailbox switcher. Pair with `discoverFolders()` to refresh it from the
+    /// server in the background.
+    public func loadMailboxes() async {
+        await attempt {
+            self.mailboxes = try await self.store.mailboxes(accountID: self.account.id)
+            self.unreadCounts = try await self.store.unreadCounts(accountID: self.account.id)
+        }
+    }
+
+    /// Refresh the folder list from the server (LIST), caching the result.
+    /// Best-effort: a failure leaves the cached list in place rather than
+    /// surfacing, since the switcher still works from the cache. A no-op when not
+    /// connected.
+    public func discoverFolders() async {
+        guard let password else { return }
+        do {
+            mailboxes = try await sync.discoverFolders(password: password)
+        } catch {
+            // The switcher falls back to whatever folders are already cached.
+        }
+    }
+
+    /// Switch the visible list to `mailbox`, syncing it if it's not the home view.
+    /// INBOX is home and reads its cached "all conversations" list immediately
+    /// (it's already synced and watched); any other folder syncs lazily on this
+    /// first switch, then serves from the cache on later visits.
+    public func selectMailbox(_ mailbox: Mailbox) async {
+        currentMailbox = mailbox
+        guard let password else {
+            await attempt { try await self.reloadList() }
+            return
+        }
+        isSyncing = true
+        await attempt {
+            if self.isViewingInbox {
+                try await self.reloadList()
+            } else {
+                try await self.performSync(password: password)
+            }
+        }
+        isSyncing = false
     }
 
     /// The live-refresh monitor, running while the inbox is foreground and on
@@ -229,7 +314,7 @@ public final class InboxModel {
         let draft = OutgoingDraft.new(from: account, to: recipients, cc: cc, subject: trimmedSubject, body: trimmedBody, attachments: attachments.map(\.outgoing), sentAt: Date())
         do {
             try await sync.send(draft, password: password)
-            summaries = try await store.threadSummaries(accountID: account.id)
+            try await reloadList()
             return true
         } catch {
             errorMessage = error.localizedDescription
@@ -250,7 +335,7 @@ public final class InboxModel {
             for id in threadIDs {
                 try await self.sync.setRead(threadID: id, seen: read, password: password)
             }
-            self.summaries = try await self.store.threadSummaries(accountID: self.account.id)
+            try await self.reloadList()
         }
     }
 
@@ -279,7 +364,7 @@ public final class InboxModel {
             for id in threadIDs {
                 try await self.sync.setFlagged(threadID: id, flagged: flagged, password: password)
             }
-            self.summaries = try await self.store.threadSummaries(accountID: self.account.id)
+            try await self.reloadList()
         }
     }
 
@@ -391,7 +476,7 @@ public final class InboxModel {
                 sentAt: Date()
             )
             try await sync.send(draft, password: password)
-            summaries = try await store.threadSummaries(accountID: account.id)
+            try await reloadList()
             return true
         } catch {
             errorMessage = error.localizedDescription
@@ -412,13 +497,77 @@ public final class InboxModel {
             for id in threadIDs {
                 try await self.sync.trash(threadID: id, password: password)
             }
-            self.summaries = try await self.store.threadSummaries(accountID: self.account.id)
+            try await self.reloadList()
         }
     }
 
     /// Trash a single conversation.
     public func trash(_ summary: ThreadSummary) async {
         await trash(threadIDs: [summary.id])
+    }
+
+    /// Archive one or more conversations: move each to the server's Archive,
+    /// preserving its read state, and drop it from the current list, refreshing the
+    /// rows once at the end. Server-first, mirroring `trash`: a failed move leaves
+    /// that conversation in place with the reason in `errorMessage`.
+    public func archive(threadIDs: [String]) async {
+        guard let password else {
+            errorMessage = "Connect an account first."
+            return
+        }
+        await attempt {
+            for id in threadIDs {
+                try await self.sync.archive(threadID: id, password: password)
+            }
+            try await self.reloadList()
+        }
+    }
+
+    /// Archive a single conversation.
+    public func archive(_ summary: ThreadSummary) async {
+        await archive(threadIDs: [summary.id])
+    }
+
+    /// Mark one or more conversations as junk: move each to the server's Junk
+    /// folder and drop it from the current list, refreshing once at the end.
+    /// Server-first, mirroring `trash`.
+    public func junk(threadIDs: [String]) async {
+        guard let password else {
+            errorMessage = "Connect an account first."
+            return
+        }
+        await attempt {
+            for id in threadIDs {
+                try await self.sync.junk(threadID: id, password: password)
+            }
+            try await self.reloadList()
+        }
+    }
+
+    /// Mark a single conversation as junk.
+    public func junk(_ summary: ThreadSummary) async {
+        await junk(threadIDs: [summary.id])
+    }
+
+    /// Move one or more conversations to `destination` (a folder name) and drop
+    /// each from the current list, refreshing once at the end. Server-first,
+    /// mirroring `trash`.
+    public func move(threadIDs: [String], to destination: String) async {
+        guard let password else {
+            errorMessage = "Connect an account first."
+            return
+        }
+        await attempt {
+            for id in threadIDs {
+                try await self.sync.move(threadID: id, to: destination, password: password)
+            }
+            try await self.reloadList()
+        }
+    }
+
+    /// Move a single conversation to `destination`.
+    public func move(_ summary: ThreadSummary, to destination: String) async {
+        await move(threadIDs: [summary.id], to: destination)
     }
 
     /// Forget the session password, stop any live-refresh watch, close the warm
@@ -428,6 +577,9 @@ public final class InboxModel {
         monitorTask = nil
         password = nil
         summaries = []
+        mailboxes = []
+        unreadCounts = [:]
+        currentMailbox = Mailbox(accountID: account.id, name: "INBOX", role: .inbox)
         errorMessage = nil
         Task { await sync.disconnect() }
     }

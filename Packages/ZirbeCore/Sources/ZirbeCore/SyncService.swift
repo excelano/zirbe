@@ -45,6 +45,33 @@ public actor SyncService {
         mailbox: String = "INBOX",
         limit: Int = 50
     ) async throws -> [ThreadSummary] {
+        try await reconcile(mailbox: mailbox, role: .inbox, password: password, limit: limit)
+        // The home view is the Messages-style "all conversations" list, not just
+        // INBOX, so it reads the unscoped summaries.
+        return try await store.threadSummaries(accountID: account.id)
+    }
+
+    /// Sync one non-inbox folder and return its scoped conversation list: the
+    /// threads with a message filed in `mailbox`. Same reconcile as the inbox
+    /// (fetch, UIDVALIDITY check, prune, rethread, snippet backfill), differing
+    /// only in the role stamped on the folder and in returning a mailbox-scoped
+    /// view rather than the whole account. Folders sync lazily, on first visit and
+    /// on refresh; INBOX remains the one folder synced on launch and watched.
+    @discardableResult
+    public func syncFolder(
+        mailbox: String,
+        role: MailboxRole?,
+        password: String,
+        limit: Int = 50
+    ) async throws -> [ThreadSummary] {
+        try await reconcile(mailbox: mailbox, role: role, password: password, limit: limit)
+        return try await store.threadSummaries(accountID: account.id, mailboxName: mailbox)
+    }
+
+    /// Fetch a folder, reconcile the cache against the server, and recompute
+    /// threads. The shared core of `syncInbox` and `syncFolder`; neither returns
+    /// from here, since they differ only in which summaries they read back after.
+    private func reconcile(mailbox: String, role: MailboxRole?, password: String, limit: Int) async throws {
         try await engine.connect(username: account.username, password: password)
 
         // The server's current identity and contents for this mailbox: its
@@ -55,7 +82,7 @@ public actor SyncService {
         let envelopes = try await engine.fetchRecentEnvelopes(in: mailbox, limit: limit)
 
         try await store.upsert(account)
-        try await store.upsert(Mailbox(accountID: account.id, name: mailbox, role: .inbox))
+        try await store.upsert(Mailbox(accountID: account.id, name: mailbox, role: role))
 
         // A changed UIDVALIDITY invalidates every cached UID for the mailbox; the
         // cache can't be reconciled, only rebuilt, so drop it before re-saving.
@@ -102,8 +129,25 @@ public actor SyncService {
             // Snippets are a convenience; a failure to backfill them must not
             // sink a sync that already reconciled the inbox.
         }
+    }
 
-        return try await store.threadSummaries(accountID: account.id)
+    /// List the server's folders and cache them, so the mailbox switcher has names
+    /// and roles to show. Container-only folders (the `\Noselect` parents some
+    /// servers use purely for hierarchy) are dropped; they hold no mail to browse.
+    /// Roles come from each folder's RFC 6154 special-use attribute, mapped onto
+    /// the domain's MailboxRole. Returns the cached set. Pure discovery: it upserts
+    /// folder rows but syncs no messages, so visiting a folder still triggers its
+    /// own lazy sync.
+    @discardableResult
+    public func discoverFolders(password: String) async throws -> [Mailbox] {
+        try await engine.connect(username: account.username, password: password)
+        let mailboxes = try await engine.listMailboxes()
+            .filter(\.isSelectable)
+            .map { Mailbox(accountID: account.id, name: $0.name, role: MailboxRole($0.specialUse)) }
+        for mailbox in mailboxes {
+            try await store.upsert(mailbox)
+        }
+        return mailboxes
     }
 
     /// Load a full conversation for display, fetching any message bodies that
@@ -249,6 +293,55 @@ public actor SyncService {
         try await store.rethread(accountID: account.id)
     }
 
+    /// Move a thread's server-backed messages to `destination` (grouped by their
+    /// current mailbox), then drop the local copies and rethread so the
+    /// conversation leaves the current folder. The server move is the gate for
+    /// messages that have a UID; local-only messages are simply dropped. The
+    /// destination folder shows them on its next sync (a moved message gets a new
+    /// UID there, so it is re-fetched rather than carried over with a stale one).
+    public func move(threadID: String, to destination: String, password: String) async throws {
+        let refs = try await store.messageRefs(threadID: threadID)
+        if !refs.isEmpty {
+            try await engine.connect(username: account.username, password: password)
+            for (mailbox, group) in Dictionary(grouping: refs, by: \.mailbox) {
+                try await engine.move(in: mailbox, uids: group.map(\.uid), to: destination)
+            }
+        }
+        try await store.deleteThread(threadID: threadID)
+        try await store.rethread(accountID: account.id)
+    }
+
+    /// Archive a thread: move its server-backed messages to the server's Archive
+    /// folder (resolved by the engine), preserving their read state, then drop the
+    /// local copies and rethread. Same shape as `move`, with the destination the
+    /// engine's archive folder rather than a caller-named one.
+    public func archive(threadID: String, password: String) async throws {
+        let refs = try await store.messageRefs(threadID: threadID)
+        if !refs.isEmpty {
+            try await engine.connect(username: account.username, password: password)
+            for (mailbox, group) in Dictionary(grouping: refs, by: \.mailbox) {
+                try await engine.archive(in: mailbox, uids: group.map(\.uid))
+            }
+        }
+        try await store.deleteThread(threadID: threadID)
+        try await store.rethread(accountID: account.id)
+    }
+
+    /// Mark a thread as junk: move its server-backed messages to the server's Junk
+    /// folder (resolved by the engine, with a name fallback), then drop the local
+    /// copies and rethread. Same shape as `archive`.
+    public func junk(threadID: String, password: String) async throws {
+        let refs = try await store.messageRefs(threadID: threadID)
+        if !refs.isEmpty {
+            try await engine.connect(username: account.username, password: password)
+            for (mailbox, group) in Dictionary(grouping: refs, by: \.mailbox) {
+                try await engine.markJunk(in: mailbox, uids: group.map(\.uid))
+            }
+        }
+        try await store.deleteThread(threadID: threadID)
+        try await store.rethread(accountID: account.id)
+    }
+
     /// Begin watching the inbox for server-side changes, yielding once per change
     /// so the caller can re-sync (IMAP IDLE). Connects first, since the dedicated
     /// IDLE connection reuses the session's authentication. Thin pass-through to
@@ -273,4 +366,22 @@ public actor SyncService {
     /// later Sent sync (a future milestone) will reconcile the names by
     /// Message-ID. Until then this is a stable local label, not a server folder.
     private static let localSentMailbox = "Sent"
+}
+
+/// Map the transport layer's special-use enum onto the domain's MailboxRole. The
+/// two intentionally mirror each other (ZirbeMail can't see ZirbeCore's type, so
+/// it carries its own); this is the one place that bridges them, in ZirbeCore,
+/// which is allowed to depend on ZirbeMail.
+extension MailboxRole {
+    init?(_ specialUse: MailboxSpecialUse?) {
+        switch specialUse {
+        case .inbox: self = .inbox
+        case .sent: self = .sent
+        case .drafts: self = .drafts
+        case .trash: self = .trash
+        case .archive: self = .archive
+        case .junk: self = .junk
+        case nil: return nil
+        }
+    }
 }

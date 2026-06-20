@@ -579,4 +579,80 @@ final class MailStoreTests: XCTestCase {
         let hits = try await store.searchThreads(accountID: acct.id, query: "budget")
         XCTAssertEqual(hits.map(\.subject), ["Q3 Budget"])
     }
+
+    // MARK: Folders
+
+    func testMailboxesReadBackCarriesRoles() async throws {
+        let store = try MailStore()
+        let acct = account()
+        try await store.upsert(acct)
+        try await store.upsert(Mailbox(accountID: acct.id, name: "INBOX", role: .inbox))
+        try await store.upsert(Mailbox(accountID: acct.id, name: "Archive", role: .archive))
+        try await store.upsert(Mailbox(accountID: acct.id, name: "Projects", role: nil))
+
+        let mailboxes = try await store.mailboxes(accountID: acct.id)
+        // Returned alphabetically by name; roles survive the round trip, nil and all.
+        XCTAssertEqual(mailboxes.map(\.name), ["Archive", "INBOX", "Projects"])
+        XCTAssertEqual(mailboxes.first { $0.name == "INBOX" }?.role, .inbox)
+        XCTAssertEqual(mailboxes.first { $0.name == "Archive" }?.role, .archive)
+        XCTAssertNil(mailboxes.first { $0.name == "Projects" }?.role)
+    }
+
+    func testScopedSummariesReturnOnlyThreadsInThatFolder() async throws {
+        let store = try MailStore()
+        let acct = account()
+        try await store.upsert(acct)
+
+        let inboxMsg = msg(id: "<i@x>", subject: "Inbox thread", from: "p@x.com", minutes: 0)
+        let archived = msg(id: "<a@x>", subject: "Archived thread", from: "q@x.com", minutes: 1)
+        try await store.save([inboxMsg], accountID: acct.id, mailboxName: "INBOX")
+        try await store.save([archived], accountID: acct.id, mailboxName: "Archive")
+        try await store.rethread(accountID: acct.id)
+
+        let archiveOnly = try await store.threadSummaries(accountID: acct.id, mailboxName: "Archive")
+        XCTAssertEqual(archiveOnly.map(\.subject), ["Archived thread"])
+
+        // The unscoped home view still shows everything, both folders.
+        let all = try await store.threadSummaries(accountID: acct.id).map(\.subject)
+        XCTAssertEqual(Set(all), ["Inbox thread", "Archived thread"])
+    }
+
+    func testScopedSummariesIncludeAThreadSpanningFolders() async throws {
+        let store = try MailStore()
+        let acct = account()
+        try await store.upsert(acct)
+
+        // One conversation: the original in INBOX, the reply you sent now in Sent.
+        let original = msg(id: "<a@x>", subject: "Lunch", from: "p@x.com", minutes: 0)
+        let reply = msg(id: "<b@x>", references: ["<a@x>"], subject: "Re: Lunch", from: "me@x.com", minutes: 1)
+        try await store.save([original], accountID: acct.id, mailboxName: "INBOX")
+        try await store.save([reply], accountID: acct.id, mailboxName: "Sent")
+        try await store.rethread(accountID: acct.id)
+
+        // Threading stays on, so the conversation surfaces in each folder it touches.
+        let inSent = try await store.threadSummaries(accountID: acct.id, mailboxName: "Sent")
+        XCTAssertEqual(inSent.map(\.subject), ["Lunch"])
+        XCTAssertEqual(inSent.first?.messageCount, 2)
+        let inInbox = try await store.threadSummaries(accountID: acct.id, mailboxName: "INBOX")
+        XCTAssertEqual(inInbox.first?.id, inSent.first?.id)
+    }
+
+    func testUnreadCountsPerFolder() async throws {
+        let store = try MailStore()
+        let acct = account()
+        try await store.upsert(acct)
+
+        let i1 = msg(id: "<i1@x>", subject: "A", from: "p@x.com", minutes: 0, seen: false)
+        let i2 = msg(id: "<i2@x>", subject: "B", from: "p@x.com", minutes: 1, seen: false)
+        let i3 = msg(id: "<i3@x>", subject: "C", from: "p@x.com", minutes: 2, seen: true)
+        let a1 = msg(id: "<a1@x>", subject: "D", from: "q@x.com", minutes: 3, seen: false)
+        try await store.save([i1, i2, i3], accountID: acct.id, mailboxName: "INBOX")
+        try await store.save([a1], accountID: acct.id, mailboxName: "Archive")
+
+        let counts = try await store.unreadCounts(accountID: acct.id)
+        XCTAssertEqual(counts["INBOX"], 2)   // two unseen, one read
+        XCTAssertEqual(counts["Archive"], 1)
+        // A folder with no unread mail has no entry, not a zero.
+        XCTAssertNil(counts["Sent"])
+    }
 }

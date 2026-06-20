@@ -138,6 +138,10 @@ struct MailboxRow: Codable, FetchableRecord, PersistableRecord {
         self.name = mailbox.name
         self.role = mailbox.role?.rawValue
     }
+
+    var mailbox: Mailbox {
+        Mailbox(accountID: accountID, name: name, role: role.flatMap(MailboxRole.init(rawValue:)))
+    }
 }
 
 // Account persists as itself; its stored `id` is the primary key.
@@ -172,6 +176,20 @@ public final class MailStore: @unchecked Sendable {
     /// is at most one; returning a list keeps the door open for multiple.
     public func accounts() async throws -> [Account] {
         try await dbQueue.read { db in try Account.fetchAll(db) }
+    }
+
+    /// Every folder discovered for an account, for the mailbox switcher. Returns
+    /// the cached rows only; an unvisited folder is still listed (folder discovery
+    /// upserts every name) even before its messages are synced. Names sort
+    /// alphabetically here; role-based ordering ("Inbox" first) is the UI's job.
+    public func mailboxes(accountID: String) async throws -> [Mailbox] {
+        try await dbQueue.read { db in
+            try MailboxRow
+                .filter(Column("accountID") == accountID)
+                .order(Column("name"))
+                .fetchAll(db)
+                .map(\.mailbox)
+        }
     }
 
     /// Wipe the whole store back to an empty, migrated state. Used on sign-out,
@@ -377,6 +395,46 @@ public final class MailStore: @unchecked Sendable {
                 .order(Column("lastActivity").desc)
                 .fetchAll(db)
                 .map(\.summary)
+        }
+    }
+
+    /// One folder's view: the thread summaries of every conversation that has a
+    /// message filed in `mailboxName`, most recent activity first. Threading stays
+    /// on, so a conversation that spans folders (a reply you sent now also living
+    /// in Sent) appears in each folder it touches, carrying its whole thread. The
+    /// inbox home view uses the unscoped `threadSummaries(accountID:)` instead, to
+    /// stay the Messages-style "all conversations" list.
+    public func threadSummaries(accountID: String, mailboxName: String) async throws -> [ThreadSummary] {
+        try await dbQueue.read { db in
+            let threadIDs = try String.fetchSet(db, sql: """
+                SELECT DISTINCT threadID FROM message
+                WHERE accountID = ? AND mailboxName = ? AND threadID IS NOT NULL
+                """, arguments: [accountID, mailboxName])
+            guard !threadIDs.isEmpty else { return [] }
+            return try ThreadRow
+                .filter(Column("accountID") == accountID && threadIDs.contains(Column("id")))
+                .order(Column("lastActivity").desc)
+                .fetchAll(db)
+                .map(\.summary)
+        }
+    }
+
+    /// The unread message count of each folder, keyed by mailbox name, for the
+    /// folder switcher's badges. Counted from the local cache (a message is unread
+    /// when it lacks `\Seen`), so it reflects only what has been synced: an
+    /// unvisited folder has no cached messages and so reports no count. This is the
+    /// deliberate stand-in for a per-folder STATUS round trip, which the lazy-sync
+    /// model avoids; a folder's count becomes exact once it has been opened once.
+    public func unreadCounts(accountID: String) async throws -> [String: Int] {
+        try await dbQueue.read { db in
+            let rows = try MessageRow
+                .filter(Column("accountID") == accountID)
+                .fetchAll(db)
+            var counts: [String: Int] = [:]
+            for row in rows where !row.flags.contains(.seen) {
+                counts[row.mailboxName, default: 0] += 1
+            }
+            return counts
         }
     }
 
