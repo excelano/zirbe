@@ -35,6 +35,9 @@ public actor MailEngine {
     /// The resolved Sent mailbox name, cached after the first lookup so saving a
     /// sent copy doesn't re-list the server's special-use mailboxes each time.
     private var sentMailboxName: String?
+    /// The resolved Archive mailbox name, cached like `sentMailboxName` so
+    /// archiving doesn't re-list the special-use mailboxes on every action.
+    private var archiveMailboxName: String?
     /// The dedicated IDLE session watching a mailbox while live refresh is on.
     /// Held so `stopIdle()` can tear it down; nil when not watching.
     private var idleSession: IMAPIdleSession?
@@ -80,6 +83,19 @@ public actor MailEngine {
             let result: ExtendedSearchResult<UID> = try await self.server.extendedSearch(criteria: [.all])
             let uids = (result.all ?? result.partial?.results)?.toArray().map(\.value) ?? []
             return MailboxState(uidValidity: selection.uidValidity.value, uids: Set(uids))
+        }
+    }
+
+    /// List the server's folders, over the warm session, as Zirbe-owned values
+    /// with each folder's special-use role resolved from its RFC 6154 attributes.
+    /// The full set is returned, including non-selectable container folders (the
+    /// `\Noselect` parents some servers use for hierarchy, marked
+    /// `isSelectable == false`); deciding what to show, and how to flatten any
+    /// hierarchy, is the caller's. Names are the server's own, the identifiers
+    /// every other folder operation takes.
+    public func listMailboxes() async throws -> [MailboxInfo] {
+        try await perform {
+            try await self.server.listMailboxes().map(MailboxInfo.init)
         }
     }
 
@@ -358,6 +374,46 @@ public actor MailEngine {
         }
     }
 
+    /// Move messages from one folder to another, over the warm session, by the
+    /// server's own folder names. Uses the IMAP MOVE extension where the server
+    /// supports it, otherwise COPY + `\Deleted` + EXPUNGE underneath; either way
+    /// the messages leave the source and appear in the destination, so every
+    /// client agrees. A no-op when no UIDs are given. Like `trash` (itself a
+    /// move), a connection dropped mid-move is restored and retried once.
+    public func move(in mailbox: String, uids: [UInt32], to destination: String) async throws {
+        guard !uids.isEmpty else { return }
+        try await perform {
+            _ = try await self.server.selectMailbox(mailbox)
+            try await self.server.move(messages: UIDSet(uids.map(UID.init)), to: destination)
+        }
+    }
+
+    /// Move messages to the server's Archive folder, over the warm session.
+    /// SwiftMail resolves the special-use Archive folder, falling back to one
+    /// named "Archive". Unlike SwiftMail's own `archive`, this does not mark the
+    /// messages `\Seen`: archiving preserves unread state, matching Apple Mail.
+    /// A no-op when no UIDs are given.
+    public func archive(in mailbox: String, uids: [UInt32]) async throws {
+        guard !uids.isEmpty else { return }
+        try await perform {
+            let destination = try await self.resolvedArchiveMailbox()
+            _ = try await self.server.selectMailbox(mailbox)
+            try await self.server.move(messages: UIDSet(uids.map(UID.init)), to: destination)
+        }
+    }
+
+    /// Move messages to the server's Junk folder, over the warm session, so a
+    /// client-side "mark as junk" matches every other client. SwiftMail resolves
+    /// the special-use Junk folder, falling back to one named "Junk" or "Spam".
+    /// A no-op when no UIDs are given.
+    public func markJunk(in mailbox: String, uids: [UInt32]) async throws {
+        guard !uids.isEmpty else { return }
+        try await perform {
+            _ = try await self.server.selectMailbox(mailbox)
+            try await self.server.markAsJunk(messages: UIDSet(uids.map(UID.init)))
+        }
+    }
+
     /// Close the session and forget the credentials. Call on sign-out. Tears down
     /// any live IDLE watch first, so its dedicated connection closes too.
     public func disconnect() async {
@@ -365,6 +421,7 @@ public actor MailEngine {
         isLoggedIn = false
         credentials = nil
         sentMailboxName = nil
+        archiveMailboxName = nil
         try? await server.disconnect()
     }
 
@@ -379,6 +436,18 @@ public actor MailEngine {
         try await server.listSpecialUseMailboxes()
         let name = try await server.sentFolder.name
         sentMailboxName = name
+        return name
+    }
+
+    /// The server's Archive mailbox name, resolved once and cached. Lists the
+    /// special-use mailboxes on first call (which also populates the general list,
+    /// so the name-based fallback works on a server without SPECIAL-USE), then
+    /// reads the Archive folder. Throws if the server has no archive folder.
+    private func resolvedArchiveMailbox() async throws -> String {
+        if let archiveMailboxName { return archiveMailboxName }
+        try await server.listSpecialUseMailboxes()
+        let name = try await server.archiveFolder.name
+        archiveMailboxName = name
         return name
     }
 

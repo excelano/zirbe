@@ -21,3 +21,37 @@ extension MailEnvelope {
         )
     }
 }
+
+extension MailboxInfo {
+    init(_ info: Mailbox.Info) {
+        self.init(
+            name: info.name,
+            specialUse: MailboxSpecialUse(info),
+            isSelectable: info.isSelectable
+        )
+    }
+}
+
+extension MailboxSpecialUse {
+    /// Resolve a folder's role from its RFC 6154 special-use attributes. A folder
+    /// literally named INBOX is the inbox even when the server omits the `\Inbox`
+    /// attribute (many do); the rest come straight from the advertised flags.
+    /// `nil` for an ordinary user folder.
+    init?(_ info: Mailbox.Info) {
+        if info.name.uppercased() == "INBOX" || info.attributes.contains(.inbox) {
+            self = .inbox
+        } else if info.attributes.contains(.sent) {
+            self = .sent
+        } else if info.attributes.contains(.drafts) {
+            self = .drafts
+        } else if info.attributes.contains(.trash) {
+            self = .trash
+        } else if info.attributes.contains(.archive) {
+            self = .archive
+        } else if info.attributes.contains(.junk) {
+            self = .junk
+        } else {
+            return nil
+        }
+    }
+}
