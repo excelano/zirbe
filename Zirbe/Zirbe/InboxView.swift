@@ -161,6 +161,8 @@ struct InboxView: View {
                         Text(model.currentMailbox.displayName)
                             .font(.headline)
                             .foregroundStyle(.primary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
                         Image(systemName: "chevron.down")
                             .font(.caption2.weight(.semibold))
                             .foregroundStyle(.secondary)
@@ -254,8 +256,17 @@ struct InboxView: View {
                     Image(systemName: "square.and.pencil")
                 }
                 .accessibilityLabel("New Conversation")
-                Button("Select") { editMode = .active }
+                Menu {
+                    Button {
+                        editMode = .active
+                    } label: {
+                        Label("Select", systemImage: "checkmark.circle")
+                    }
                     .disabled(model.summaries.isEmpty)
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .accessibilityLabel("More")
             }
         }
     }
