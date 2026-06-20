@@ -26,6 +26,7 @@ struct ConversationView: View {
     @State private var isFlagged = false
     @State private var isLoading = true
     @State private var replyText = ""
+    @State private var replyAttachments: [StagedAttachment] = []
     @State private var isSending = false
     @State private var removedAddresses: Set<String> = []
     @State private var showRecipients = false
@@ -87,7 +88,7 @@ struct ConversationView: View {
                     conversation(thread)
                 }
                 Divider()
-                ReplyBar(text: $replyText, isSending: isSending, onSend: { send(into: thread) })
+                ReplyBar(text: $replyText, attachments: $replyAttachments, isSending: isSending, onSend: { send(into: thread) })
             } else if isLoading {
                 ProgressView("Loading…").frame(maxHeight: .infinity)
             } else {
@@ -261,13 +262,15 @@ struct ConversationView: View {
 
     private func send(into thread: ZirbeCore.Thread) {
         let text = replyText
+        let files = replyAttachments.map(\.attachment)
         isSending = true
         Task {
-            let updated = await model.sendReply(to: thread, removing: removedAddresses, body: text)
+            let updated = await model.sendReply(to: thread, removing: removedAddresses, body: text, attachments: files)
             isSending = false
             if let updated {
                 self.thread = updated
                 replyText = ""
+                replyAttachments = []
             }
         }
     }
@@ -480,27 +483,37 @@ private struct ParticipantChangeLine: View {
 /// idiom. Send is disabled while empty or in flight.
 private struct ReplyBar: View {
     @Binding var text: String
+    @Binding var attachments: [StagedAttachment]
     let isSending: Bool
     let onSend: () -> Void
 
+    /// Nothing to send: no typed text and no picked files.
+    private var isEmpty: Bool {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && attachments.isEmpty
+    }
+
     var body: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            TextField("Reply", text: $text, axis: .vertical)
-                .lineLimit(1...5)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .background(Color(.secondarySystemBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-            Button(action: onSend) {
-                if isSending {
-                    ProgressView()
-                        .frame(width: 30, height: 30)
-                } else {
-                    Image(systemName: "arrow.up.circle.fill")
-                        .font(.system(size: 30))
+        VStack(alignment: .leading, spacing: 8) {
+            AttachmentTray(attachments: $attachments)
+            HStack(alignment: .bottom, spacing: 8) {
+                AttachButton(attachments: $attachments)
+                TextField("Reply", text: $text, axis: .vertical)
+                    .lineLimit(1...5)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background(Color(.secondarySystemBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                Button(action: onSend) {
+                    if isSending {
+                        ProgressView()
+                            .frame(width: 30, height: 30)
+                    } else {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .font(.system(size: 30))
+                    }
                 }
+                .disabled(isSending || isEmpty)
             }
-            .disabled(isSending || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
@@ -563,11 +576,18 @@ private struct MessageBubble: View {
     private var bubble: some View {
         VStack(alignment: .leading, spacing: 6) {
             if message.hasHTML { webViewControls }
-            Text(folded.visible.isEmpty ? "(quoted message)" : folded.visible)
-                .foregroundStyle(folded.visible.isEmpty ? AnyShapeStyle(.secondary) : AnyShapeStyle(isOwn ? .white : .primary))
+            // An image-only message lets the picture speak: the "(no text content)"
+            // placeholder would just clutter the bubble above it.
+            if !(bodyIsEmpty && !message.attachments.isEmpty) {
+                Text(folded.visible.isEmpty ? "(quoted message)" : folded.visible)
+                    .foregroundStyle(folded.visible.isEmpty ? AnyShapeStyle(.secondary) : AnyShapeStyle(isOwn ? .white : .primary))
+            }
             if !message.attachments.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
-                    ForEach(Array(message.attachments.enumerated()), id: \.offset) { _, attachment in
+                    ForEach(Array(imageAttachments.enumerated()), id: \.offset) { _, attachment in
+                        InlineAttachmentImage(model: model, messageID: message.id, attachment: attachment, isOwn: isOwn)
+                    }
+                    ForEach(Array(fileAttachments.enumerated()), id: \.offset) { _, attachment in
                         AttachmentChip(model: model, messageID: message.id, attachment: attachment, isOwn: isOwn)
                     }
                 }
@@ -650,6 +670,22 @@ private struct MessageBubble: View {
         }
     }
 
+    /// Whether the message has no readable text body, so an attachment must carry
+    /// the bubble on its own.
+    private var bodyIsEmpty: Bool {
+        message.bodyText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true
+    }
+
+    /// Image attachments, rendered inline as thumbnails.
+    private var imageAttachments: [MessageAttachment] {
+        message.attachments.filter { $0.mimeType.lowercased().hasPrefix("image/") }
+    }
+
+    /// Everything else, rendered as a tappable chip.
+    private var fileAttachments: [MessageAttachment] {
+        message.attachments.filter { !$0.mimeType.lowercased().hasPrefix("image/") }
+    }
+
     /// The body split into the part to show and the quoted history to fold. An
     /// empty body falls back to a placeholder so a bubble is never blank.
     private var folded: QuotedText.Folded {
@@ -667,7 +703,7 @@ private struct MessageBubble: View {
 /// fetch is in flight. Tinted to sit on its bubble: light on an own (accent)
 /// bubble, secondary on an incoming one. Long names truncate in the middle so the
 /// extension stays visible.
-private struct AttachmentChip: View {
+struct AttachmentChip: View {
     let model: InboxModel
     let messageID: String
     let attachment: MessageAttachment
@@ -684,7 +720,7 @@ private struct AttachmentChip: View {
                 if isLoading {
                     ProgressView().controlSize(.mini)
                 } else {
-                    Image(systemName: icon)
+                    Image(systemName: AttachmentSymbol.symbol(for: attachment.mimeType))
                 }
                 Text(attachment.filename)
                     .lineLimit(1)
@@ -720,22 +756,6 @@ private struct AttachmentChip: View {
             previewURL = try? AttachmentFile.write(data, filename: attachment.filename, mimeType: attachment.mimeType)
         }
     }
-
-    /// An SF Symbol matching the attachment's MIME family, falling back to a
-    /// paperclip for anything unrecognized.
-    private var icon: String {
-        let type = attachment.mimeType.lowercased()
-        if type.hasPrefix("image/") { return "photo" }
-        if type == "application/pdf" { return "doc.richtext" }
-        if type.hasPrefix("text/") { return "doc.text" }
-        if type.contains("word") || type.contains("wordprocessing") { return "doc.text" }
-        if type.contains("spreadsheet") || type.contains("excel") || type.contains("csv") { return "tablecells" }
-        if type.contains("presentation") || type.contains("powerpoint") { return "rectangle.on.rectangle" }
-        if type.contains("zip") || type.contains("compressed") { return "doc.zipper" }
-        if type.hasPrefix("audio/") { return "waveform" }
-        if type.hasPrefix("video/") { return "film" }
-        return "paperclip"
-    }
 }
 
 /// Writes an attachment's decoded bytes to a temp file so QuickLook can open it.
@@ -743,7 +763,7 @@ private struct AttachmentChip: View {
 /// type when the name carries none, so QuickLook picks the right type. Files land
 /// in a dedicated temp subdirectory the OS reclaims; a repeat open overwrites in
 /// place.
-private enum AttachmentFile {
+enum AttachmentFile {
     static func write(_ data: Data, filename: String, mimeType: String) throws -> URL {
         var name = filename
             .replacingOccurrences(of: "/", with: "_")

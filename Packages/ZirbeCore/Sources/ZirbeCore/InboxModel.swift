@@ -164,14 +164,14 @@ public final class InboxModel {
     /// the reason in `errorMessage`. The user's text gets the quote trailer
     /// appended; the body passed here is just what they typed.
     @discardableResult
-    public func sendReply(to thread: Thread, removing removedAddresses: Set<String> = [], body: String) async -> Thread? {
+    public func sendReply(to thread: Thread, removing removedAddresses: Set<String> = [], body: String, attachments: [DraftAttachment] = []) async -> Thread? {
         guard let password else {
             errorMessage = "Connect an account first."
             return nil
         }
         let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            errorMessage = "Write a message before sending."
+        guard !trimmed.isEmpty || !attachments.isEmpty else {
+            errorMessage = "Write a message or attach a file before sending."
             return nil
         }
 
@@ -184,7 +184,7 @@ public final class InboxModel {
             return nil
         }
 
-        let draft = OutgoingDraft.reply(to: thread, as: account, to: to, cc: cc, body: trimmed, sentAt: Date())
+        let draft = OutgoingDraft.reply(to: thread, as: account, to: to, cc: cc, body: trimmed, attachments: attachments.map(\.outgoing), sentAt: Date())
         do {
             try await sync.send(draft, password: password)
             return try await store.thread(id: thread.id)
@@ -204,7 +204,8 @@ public final class InboxModel {
         to recipients: [Participant],
         cc: [Participant] = [],
         subject: String,
-        body: String
+        body: String,
+        attachments: [DraftAttachment] = []
     ) async -> Bool {
         guard let password else {
             errorMessage = "Connect an account first."
@@ -216,8 +217,8 @@ public final class InboxModel {
             return false
         }
         let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedBody.isEmpty else {
-            errorMessage = "Write a message before sending."
+        guard !trimmedBody.isEmpty || !attachments.isEmpty else {
+            errorMessage = "Write a message or attach a file before sending."
             return false
         }
         guard !recipients.isEmpty || !cc.isEmpty else {
@@ -225,7 +226,7 @@ public final class InboxModel {
             return false
         }
 
-        let draft = OutgoingDraft.new(from: account, to: recipients, cc: cc, subject: trimmedSubject, body: trimmedBody, sentAt: Date())
+        let draft = OutgoingDraft.new(from: account, to: recipients, cc: cc, subject: trimmedSubject, body: trimmedBody, attachments: attachments.map(\.outgoing), sentAt: Date())
         do {
             try await sync.send(draft, password: password)
             summaries = try await store.threadSummaries(accountID: account.id)
@@ -321,6 +322,27 @@ public final class InboxModel {
             errorMessage = error.localizedDescription
             return nil
         }
+    }
+
+    /// The bytes of an image attachment for an inline thumbnail: the cache first
+    /// (instant for a just-sent image, or one viewed before), then a fetch by part
+    /// section, caching the result so the next open is instant too. The disk read
+    /// runs off the main actor. Returns nil for a purely local attachment that was
+    /// never cached, or on a failed fetch; no error is surfaced, since a thumbnail
+    /// that can't load falls back to a chip rather than interrupting the reader.
+    public func imageData(messageID: String, attachment: MessageAttachment) async -> Data? {
+        let filename = attachment.filename
+        if let cached = await Task.detached(priority: .userInitiated, operation: {
+            AttachmentCache.data(messageID: messageID, filename: filename)
+        }).value {
+            return cached
+        }
+        guard !attachment.partID.isEmpty, let password else { return nil }
+        let data = try? await sync.fetchAttachment(messageID: messageID, partID: attachment.partID, password: password)
+        if let data {
+            AttachmentCache.save(data, messageID: messageID, filename: filename)
+        }
+        return data
     }
 
     /// Forward one message to fresh recipients. Refetches each of the message's

@@ -179,9 +179,18 @@ public actor SyncService {
         let outgoing = draft.outgoingMessage
         try await sender.send(outgoing, username: account.username, password: password)
 
+        let local = draft.localMessage
         try await store.upsert(Mailbox(accountID: account.id, name: Self.localSentMailbox, role: .sent))
-        try await store.save([draft.localMessage], accountID: account.id, mailboxName: Self.localSentMailbox)
+        try await store.save([local], accountID: account.id, mailboxName: Self.localSentMailbox)
         try await store.rethread(accountID: account.id)
+
+        // Stash sent image bytes so the optimistic bubble can show the picture at
+        // once, before the Sent re-sync supplies a part section to fetch by. Keyed
+        // by the message's display id (`local.id`), the same id the bubble looks
+        // them up under, not the bare Message-ID.
+        for attachment in draft.attachments where attachment.mimeType.lowercased().hasPrefix("image/") {
+            AttachmentCache.save(attachment.data, messageID: local.id, filename: attachment.filename)
+        }
 
         do {
             try await engine.connect(username: account.username, password: password)

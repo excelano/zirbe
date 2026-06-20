@@ -6,6 +6,8 @@
 	<array>
 		<string>com.excelano.Zirbe.refresh</string>
 	</array>
+	<key>NSCameraUsageDescription</key>
+	<string>Zirbe uses the camera so you can take a photo to attach to a message.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>

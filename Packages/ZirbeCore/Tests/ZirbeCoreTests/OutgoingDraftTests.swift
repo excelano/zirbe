@@ -57,6 +57,20 @@ final class OutgoingDraftTests: XCTestCase {
         XCTAssertEqual(draft.from.displayName, "Me")
     }
 
+    func testReplyCarriesAttachmentBytesToWire() {
+        let bytes = Data([0x89, 0x50, 0x4E, 0x47]) // PNG magic
+        let draft = OutgoingDraft.reply(
+            to: thread(), as: account(),
+            to: [participant("pat@x.com")], cc: [],
+            body: "see attached",
+            attachments: [OutgoingAttachment(filename: "shot.png", mimeType: "image/png", data: bytes)],
+            sentAt: sentAt
+        )
+        XCTAssertEqual(draft.outgoingMessage.attachments.map(\.filename), ["shot.png"])
+        XCTAssertEqual(draft.outgoingMessage.attachments.first?.data, bytes)
+        XCTAssertEqual(draft.localMessage.attachments.first?.partID, "")
+    }
+
     // MARK: - New
 
     func testNewHasNoThreadingHeaders() {
@@ -66,6 +80,19 @@ final class OutgoingDraftTests: XCTestCase {
         XCTAssertNil(draft.inReplyTo)
         XCTAssertTrue(draft.references.isEmpty)
         XCTAssertEqual(draft.subject, "Hello")
+    }
+
+    func testNewCarriesAttachmentBytesToWire() {
+        let bytes = Data([0x25, 0x50, 0x44, 0x46]) // "%PDF"
+        let draft = OutgoingDraft.new(
+            from: account(), to: [participant("pat@x.com")], subject: "Hello", body: "hi",
+            attachments: [OutgoingAttachment(filename: "report.pdf", mimeType: "application/pdf", data: bytes)],
+            sentAt: sentAt
+        )
+        XCTAssertEqual(draft.outgoingMessage.attachments.map(\.filename), ["report.pdf"])
+        XCTAssertEqual(draft.outgoingMessage.attachments.first?.data, bytes)
+        // The optimistic bubble names the file but can't re-open it yet (empty partID).
+        XCTAssertEqual(draft.localMessage.attachments.first?.partID, "")
     }
 
     func testGeneratedMessageIDIsWellFormedAndShared() {

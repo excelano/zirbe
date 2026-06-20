@@ -33,10 +33,11 @@ public struct OutgoingDraft: Sendable, Hashable {
     /// When the message is sent, stamped on the local copy so it sorts last in
     /// the conversation immediately.
     public var date: Date
-    /// Files sent with the message, each carrying its bytes. Empty for a reply or
-    /// a new message; a forward fills it with the original's attachments. The
-    /// optimistic local copy shows these as chips with no part section, so they
-    /// render but can't be re-opened until the Sent re-sync restamps real ones.
+    /// Files sent with the message, each carrying its bytes: the user's picked
+    /// files on a new message or reply, or the original's attachments on a
+    /// forward. The optimistic local copy shows these as chips with no part
+    /// section, so they render but can't be re-opened until the Sent re-sync
+    /// restamps real ones.
     public var attachments: [OutgoingAttachment]
 
     public init(
@@ -103,6 +104,15 @@ public struct OutgoingDraft: Sendable, Hashable {
     }
 }
 
+extension DraftAttachment {
+    /// The transport-layer form handed to the send path. The domain stages a
+    /// picked file as a `DraftAttachment` and converts here, so the app stays one
+    /// layer away from ZirbeMail's `OutgoingAttachment`.
+    var outgoing: OutgoingAttachment {
+        OutgoingAttachment(filename: filename, mimeType: mimeType, data: data)
+    }
+}
+
 extension OutgoingDraft {
     /// A reply into `thread`, sent as `account`. Recipients are passed in
     /// explicitly (the UI starts from `ReplyBuilder.replyAllRecipients` and lets
@@ -115,6 +125,7 @@ extension OutgoingDraft {
         to recipients: [Participant],
         cc: [Participant],
         body userText: String,
+        attachments: [OutgoingAttachment] = [],
         sentAt date: Date,
         locale: Locale = .current,
         timeZone: TimeZone = .current
@@ -132,7 +143,8 @@ extension OutgoingDraft {
             inReplyTo: inReplyTo,
             references: references,
             messageID: ReplyBuilder.generateMessageID(for: account),
-            date: date
+            date: date,
+            attachments: attachments
         )
     }
 
@@ -175,6 +187,7 @@ extension OutgoingDraft {
         cc: [Participant] = [],
         subject: String,
         body: String,
+        attachments: [OutgoingAttachment] = [],
         sentAt date: Date
     ) -> OutgoingDraft {
         OutgoingDraft(
@@ -184,7 +197,8 @@ extension OutgoingDraft {
             subject: subject,
             body: body.trimmingCharacters(in: .whitespacesAndNewlines),
             messageID: ReplyBuilder.generateMessageID(for: account),
-            date: date
+            date: date,
+            attachments: attachments
         )
     }
 }

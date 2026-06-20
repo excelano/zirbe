@@ -19,6 +19,7 @@ struct ComposeView: View {
     @State private var ccText = ""
     @State private var subject = ""
     @State private var messageBody = ""
+    @State private var attachments: [StagedAttachment] = []
     @State private var isSending = false
     @State private var showPicker = false
     @State private var pickerTarget: Field = .to
@@ -42,6 +43,14 @@ struct ComposeView: View {
                   pick: { pickerTarget = .cc; showPicker = true })
             divider
             field("Subject:", placeholder: "Subject", text: $subject, field: .subject)
+            divider
+
+            HStack(spacing: 8) {
+                AttachButton(attachments: $attachments)
+                AttachmentTray(attachments: $attachments)
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 8)
             divider
 
             if let error = model.errorMessage {
@@ -156,7 +165,7 @@ struct ComposeView: View {
     private var canSend: Bool {
         !RecipientParsing.parse(toText).isEmpty
             && !subject.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && !messageBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && (!messageBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty)
     }
 
     private func send() {
@@ -166,7 +175,8 @@ struct ComposeView: View {
                 to: RecipientParsing.parse(toText),
                 cc: RecipientParsing.parse(ccText),
                 subject: subject,
-                body: messageBody
+                body: messageBody,
+                attachments: attachments.map(\.attachment)
             )
             isSending = false
             if sent { dismiss() }
