@@ -17,6 +17,12 @@ struct InboxView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var isComposing = false
     @State private var showingSettings = false
+    /// Presents the mailbox switcher (browse mode) from the title.
+    @State private var showingMailboxes = false
+    /// When set, presents the mailbox switcher in move mode for these
+    /// conversations. Held as an Identifiable request so `.sheet(item:)` drives it
+    /// and the ids are captured before any selection clears.
+    @State private var moveRequest: MoveRequest?
     /// When set, the list shows only conversations with unread mail.
     @State private var showUnreadOnly = false
     /// The conversations picked in selection mode, by thread id.
@@ -60,13 +66,17 @@ struct InboxView: View {
                 } label: {
                     ThreadRow(summary: summary)
                 }
-                .modifier(RowActions(model: model, summary: summary, enabled: !isSearching))
+                .modifier(RowActions(
+                    model: model,
+                    summary: summary,
+                    enabled: !isSearching,
+                    onMove: { moveRequest = MoveRequest(threadIDs: [$0]) }
+                ))
             }
         }
         .listStyle(.plain)
         .environment(\.editMode, $editMode)
-        .navigationTitle(navigationTitle)
-        .navigationBarTitleDisplayMode(isSelecting ? .inline : .large)
+        .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbarContent }
         .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search mail")
         .sheet(isPresented: $isComposing) {
@@ -74,6 +84,12 @@ struct InboxView: View {
         }
         .sheet(isPresented: $showingSettings) {
             SettingsView(account: model.account, onSignOut: onSignOut)
+        }
+        .sheet(isPresented: $showingMailboxes) {
+            MailboxesView(model: model, mode: .browse)
+        }
+        .sheet(item: $moveRequest) { request in
+            MailboxesView(model: model, mode: .move(threadIDs: request.threadIDs))
         }
         .overlay { emptyState }
         .refreshable { await model.refresh() }
@@ -125,13 +141,34 @@ struct InboxView: View {
         searchResults = await model.search(searchText)
     }
 
+    /// The centered title while picking conversations; the title bar otherwise
+    /// shows the mailbox switcher, so this is read only in selection mode.
     private var navigationTitle: String {
-        guard isSelecting else { return "Conversations" }
-        return selection.isEmpty ? "Select" : "\(selection.count) Selected"
+        selection.isEmpty ? "Select" : "\(selection.count) Selected"
     }
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
+        ToolbarItem(placement: .principal) {
+            if isSelecting {
+                Text(navigationTitle)
+                    .font(.headline)
+            } else {
+                Button {
+                    showingMailboxes = true
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(model.currentMailbox.displayName)
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+                        Image(systemName: "chevron.down")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .accessibilityLabel("Switch mailbox, currently \(model.currentMailbox.displayName)")
+            }
+        }
         if isSelecting {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Done") { endSelecting() }
@@ -169,6 +206,27 @@ struct InboxView: View {
                 } label: {
                     Label("Trash", systemImage: "trash")
                         .labelStyle(.titleAndIcon)
+                }
+                .disabled(selection.isEmpty)
+                Spacer()
+                Menu {
+                    Button {
+                        Task { await bulkArchive() }
+                    } label: {
+                        Label("Archive", systemImage: "archivebox")
+                    }
+                    Button {
+                        bulkMove()
+                    } label: {
+                        Label("Move to…", systemImage: "folder")
+                    }
+                    Button(role: .destructive) {
+                        Task { await bulkJunk() }
+                    } label: {
+                        Label("Move to Junk", systemImage: "xmark.bin")
+                    }
+                } label: {
+                    Label("More", systemImage: "ellipsis.circle")
                 }
                 .disabled(selection.isEmpty)
             }
@@ -257,6 +315,36 @@ struct InboxView: View {
         endSelecting()
         await model.trash(threadIDs: ids)
     }
+
+    /// Archive the selected conversations, preserving their read state, then
+    /// leave selection mode.
+    private func bulkArchive() async {
+        let ids = Array(selection)
+        endSelecting()
+        await model.archive(threadIDs: ids)
+    }
+
+    /// Mark the selected conversations as junk, then leave selection mode.
+    private func bulkJunk() async {
+        let ids = Array(selection)
+        endSelecting()
+        await model.junk(threadIDs: ids)
+    }
+
+    /// Present the move-destination picker for the selected conversations. The ids
+    /// are captured into the request before selection mode ends, so the move runs
+    /// against the right conversations once a folder is picked.
+    private func bulkMove() {
+        moveRequest = MoveRequest(threadIDs: Array(selection))
+        endSelecting()
+    }
+}
+
+/// A pending move: the conversations to relocate, wrapped so `.sheet(item:)` can
+/// drive the destination picker and the ids survive the selection clearing.
+private struct MoveRequest: Identifiable {
+    let id = UUID()
+    let threadIDs: [String]
 }
 
 /// The swipe actions on an inbox row: trash trailing; read/unread toggle (full
@@ -267,6 +355,8 @@ private struct RowActions: ViewModifier {
     let model: InboxModel
     let summary: ThreadSummary
     let enabled: Bool
+    /// Opens the move-destination picker for this conversation.
+    let onMove: (String) -> Void
 
     func body(content: Content) -> some View {
         if enabled {
@@ -276,6 +366,29 @@ private struct RowActions: ViewModifier {
                         Task { await model.trash(summary) }
                     } label: {
                         Label("Trash", systemImage: "trash")
+                    }
+                    Button {
+                        Task { await model.archive(summary) }
+                    } label: {
+                        Label("Archive", systemImage: "archivebox")
+                    }
+                    .tint(.indigo)
+                }
+                .contextMenu {
+                    Button {
+                        Task { await model.archive(summary) }
+                    } label: {
+                        Label("Archive", systemImage: "archivebox")
+                    }
+                    Button {
+                        onMove(summary.id)
+                    } label: {
+                        Label("Move to…", systemImage: "folder")
+                    }
+                    Button(role: .destructive) {
+                        Task { await model.junk(summary) }
+                    } label: {
+                        Label("Move to Junk", systemImage: "xmark.bin")
                     }
                 }
                 .swipeActions(edge: .leading, allowsFullSwipe: true) {

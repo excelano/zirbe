@@ -69,4 +69,14 @@ public struct Mailbox: Sendable, Hashable, Identifiable, Codable {
     }
 
     public var id: String { "\(accountID)/\(name)" }
+
+    /// A short, human label for the switcher and titles: the INBOX reads as
+    /// "Inbox", and a nested folder is flattened to its leaf (e.g. `[Gmail]/Sent
+    /// Mail` shows as "Sent Mail"). Nested paths are leaf-only in v1; the full
+    /// tree is out of scope.
+    public var displayName: String {
+        if role == .inbox || name == "INBOX" { return "Inbox" }
+        let leaf = name.split(separator: "/").last
+        return leaf.map(String.init) ?? name
+    }
 }

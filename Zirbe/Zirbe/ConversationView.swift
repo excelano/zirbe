@@ -30,6 +30,8 @@ struct ConversationView: View {
     @State private var isSending = false
     @State private var removedAddresses: Set<String> = []
     @State private var showRecipients = false
+    /// Presents the move-destination picker for this conversation.
+    @State private var isMoving = false
     /// The message the user chose to forward, presenting the forward composer;
     /// nil when no forward is in progress.
     @State private var forwardingMessage: Message?
@@ -72,7 +74,16 @@ struct ConversationView: View {
                 onTrash: {
                     dismiss()
                     Task { await model.trash(summary) }
-                }
+                },
+                onArchive: {
+                    dismiss()
+                    Task { await model.archive(summary) }
+                },
+                onJunk: {
+                    dismiss()
+                    Task { await model.junk(summary) }
+                },
+                onMove: { isMoving = true }
             )
             Divider()
             if let thread {
@@ -110,6 +121,13 @@ struct ConversationView: View {
             if let thread {
                 ForwardView(model: model, message: message, thread: thread)
             }
+        }
+        .sheet(isPresented: $isMoving) {
+            MailboxesView(
+                model: model,
+                mode: .move(threadIDs: [summary.id]),
+                onMoved: { dismiss() }
+            )
         }
         .task {
             isFlagged = summary.isFlagged
@@ -288,6 +306,9 @@ private struct ConversationTopBar: View {
     let onToggleFlag: () -> Void
     let onBack: () -> Void
     let onTrash: () -> Void
+    let onArchive: () -> Void
+    let onJunk: () -> Void
+    let onMove: () -> Void
 
     @State private var isTruncated = false
     @State private var showingFull = false
@@ -334,6 +355,22 @@ private struct ConversationTopBar: View {
             )
             .accessibilityLabel(isFlagged ? "Unflag Conversation" : "Flag Conversation")
 
+            Menu {
+                Button(action: onArchive) {
+                    Label("Archive", systemImage: "archivebox")
+                }
+                Button(action: onMove) {
+                    Label("Move to…", systemImage: "folder")
+                }
+                Button(role: .destructive, action: onJunk) {
+                    Label("Move to Junk", systemImage: "xmark.bin")
+                }
+            } label: {
+                circleLabel(systemName: "ellipsis", tint: .accentColor)
+            }
+            .alignmentGuide(.top) { dims in (dims.height - titleLineHeight) / 2 }
+            .accessibilityLabel("More Actions")
+
             circleButton(systemName: "trash", tint: .red, action: onTrash)
                 .accessibilityLabel("Trash Conversation")
         }
@@ -351,13 +388,20 @@ private struct ConversationTopBar: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(tint)
-                .frame(width: 40, height: 40)
-                .background(Color(.secondarySystemFill), in: Circle())
+            circleLabel(systemName: systemName, tint: tint)
         }
         .alignmentGuide(.top) { dims in (dims.height - titleLineHeight) / 2 }
+    }
+
+    /// The round, tinted glyph shared by the bar's buttons and its actions menu,
+    /// so a `Menu` (which can't use `circleButton`'s `Button`) sits the same as the
+    /// tappable circles beside it.
+    private func circleLabel(systemName: String, tint: Color) -> some View {
+        Image(systemName: systemName)
+            .font(.system(size: 18, weight: .semibold))
+            .foregroundStyle(tint)
+            .frame(width: 40, height: 40)
+            .background(Color(.secondarySystemFill), in: Circle())
     }
 
     /// One line of the title's height, used to centre the round buttons on the
