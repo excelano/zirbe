@@ -16,6 +16,12 @@ struct InboxView: View {
     /// the app is in the foreground, and pauses when it backgrounds.
     @Environment(\.scenePhase) private var scenePhase
     @State private var isComposing = false
+    /// A saved draft loaded for editing, presented as the prefilled composer.
+    /// Held as an Identifiable request so `.sheet(item:)` drives it.
+    @State private var draftEditRequest: DraftEditRequest?
+    /// True while a tapped draft's contents are being fetched, before its
+    /// composer appears.
+    @State private var openingDraft = false
     @State private var showingSettings = false
     /// Presents the mailbox switcher (browse mode) from the title.
     @State private var showingMailboxes = false
@@ -61,17 +67,13 @@ struct InboxView: View {
     var body: some View {
         List(selection: $selection) {
             ForEach(visibleSummaries) { summary in
-                NavigationLink {
-                    ConversationView(model: model, summary: summary)
-                } label: {
-                    ThreadRow(summary: summary)
-                }
-                .modifier(RowActions(
-                    model: model,
-                    summary: summary,
-                    enabled: !isSearching,
-                    onMove: { moveRequest = MoveRequest(threadIDs: [$0]) }
-                ))
+                row(for: summary)
+                    .modifier(RowActions(
+                        model: model,
+                        summary: summary,
+                        enabled: !isSearching,
+                        onMove: { moveRequest = MoveRequest(threadIDs: [$0]) }
+                    ))
             }
         }
         .listStyle(.plain)
@@ -81,6 +83,9 @@ struct InboxView: View {
         .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search mail")
         .sheet(isPresented: $isComposing) {
             ComposeView(model: model)
+        }
+        .sheet(item: $draftEditRequest) { request in
+            ComposeView(model: model, editing: request.edit)
         }
         .sheet(isPresented: $showingSettings) {
             SettingsView(account: model.account, onSignOut: onSignOut)
@@ -92,6 +97,13 @@ struct InboxView: View {
             MailboxesView(model: model, mode: .move(threadIDs: request.threadIDs))
         }
         .overlay { emptyState }
+        .overlay {
+            if openingDraft {
+                ProgressView("Opening Draft…")
+                    .padding(20)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+            }
+        }
         .refreshable { await model.refresh() }
         .task {
             await model.loadCached()
@@ -126,6 +138,46 @@ struct InboxView: View {
             @unknown default:
                 break
             }
+        }
+    }
+
+    /// Whether the Drafts folder is on screen, where a tapped row resumes editing
+    /// in the composer rather than opening the read-only conversation view.
+    private var isViewingDrafts: Bool {
+        model.currentMailbox.role == .drafts
+    }
+
+    /// One conversation row. In the Drafts folder (and not mid-selection) a tap
+    /// reopens the composer prefilled; everywhere else it pushes the read-only
+    /// conversation. Selection mode keeps the standard navigable row so the List's
+    /// selection circles and bulk actions work in Drafts too.
+    @ViewBuilder
+    private func row(for summary: ThreadSummary) -> some View {
+        if isViewingDrafts && !isSelecting {
+            Button {
+                openDraft(summary)
+            } label: {
+                ThreadRow(summary: summary)
+            }
+            .buttonStyle(.plain)
+        } else {
+            NavigationLink {
+                ConversationView(model: model, summary: summary)
+            } label: {
+                ThreadRow(summary: summary)
+            }
+        }
+    }
+
+    /// Fetch a tapped draft's contents (recipients, subject, body, attachment
+    /// bytes) over the server session, then present it in the composer. A draft
+    /// that no longer resolves (already sent or expunged) is left alone.
+    private func openDraft(_ summary: ThreadSummary) {
+        openingDraft = true
+        Task {
+            let edit = await model.loadDraft(threadID: summary.id)
+            openingDraft = false
+            if let edit { draftEditRequest = DraftEditRequest(edit: edit) }
         }
     }
 
@@ -356,6 +408,13 @@ struct InboxView: View {
 private struct MoveRequest: Identifiable {
     let id = UUID()
     let threadIDs: [String]
+}
+
+/// A saved draft loaded for editing, wrapped so `.sheet(item:)` can present the
+/// prefilled composer.
+private struct DraftEditRequest: Identifiable {
+    let id = UUID()
+    let edit: DraftEdit
 }
 
 /// The swipe actions on an inbox row: trash trailing; read/unread toggle (full

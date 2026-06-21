@@ -7,6 +7,11 @@
 // below. The subject is required (Zirbe titles a conversation by its subject, and
 // a status panel reads by it), so Send stays disabled until there is a recipient,
 // a subject, and a body. Threading is none: this starts a new thread.
+//
+// The same view also edits a saved draft: pass a `DraftEdit` to prefill the
+// fields and carry the draft's `DraftContext`. Closing a composer that has
+// unsaved content offers Save Draft or Discard; backgrounding saves quietly;
+// sending deletes the draft it came from.
 
 import SwiftUI
 import ZirbeCore
@@ -14,18 +19,44 @@ import ZirbeCore
 struct ComposeView: View {
     let model: InboxModel
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
 
-    @State private var toText = ""
-    @State private var ccText = ""
-    @State private var subject = ""
-    @State private var messageBody = ""
-    @State private var attachments: [StagedAttachment] = []
+    @State private var toText: String
+    @State private var ccText: String
+    @State private var subject: String
+    @State private var messageBody: String
+    @State private var attachments: [StagedAttachment]
+    /// The saved draft this composer stands for, nil until the first save. Carried
+    /// across saves so an edit replaces the server copy and a send deletes it.
+    @State private var draftContext: DraftContext?
+    /// Snapshot of the fields as last saved (or as loaded), so a close or
+    /// background only re-saves when something actually changed.
+    @State private var savedSnapshot: String
     @State private var isSending = false
+    @State private var isSavingDraft = false
+    @State private var showCloseOptions = false
     @State private var showPicker = false
     @State private var pickerTarget: Field = .to
     @FocusState private var focus: Field?
 
     private enum Field { case to, cc, subject, body }
+
+    /// A fresh new-conversation composer, or one prefilled from a saved draft.
+    init(model: InboxModel, editing: DraftEdit? = nil) {
+        self.model = model
+        let to = editing.map { Self.recipientText($0.to) } ?? ""
+        let cc = editing.map { Self.recipientText($0.cc) } ?? ""
+        let subject = editing?.subject ?? ""
+        let body = editing?.body ?? ""
+        let staged = editing?.attachments.map { StagedAttachment(attachment: $0) } ?? []
+        _toText = State(initialValue: to)
+        _ccText = State(initialValue: cc)
+        _subject = State(initialValue: subject)
+        _messageBody = State(initialValue: body)
+        _attachments = State(initialValue: staged)
+        _draftContext = State(initialValue: editing?.context)
+        _savedSnapshot = State(initialValue: Self.snapshot(to: to, cc: cc, subject: subject, body: body, attachments: staged))
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -71,7 +102,30 @@ struct ComposeView: View {
         .background(ContactPicker(isPresented: $showPicker) { token in
             append(token, to: pickerTarget)
         })
+        .overlay { if isSavingDraft { savingOverlay } }
+        .interactiveDismissDisabled(hasContent && isDirty)
+        .confirmationDialog("Save this draft?", isPresented: $showCloseOptions, titleVisibility: .visible) {
+            Button("Save Draft") { saveDraftThenDismiss() }
+            Button("Discard", role: .destructive) { dismiss() }
+            Button("Cancel", role: .cancel) {}
+        }
+        .onChange(of: scenePhase) { _, phase in
+            // Backgrounding mid-compose saves quietly, no prompt: the work is on
+            // screen, so it should survive the app being suspended or killed.
+            if phase == .background && hasContent && isDirty {
+                Task { await saveDraft() }
+            }
+        }
         .onAppear { focus = .to }
+    }
+
+    private var savingOverlay: some View {
+        ZStack {
+            Color(.systemBackground).opacity(0.6).ignoresSafeArea()
+            ProgressView("Saving Draft…")
+                .padding(20)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+        }
     }
 
     /// Append a picked recipient token to the targeted field, comma-separating it
@@ -92,7 +146,7 @@ struct ComposeView: View {
 
     private var header: some View {
         HStack {
-            circleButton("xmark", action: dismiss.callAsFunction)
+            circleButton("xmark", action: close)
             Spacer()
             if isSending {
                 ProgressView().frame(width: 42, height: 42)
@@ -168,6 +222,30 @@ struct ComposeView: View {
             && (!messageBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty)
     }
 
+    /// Whether the composer holds anything worth keeping. An empty composer closes
+    /// without a prompt; a started one offers to save.
+    private var hasContent: Bool {
+        ![toText, ccText, subject, messageBody]
+            .allSatisfy { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            || !attachments.isEmpty
+    }
+
+    /// Whether the fields have changed since the last save (or since a draft was
+    /// loaded). Keeps a no-change close or background from re-appending an
+    /// identical copy.
+    private var isDirty: Bool {
+        Self.snapshot(to: toText, cc: ccText, subject: subject, body: messageBody, attachments: attachments) != savedSnapshot
+    }
+
+    /// Closing: offer to save when there is unsaved content, otherwise just go.
+    private func close() {
+        if hasContent && isDirty {
+            showCloseOptions = true
+        } else {
+            dismiss()
+        }
+    }
+
     private func send() {
         isSending = true
         Task {
@@ -176,11 +254,60 @@ struct ComposeView: View {
                 cc: RecipientParsing.parse(ccText),
                 subject: subject,
                 body: messageBody,
-                attachments: attachments.map(\.attachment)
+                attachments: attachments.map(\.attachment),
+                discardingDraft: draftContext
             )
             isSending = false
             if sent { dismiss() }
         }
+    }
+
+    private func saveDraftThenDismiss() {
+        isSavingDraft = true
+        Task {
+            await saveDraft()
+            isSavingDraft = false
+            dismiss()
+        }
+    }
+
+    /// Save the composer to the Drafts folder, replacing the prior copy when this
+    /// is an edit. On success, adopt the returned context (so a later send or
+    /// re-save acts on it) and bank the snapshot so the saved state is no longer
+    /// dirty.
+    private func saveDraft() async {
+        let saved = Self.snapshot(to: toText, cc: ccText, subject: subject, body: messageBody, attachments: attachments)
+        let context = await model.saveDraft(
+            to: RecipientParsing.parse(toText),
+            cc: RecipientParsing.parse(ccText),
+            subject: subject,
+            body: messageBody,
+            attachments: attachments.map(\.attachment),
+            editing: draftContext
+        )
+        if let context {
+            draftContext = context
+            savedSnapshot = saved
+        }
+    }
+
+    /// Format participants back into the comma-separated text the recipient fields
+    /// hold, in the `Name <addr>` form `RecipientParsing` round-trips.
+    private static func recipientText(_ participants: [Participant]) -> String {
+        participants.map { participant in
+            if let name = participant.displayName, !name.isEmpty {
+                return "\(name) <\(participant.address)>"
+            }
+            return participant.address
+        }
+        .joined(separator: ", ")
+    }
+
+    /// A stable string of the savable fields, used to tell whether the composer
+    /// changed since the last save. Attachments are keyed by name (their bytes
+    /// don't change in place), the rest verbatim.
+    private static func snapshot(to: String, cc: String, subject: String, body: String, attachments: [StagedAttachment]) -> String {
+        ([to, cc, subject, body] + attachments.map(\.attachment.filename)).joined(separator: "\u{1}")
     }
 }
 
