@@ -28,6 +28,11 @@ and the integrated inbox wait below that line.
   compose or reply, staged as removable chips and sent over the existing send
   pipeline (SMTP send, Sent copy, optimistic local bubble). Verified on device.
 
+- **Inline image thumbnails in bubbles.** Sent and received images render inline
+  as downsampled thumbnails (ImageIO, cache-first), tap opens full resolution in
+  QuickLook; non-image attachments stay as tappable chips. Shipped alongside
+  send-side attachments. Verified on device.
+
 - **Folder browsing, archive, and move.** Reach mailboxes beyond INBOX (Sent,
   Archive, Drafts, custom folders), with archive and move-to-folder as
   first-class actions beside trash. The structural foundation the rest leans on:
@@ -35,30 +40,27 @@ and the integrated inbox wait below that line.
   machinery both share. The home view stays scoped to INBOX so junk-only and
   sent-only threads don't leak in. Verified on device.
 
-## In flight
-
 - **Drafts.** Save a half-written message and resume it, stored in the IMAP
-  Drafts folder (the source of truth, via APPEND with `\Draft`); compose is
-  send-or-discard today. Saved on composer close — Save Draft or Discard on
-  dismissing a non-empty composer, a quiet save on backgrounding — with an edit
-  replacing the server copy and a send deleting the draft. Scoped to the
-  new-conversation composer for v1; reply-drafts deferred. Resume by tapping a
-  Drafts-folder thread to reopen the composer prefilled.
+  Drafts folder (the source of truth, via APPEND with `\Draft`). Saved on
+  composer close — Save Draft or Discard on dismissing a non-empty composer, a
+  quiet save on backgrounding — with an edit replacing the server copy
+  (append-new, expunge-old, keyed on a stable Message-ID) and a send deleting
+  the draft. Scoped to the new-conversation composer for v1; reply-drafts
+  deferred. Resume by tapping a Drafts-folder thread to reopen the composer
+  prefilled. Verified on device.
+
+- **Sender avatars and day separators.** A round avatar beside each incoming run
+  (the sender's photo from the on-device Contacts store, else a deterministic
+  colored circle with their initials), bottom-aligned with the timestamp line and
+  reserved as a gutter so a run stays aligned. The Contacts lookup is local and
+  display-only, requested lazily, and degrades silently to monograms when denied.
+  Plus a centered day divider ("Today", "Yesterday", weekday, then short date)
+  between bubbles when the calendar day changes. Verified on device.
 
 ## Above the multi-account line
 
 In recommended sequence:
 
-- **Inline image thumbnails in bubbles.** Show sent and received images inline,
-  tap for full screen, instead of as a chip. The attachment polish deliberately
-  deferred from send-side attachments; the single biggest "this feels like
-  Messages" win, and cheap now that the chip path exists.
-- **Sender avatars from on-device Contacts.** The colored circle beside each
-  incoming bubble, looked up from the local Contacts store with no network. What
-  makes a thread read as a chat rather than a mail list.
-- **Day separators between bubbles.** The centered "Tuesday" divider Messages
-  shows between runs from different days. Small, and it makes a long thread scan
-  like a conversation. Pairs naturally with avatars as one polish pass.
 - **Local new-mail notifications.** Fire a local notification when the background
   poll finds new mail; today M5 updates the inbox silently. Closes a real Apple
   Mail parity gap and needs no backend (the background task posts the

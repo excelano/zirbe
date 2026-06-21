@@ -175,6 +175,10 @@ struct ConversationView: View {
         return ScrollView {
             LazyVStack(spacing: 2) {
                 ForEach(Array(messages.enumerated()), id: \.element.id) { index, message in
+                    if let dayDate = daySeparatorDate(at: index, in: messages) {
+                        DaySeparatorView(date: dayDate)
+                            .padding(.vertical, 4)
+                    }
                     if let delta = deltas[message.id] {
                         ParticipantChangeLine(delta: delta)
                             .padding(.vertical, 8)
@@ -257,6 +261,15 @@ struct ConversationView: View {
     private func isFirstOfRun(at index: Int, in messages: [Message]) -> Bool {
         guard index > 0 else { return true }
         return messages[index].from?.address != messages[index - 1].from?.address
+    }
+
+    /// The date to caption a day separator above this message, or nil when it
+    /// shares a calendar day with the message before it. The first dated message
+    /// always gets one. Messages without a date never carry a separator.
+    private func daySeparatorDate(at index: Int, in messages: [Message]) -> Date? {
+        guard let date = messages[index].date else { return nil }
+        guard index > 0, let previous = messages[index - 1].date else { return date }
+        return Calendar.current.isDate(date, inSameDayAs: previous) ? nil : date
     }
 
     /// The reply-all recipients with the user's removals applied, for the header.
@@ -496,6 +509,19 @@ private struct RecipientHeader: View {
 
 /// A subtle, centered line marking who joined or left the conversation at this
 /// point, the way a group chat notes membership changes.
+/// The centered caption marking a change of day between bubbles: "Today",
+/// "Yesterday", a weekday within the past week, then a short date.
+private struct DaySeparatorView: View {
+    let date: Date
+
+    var body: some View {
+        Text(DayLabel.text(for: date, now: Date()))
+            .font(.caption2.weight(.medium))
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity)
+    }
+}
+
 private struct ParticipantChangeLine: View {
     let delta: ParticipantChange.Delta
 
@@ -593,9 +619,16 @@ private struct MessageBubble: View {
     /// is dropped as redundant.
     @AppStorage(SettingsKeys.loadRemoteImages) private var loadRemoteImages = false
 
+    /// The sender avatar's diameter and the gap to the bubble. The leading inset
+    /// for the name and timestamp is derived from these so they line up over the
+    /// bubble whether or not an avatar is drawn.
+    private let avatarSize: CGFloat = 30
+    private let avatarGap: CGFloat = 6
+    private var gutter: CGFloat { avatarSize + avatarGap }
+
     var body: some View {
-        HStack {
-            if isOwn { Spacer(minLength: 40) }
+        HStack(alignment: .bottom, spacing: avatarGap) {
+            if !isOwn { avatarGutter }
             VStack(alignment: isOwn ? .trailing : .leading, spacing: 3) {
                 if showSender, let name = message.from?.label {
                     Text(name)
@@ -603,17 +636,32 @@ private struct MessageBubble: View {
                         .foregroundStyle(.secondary)
                         .padding(.leading, 12)
                 }
-                bubble
+                HStack(spacing: 0) {
+                    if isOwn { Spacer(minLength: 40) }
+                    bubble
+                    if !isOwn { Spacer(minLength: 40) }
+                }
                 if hasTail, let date = message.date {
                     Text(date, format: .dateTime.month().day().hour().minute())
                         .font(.caption2)
                         .foregroundStyle(.secondary)
-                        // Inset from the screen edge (past the bubble), on the
-                        // same side the bubble hugs.
+                        // Inset from the screen edge, on the side the bubble hugs.
                         .padding(isOwn ? .trailing : .leading, 22)
                 }
             }
-            if !isOwn { Spacer(minLength: 40) }
+        }
+    }
+
+    /// The leading column for an incoming bubble: the sender's avatar beside the
+    /// last bubble of a run, bottom-aligned with the whole stack so it sits level
+    /// with the timestamp line; an empty reservation of the same width on the
+    /// other bubbles of a run so they stay aligned.
+    @ViewBuilder
+    private var avatarGutter: some View {
+        if hasTail, let from = message.from {
+            SenderAvatar(participant: from, size: avatarSize)
+        } else {
+            Color.clear.frame(width: avatarSize, height: 0)
         }
     }
 

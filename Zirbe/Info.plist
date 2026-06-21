@@ -8,6 +8,8 @@
 	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>Zirbe uses the camera so you can take a photo to attach to a message.</string>
+	<key>NSContactsUsageDescription</key>
+	<string>Zirbe looks up your contacts on this device to show photos and initials beside incoming messages. Nothing leaves your device.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>
