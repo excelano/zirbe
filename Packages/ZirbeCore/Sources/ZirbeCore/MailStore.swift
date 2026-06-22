@@ -329,6 +329,27 @@ public final class MailStore: @unchecked Sendable {
         }
     }
 
+    /// Advance the new-mail notification high-water mark to the highest INBOX UID
+    /// now cached, marking everything up to it as "already known". Called after
+    /// every sync the user is present for (a foreground refresh or the IDLE watch)
+    /// and after the background poll has read its new arrivals, so a later poll
+    /// only notifies for UIDs above this. Seeds to the current top on the first
+    /// sync, so a freshly connected account doesn't notify for its whole inbox.
+    public func markNotificationWatermark(accountID: String) async throws {
+        try await dbQueue.write { db in
+            let maxUID = try Int64.fetchOne(
+                db,
+                sql: "SELECT MAX(uid) FROM message WHERE accountID = ? AND mailboxName = ?",
+                arguments: [accountID, Self.inboxMailbox]
+            ) ?? 0
+            try db.execute(sql: """
+                INSERT INTO syncState (accountID, lastNotifiedUID) VALUES (?, ?)
+                ON CONFLICT(accountID) DO UPDATE SET lastNotifiedUID = excluded.lastNotifiedUID
+                """, arguments: [accountID, maxUID])
+        }
+    }
+
+
     /// Persist fetched bodies, keyed by message id: the display text, whether an
     /// HTML version exists, and the user-facing attachments. Used by the lazy-body
     /// path when a conversation is opened, so the bodies are cached and the next
@@ -435,6 +456,38 @@ public final class MailStore: @unchecked Sendable {
                 counts[row.mailboxName, default: 0] += 1
             }
             return counts
+        }
+    }
+
+    /// The INBOX arrivals not yet surfaced as a notification: unseen messages with
+    /// a server UID above the stored high-water mark, oldest first. The background
+    /// poll reads these, posts for them, then advances the mark
+    /// (`markNotificationWatermark`). Scoped to INBOX and to unseen mail, so a
+    /// message already read elsewhere, or one re-fetched below the mark, never
+    /// re-notifies. Empty when nothing new has landed since the last sync.
+    public func unnotifiedInboxArrivals(accountID: String) async throws -> [NewMailItem] {
+        try await dbQueue.read { db in
+            let watermark = try Int64.fetchOne(
+                db,
+                sql: "SELECT lastNotifiedUID FROM syncState WHERE accountID = ?",
+                arguments: [accountID]
+            ) ?? 0
+            return try MessageRow
+                .filter(Column("accountID") == accountID
+                    && Column("mailboxName") == Self.inboxMailbox
+                    && Column("uid") != nil
+                    && Column("uid") > watermark)
+                .order(Column("uid"))
+                .fetchAll(db)
+                .filter { !$0.flags.contains(.seen) }
+                .map { row in
+                    NewMailItem(
+                        threadID: row.threadID,
+                        senderName: row.fromName,
+                        senderAddress: row.fromAddress,
+                        subject: row.subject
+                    )
+                }
         }
     }
 
@@ -660,6 +713,20 @@ public final class MailStore: @unchecked Sendable {
                 t.add(column: "isFlagged", .boolean).notNull().defaults(to: false)
             }
         }
+        // Local new-mail notifications: a per-account high-water mark of the
+        // highest INBOX UID already surfaced (seen in the foreground or notified),
+        // so the background poll notifies only for newer arrivals. Wiped with the
+        // rest on sign-out, since `eraseAll` re-runs this migrator from empty.
+        migrator.registerMigration("v10-sync-state") { db in
+            try db.create(table: "syncState") { t in
+                t.primaryKey("accountID", .text)
+                t.column("lastNotifiedUID", .integer).notNull().defaults(to: 0)
+            }
+        }
         return migrator
     }()
+
+    /// The privileged folder that is synced on launch, watched over IDLE, and
+    /// polled in the background. The notification high-water mark is scoped to it.
+    private static let inboxMailbox = "INBOX"
 }

@@ -12,14 +12,29 @@ import ZirbeCore
 
 struct RootView: View {
     @State private var session = AppSession()
+    /// The navigation stack's pushed conversations, by thread id. Empty at the
+    /// inbox; a notification tap (or a future deep link) pushes one id onto it.
+    @State private var path: [String] = []
+    @ObservedObject private var notifier = NewMailNotifier.shared
 
     var body: some View {
         Group {
             if session.isRestoring {
                 launch
             } else if let model = session.model, model.isConnected {
-                NavigationStack {
+                NavigationStack(path: $path) {
                     InboxView(model: model, onSignOut: { Task { await session.signOut() } })
+                        .navigationDestination(for: String.self) { threadID in
+                            conversation(threadID, model: model)
+                        }
+                }
+                // Land in the inbox, then ask for notification permission once.
+                .task { await notifier.requestAuthorizationIfNeeded() }
+                // A tapped notification surfaces its thread here; push it and clear.
+                .onReceive(notifier.$pendingThreadID) { threadID in
+                    guard let threadID else { return }
+                    path = [threadID]
+                    notifier.pendingThreadID = nil
                 }
             } else {
                 OnboardingView(
@@ -31,6 +46,19 @@ struct RootView: View {
             }
         }
         .task { await session.restore() }
+    }
+
+    /// The conversation for a deep-linked thread id. Resolves the inbox summary;
+    /// on a cold launch from a tap the summaries may not be loaded yet, so it shows
+    /// a brief loader and triggers a refresh, then rebuilds once they arrive.
+    @ViewBuilder
+    private func conversation(_ threadID: String, model: InboxModel) -> some View {
+        if let summary = model.summaries.first(where: { $0.id == threadID }) {
+            ConversationView(model: model, summary: summary)
+        } else {
+            ProgressView()
+                .task { await model.refresh() }
+        }
     }
 
     /// Held briefly on launch while a saved session is restored, so onboarding

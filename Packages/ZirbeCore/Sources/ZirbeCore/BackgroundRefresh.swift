@@ -13,6 +13,16 @@
 
 import Foundation
 
+/// The outcome of one background poll, for the caller to act on. `.newMail`
+/// carries the arrivals to notify and the inbox's unread count for the app badge;
+/// `.upToDate` means the sync ran but found nothing new; `.failed` means it
+/// couldn't run (no account, no password, server unreachable).
+public enum BackgroundRefreshResult: Sendable {
+    case newMail([NewMailItem], unreadCount: Int)
+    case upToDate
+    case failed
+}
+
 /// The background inbox poll, run headless when iOS grants the app refresh time.
 public enum BackgroundRefresh {
     /// The BGTaskScheduler task identifier. Declared in the app's Info.plist
@@ -27,29 +37,37 @@ public enum BackgroundRefresh {
     /// network — returns without throwing, since a missed poll is covered by the
     /// next one and by the foreground sync on reopen. The fresh connection is
     /// closed before returning so nothing lingers while the app is suspended.
-    /// Returns whether a sync completed, so the caller can report task success to
-    /// the scheduler.
+    /// Returns the poll's outcome, so the caller can notify for new mail and report
+    /// task completion to the scheduler. New arrivals are read against the stored
+    /// high-water mark before it is advanced, so the same mail is never notified
+    /// twice across polls.
     @discardableResult
-    public static func run() async -> Bool {
+    public static func run() async -> BackgroundRefreshResult {
         do {
             let store = try MailStore(path: StoreLocation.databasePath())
             guard let account = try await store.accounts().first,
                   let password = try KeychainStore.password(for: account.id) else {
-                return false
+                return .failed
             }
             let sync = SyncService(account: account, store: store)
             do {
                 try await sync.syncInbox(password: password)
+                // Read what's new since the last surfaced UID, then advance the
+                // mark so the next poll starts above these. The unread count is the
+                // app badge.
+                let arrivals = try await store.unnotifiedInboxArrivals(accountID: account.id)
+                let unreadCount = try await store.unreadCounts(accountID: account.id)["INBOX"] ?? 0
+                try await store.markNotificationWatermark(accountID: account.id)
                 await sync.disconnect()
-                return true
+                return arrivals.isEmpty ? .upToDate : .newMail(arrivals, unreadCount: unreadCount)
             } catch {
                 // Close the brief connection even when the sync itself failed, so
                 // nothing lingers open while the app suspends.
                 await sync.disconnect()
-                return false
+                return .failed
             }
         } catch {
-            return false
+            return .failed
         }
     }
 }

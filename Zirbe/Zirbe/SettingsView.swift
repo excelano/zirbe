@@ -6,17 +6,22 @@
 // Form) is deliberately laid out to grow as more settings arrive.
 
 import SwiftUI
+import UIKit
+import UserNotifications
 import ZirbeCore
 
 /// UserDefaults keys for the app's reading preferences, shared by the settings
-/// toggles here and the conversation view that honors them. Both default off:
-/// Zirbe shows the plain-text version with remote images blocked unless the user
-/// opts into the richer, less private behavior.
+/// toggles here and the conversation view that honors them. The HTML pair default
+/// off: Zirbe shows the plain-text version with remote images blocked unless the
+/// user opts into the richer, less private behavior.
 enum SettingsKeys {
     /// Open an HTML email in its Web View automatically instead of the text bubble.
     static let openHTMLInWebView = "settings.openHTMLInWebView"
     /// Load remote images in the Web View by default rather than blocking them.
     static let loadRemoteImages = "settings.loadRemoteImages"
+    /// Post a banner when a background check finds new mail. Defaults on; the
+    /// notifier reads the same key and treats an unset value as on.
+    static let newMailNotifications = "settings.newMailNotifications"
 }
 
 struct SettingsView: View {
@@ -27,8 +32,12 @@ struct SettingsView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var confirmingSignOut = false
+    /// True when the system permission has been denied, so the toggle can't take
+    /// effect and we point the user to the system Settings instead.
+    @State private var notificationsDenied = false
     @AppStorage(SettingsKeys.openHTMLInWebView) private var openHTMLInWebView = false
     @AppStorage(SettingsKeys.loadRemoteImages) private var loadRemoteImages = false
+    @AppStorage(SettingsKeys.newMailNotifications) private var newMailNotifications = true
 
     var body: some View {
         NavigationStack {
@@ -43,6 +52,23 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 } header: {
                     Text("Refreshing")
+                }
+
+                Section {
+                    Toggle("New mail notifications", isOn: $newMailNotifications)
+                    if notificationsDenied {
+                        Button("Allow in System Settings") {
+                            if let url = URL(string: UIApplication.openSettingsURLString) {
+                                UIApplication.shared.open(url)
+                            }
+                        }
+                    }
+                } header: {
+                    Text("Notifications")
+                } footer: {
+                    Text(notificationsDenied
+                        ? "Notifications are turned off for Zirbe in System Settings. Turn them on there to get a banner when a background check finds new mail."
+                        : "Get a banner when a background check finds new mail. These follow the same schedule as the background refresh above, not instant push.")
                 }
 
                 Section {
@@ -64,6 +90,10 @@ struct SettingsView: View {
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
+            .task {
+                let settings = await UNUserNotificationCenter.current().notificationSettings()
+                notificationsDenied = settings.authorizationStatus == .denied
+            }
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }

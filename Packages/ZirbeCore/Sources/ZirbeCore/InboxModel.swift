@@ -124,6 +124,12 @@ public final class InboxModel {
             try await sync.syncFolder(mailbox: currentMailbox.name, role: currentMailbox.role, password: password)
         }
         try await reloadList()
+        // The user is present for a foreground sync (a refresh, or the IDLE watch
+        // firing), so anything now in the inbox counts as already seen: advance the
+        // notification mark past it, leaving the background poll to notify only for
+        // mail that lands while the app is away. Also seeds the mark on the first
+        // sync after connecting, so a returning inbox isn't announced wholesale.
+        try await store.markNotificationWatermark(accountID: account.id)
     }
 
     /// Load the cached folder list immediately (no network), for opening the
