@@ -57,14 +57,19 @@ and the integrated inbox wait below that line.
   Plus a centered day divider ("Today", "Yesterday", weekday, then short date)
   between bubbles when the calendar day changes. Verified on device.
 
+- **Local new-mail notifications.** When the background poll finds new INBOX mail,
+  a local notification fires (one banner per message, a summary past three), the
+  app badge tracks the inbox unread count, and a tap opens the conversation.
+  Detection rides a per-account high-water mark of the highest INBOX UID already
+  surfaced, so the same mail never notifies twice and only mail that arrived while
+  the app was away is announced. A Settings toggle (default on) gates it. No
+  backend and no instant push — it follows the same cadence as the background
+  refresh, which Settings discloses. Verified on device.
+
 ## Above the multi-account line
 
 In recommended sequence:
 
-- **Local new-mail notifications.** Fire a local notification when the background
-  poll finds new mail; today M5 updates the inbox silently. Closes a real Apple
-  Mail parity gap and needs no backend (the background task posts the
-  notification itself).
 - **Send robustness: failed-send state, Bcc, and signature.** A sending/failed
   indicator on the optimistic bubble with a retry tap (today a dropped connection
   mid-send only sets an error string); Bcc in compose (we have To and Cc only,
