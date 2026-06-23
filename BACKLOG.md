@@ -66,16 +66,24 @@ and the integrated inbox wait below that line.
   backend and no instant push — it follows the same cadence as the background
   refresh, which Settings discloses. Verified on device.
 
+- **Send robustness: failed-send retry and Bcc.** A reply whose SMTP send fails
+  now lands in the thread as a red "Not Delivered · Tap to Retry" bubble; tapping
+  resends the held draft verbatim (same recipients, body, attachments, and
+  Message-ID, so a retry can't double), and on success the bubble flips to sent in
+  place. Send-state persists, so the failed bubble survives a relaunch, though
+  retry is same-session (a relaunched bubble reads "Not Delivered" without the
+  retry, and the user recomposes). New conversations and forwards keep their
+  composer open on failure instead, since a brand-new outgoing thread isn't in the
+  INBOX-scoped home list and a bubble there would be invisible. Bcc joins the
+  composer too: it reaches the SMTP envelope but never the headers, so the blind
+  copy stays blind, and it counts as a recipient so a Bcc-only send works.
+  Transport-only for now (not recorded in the Sent copy, no in-app Bcc display).
+  Verified on device.
+
 ## Above the multi-account line
 
 In recommended sequence:
 
-- **Send robustness: failed-send state, Bcc, and signature.** A sending/failed
-  indicator on the optimistic bubble with a retry tap (today a dropped connection
-  mid-send only sets an error string); Bcc in compose (we have To and Cc only,
-  and Bcc is non-negotiable for a mail client); and an outgoing signature
-  appended to composes (distinct from the received-signature surfacing in the
-  held bucket below).
 - **Voice messages.** Record a memo and send it as an audio attachment. Genuinely
   chat-native, and it rides the attachment pipe already built.
 - **In-conversation search.** Find within an open thread, complementing the
@@ -114,6 +122,13 @@ Below the line: more than one account, and the auth tracks that widen reach.
 - **Signature surfacing.** Keep the trailing signature that the quote fold
   currently discards and show it dimmed or collapsible, reusing Klartext's parsed
   `signature`. Cheap but mild — polish, not a gap.
+- **Outgoing signature.** Auto-append a user signature to composed mail. Cut from
+  send robustness on purpose, not forgotten: a signature is a formal-email artifact
+  at odds with Zirbe's chat-native identity (no one signs a text), and the From
+  line plus avatar already say who sent a message. The one real surviving use is a
+  business-card block (title, phone, company) on professional sends. Revisit only
+  if a user asks; if built, it likely belongs on new conversations and forwards,
+  not chat-style replies.
 - **Multi-segment text body assembly.** When a message splits its body across
   several text parts (Apple Mail's inline-attachment layout wraps body text, the
   file, then a trailing text segment), the bubble shows only the first segment.
