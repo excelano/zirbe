@@ -221,25 +221,49 @@ public actor SyncService {
     /// The local copy carries the same Message-ID, so when Sent is later synced
     /// the two reconcile to one row.
     public func send(_ draft: OutgoingDraft, password: String) async throws {
-        let outgoing = draft.outgoingMessage
-        try await sender.send(outgoing, username: account.username, password: password)
+        try await transmit(draft, password: password)
+        try await recordLocal(draft, state: .sent)
+        await saveSentCopy(draft, password: password)
+    }
 
-        let local = draft.localMessage
+    /// The SMTP send on its own: the gate. Throws on any failure, having stored
+    /// nothing, so the caller decides whether to record a failed bubble (a reply,
+    /// shown in its open thread) or simply surface the error (a new message or
+    /// forward, whose composer stays open to retry). A success means the mail was
+    /// delivered; the caller then records the local copy and the Sent copy.
+    public func transmit(_ draft: OutgoingDraft, password: String) async throws {
+        try await sender.send(draft.outgoingMessage, username: account.username, password: password)
+    }
+
+    /// File the optimistic local copy of a sent or failed message into the local
+    /// Sent mailbox and recompute the thread, so the bubble appears at once. The
+    /// `state` is stamped on the copy: `.sent` once delivered, `.failed` when the
+    /// transmit threw. Re-recording the same draft (a retry) upserts the one row
+    /// by its Message-ID, so a failed bubble flips to sent in place rather than
+    /// doubling. Image bytes are stashed in the cache, keyed by the copy's display
+    /// id, so the bubble shows the picture before the Sent re-sync supplies a part
+    /// section to fetch by.
+    public func recordLocal(_ draft: OutgoingDraft, state: SendState) async throws {
+        var local = draft.localMessage
+        local.sendState = state
         try await store.upsert(Mailbox(accountID: account.id, name: Self.localSentMailbox, role: .sent))
         try await store.save([local], accountID: account.id, mailboxName: Self.localSentMailbox)
         try await store.rethread(accountID: account.id)
 
-        // Stash sent image bytes so the optimistic bubble can show the picture at
-        // once, before the Sent re-sync supplies a part section to fetch by. Keyed
-        // by the message's display id (`local.id`), the same id the bubble looks
-        // them up under, not the bare Message-ID.
         for attachment in draft.attachments where attachment.mimeType.lowercased().hasPrefix("image/") {
             AttachmentCache.save(attachment.data, messageID: local.id, filename: attachment.filename)
         }
+    }
 
+    /// Append a copy of a delivered message to the server's Sent folder. Best
+    /// effort: it only helps other mail clients see the message, so a failure is
+    /// swallowed rather than reported as a send failure for mail that did send.
+    /// The same Message-ID as the SMTP send is carried through, so when Sent is
+    /// later synced the server copy and the local copy reconcile to one row.
+    public func saveSentCopy(_ draft: OutgoingDraft, password: String) async {
         do {
             try await engine.connect(username: account.username, password: password)
-            try await engine.saveToSent(outgoing)
+            try await engine.saveToSent(draft.outgoingMessage)
         } catch {
             // The mail was sent and is shown locally; a missing server-side Sent
             // copy is a reconciliation detail, not a send failure.

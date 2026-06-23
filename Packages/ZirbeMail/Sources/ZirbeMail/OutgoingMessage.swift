@@ -10,11 +10,17 @@ import Foundation
 
 /// One outgoing message: who it's from and to, what it says, and the threading
 /// headers that place it in a conversation. To and Cc are kept distinct, the way
-/// a proper reply preserves them.
+/// a proper reply preserves them. Bcc is kept apart from both: it reaches the
+/// SMTP envelope (RCPT TO) so the blind recipients receive the mail, but it is
+/// never written into the message headers, so no recipient sees who was blind
+/// copied.
 public struct OutgoingMessage: Sendable, Hashable {
     public var from: OutgoingAddress
     public var to: [OutgoingAddress]
     public var cc: [OutgoingAddress]
+    /// Blind recipients: delivered to over SMTP but absent from the headers, so
+    /// they stay invisible to everyone, including each other.
+    public var bcc: [OutgoingAddress]
     public var subject: String
     public var textBody: String
     /// `In-Reply-To`: the message this one answers, in `<id@host>` form. Nil for
@@ -36,6 +42,7 @@ public struct OutgoingMessage: Sendable, Hashable {
         from: OutgoingAddress,
         to: [OutgoingAddress],
         cc: [OutgoingAddress] = [],
+        bcc: [OutgoingAddress] = [],
         subject: String,
         textBody: String,
         inReplyTo: String? = nil,
@@ -46,6 +53,7 @@ public struct OutgoingMessage: Sendable, Hashable {
         self.from = from
         self.to = to
         self.cc = cc
+        self.bcc = bcc
         self.subject = subject
         self.textBody = textBody
         self.inReplyTo = inReplyTo

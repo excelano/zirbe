@@ -6,6 +6,18 @@
 
 import Foundation
 
+/// The delivery state of a locally-composed message. Every received or
+/// server-synced message is `.sent` (the default), since the server holding it
+/// is proof it was delivered. Only a message Zirbe itself composed can be
+/// `.failed`: the SMTP send threw, so it sits in the conversation as an
+/// undelivered bubble the user can retry. There is no `.sending` case — a reply
+/// bubble appears once the send resolves, sent or failed, with the reply bar's
+/// own spinner covering the wait.
+public enum SendState: String, Sendable, Codable {
+    case sent
+    case failed
+}
+
 /// One message in a conversation. Built from a `MailEnvelope` (see the
 /// `MailEnvelope` initializer in MessageMapping); the threading headers decide
 /// which `Thread` it lands in, the rest is for display.
@@ -38,6 +50,10 @@ public struct Message: Sendable, Hashable, Identifiable {
     /// Read off the MIME structure when the body is fetched and cached alongside
     /// it, so empty for header-only rows and for mail with no real attachments.
     public var attachments: [MessageAttachment]
+    /// Delivery state. `.sent` for everything received or synced (the default);
+    /// `.failed` only on a locally-composed message whose SMTP send threw, so the
+    /// bubble can show "Not Delivered" with a retry.
+    public var sendState: SendState
 
     public init(
         messageID: String? = nil,
@@ -52,7 +68,8 @@ public struct Message: Sendable, Hashable, Identifiable {
         flags: Set<Flag> = [],
         bodyText: String? = nil,
         hasHTML: Bool = false,
-        attachments: [MessageAttachment] = []
+        attachments: [MessageAttachment] = [],
+        sendState: SendState = .sent
     ) {
         self.messageID = messageID
         self.uid = uid
@@ -67,7 +84,11 @@ public struct Message: Sendable, Hashable, Identifiable {
         self.bodyText = bodyText
         self.hasHTML = hasHTML
         self.attachments = attachments
+        self.sendState = sendState
     }
+
+    /// Whether the message failed to send and is waiting to be retried.
+    public var didFailToSend: Bool { sendState == .failed }
 
     /// Whether the message has been read.
     public var isSeen: Bool { flags.contains(.seen) }

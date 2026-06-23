@@ -192,7 +192,8 @@ struct ConversationView: View {
                         onShowWeb: { body, showImages in
                             activeWeb = ActiveWeb(messageID: message.id, body: body, showImages: showImages)
                         },
-                        onForward: { forwardingMessage = message }
+                        onForward: { forwardingMessage = message },
+                        onRetry: { retry(message, into: thread) }
                     )
                     .padding(.top, index > 0 && isFirstOfRun(at: index, in: messages) ? 8 : 0)
                 }
@@ -302,6 +303,19 @@ struct ConversationView: View {
                 self.thread = updated
                 replyText = ""
                 replyAttachments = []
+            }
+        }
+    }
+
+    /// Retry a reply that failed to send, resending the held draft. The refreshed
+    /// thread flips the bubble to sent on success, or leaves it undelivered to try
+    /// again. A nil return (the draft was lost, or not connected) leaves the
+    /// existing failed bubble as it was.
+    private func retry(_ message: Message, into thread: ZirbeCore.Thread) {
+        guard let messageID = message.messageID else { return }
+        Task {
+            if let updated = await model.retrySend(messageID: messageID, in: thread.id) {
+                self.thread = updated
             }
         }
     }
@@ -609,7 +623,12 @@ private struct MessageBubble: View {
     let onShowWeb: (_ body: WebViewBody, _ showImages: Bool) -> Void
     /// Forward this message: the conversation presents the forward composer.
     let onForward: () -> Void
+    /// Retry a failed send: the conversation resends the held draft and refreshes.
+    let onRetry: () -> Void
 
+    /// True from the moment a retry is tapped until the thread refreshes, so the
+    /// failed footer reads "Retrying…" and can't be tapped twice.
+    @State private var isRetrying = false
     @State private var quoteExpanded = false
     /// Which action is fetching, so only the tapped button shows a spinner: nil
     /// when idle, true for an images-on open, false for an images-blocked one.
@@ -641,7 +660,9 @@ private struct MessageBubble: View {
                     bubble
                     if !isOwn { Spacer(minLength: 40) }
                 }
-                if hasTail, let date = message.date {
+                if message.didFailToSend {
+                    failedFooter
+                } else if hasTail, let date = message.date {
                     Text(date, format: .dateTime.month().day().hour().minute())
                         .font(.caption2)
                         .foregroundStyle(.secondary)
@@ -650,6 +671,36 @@ private struct MessageBubble: View {
                 }
             }
         }
+    }
+
+    /// The undelivered marker shown under a failed own-bubble, in place of the
+    /// timestamp: a red "Not Delivered" that, while this session still holds the
+    /// draft, doubles as a retry button. A bubble left undelivered by a relaunch
+    /// has no held draft, so it reads "Not Delivered" alone and the user composes
+    /// the reply again.
+    @ViewBuilder
+    private var failedFooter: some View {
+        let retryable = model.canRetry(messageID: message.messageID ?? "")
+        Button {
+            guard retryable, !isRetrying else { return }
+            isRetrying = true
+            onRetry()
+        } label: {
+            HStack(spacing: 3) {
+                if isRetrying {
+                    ProgressView().controlSize(.mini)
+                    Text("Retrying…")
+                } else {
+                    Image(systemName: "exclamationmark.circle.fill")
+                    Text(retryable ? "Not Delivered · Tap to Retry" : "Not Delivered")
+                }
+            }
+            .font(.caption2)
+            .foregroundStyle(.red)
+            .padding(isOwn ? .trailing : .leading, 22)
+        }
+        .buttonStyle(.plain)
+        .disabled(!retryable || isRetrying)
     }
 
     /// The leading column for an incoming bubble: the sender's avatar beside the

@@ -21,6 +21,11 @@ public struct OutgoingDraft: Sendable, Hashable {
     public var from: Participant
     public var to: [Participant]
     public var cc: [Participant]
+    /// Blind recipients. They receive the message over SMTP but appear in no
+    /// header, so neither the To/Cc recipients nor each other see them. Carried
+    /// here so the send path can hand them to the transport's envelope; left out
+    /// of the optimistic local copy, which has no place to show a blind list.
+    public var bcc: [Participant]
     public var subject: String
     /// The full composed body: the user's words plus, for a reply, the quote
     /// trailer. Already assembled, so the send path sends it verbatim.
@@ -44,6 +49,7 @@ public struct OutgoingDraft: Sendable, Hashable {
         from: Participant,
         to: [Participant],
         cc: [Participant] = [],
+        bcc: [Participant] = [],
         subject: String,
         body: String,
         inReplyTo: String? = nil,
@@ -55,6 +61,7 @@ public struct OutgoingDraft: Sendable, Hashable {
         self.from = from
         self.to = to
         self.cc = cc
+        self.bcc = bcc
         self.subject = subject
         self.body = body
         self.inReplyTo = inReplyTo
@@ -70,6 +77,7 @@ public struct OutgoingDraft: Sendable, Hashable {
             from: OutgoingAddress(address: from.address, name: from.displayName),
             to: to.map { OutgoingAddress(address: $0.address, name: $0.displayName) },
             cc: cc.map { OutgoingAddress(address: $0.address, name: $0.displayName) },
+            bcc: bcc.map { OutgoingAddress(address: $0.address, name: $0.displayName) },
             subject: subject,
             textBody: body,
             inReplyTo: inReplyTo,
@@ -228,6 +236,7 @@ extension OutgoingDraft {
         from account: Account,
         to recipients: [Participant],
         cc: [Participant] = [],
+        bcc: [Participant] = [],
         subject: String,
         body: String,
         attachments: [OutgoingAttachment] = [],
@@ -237,6 +246,7 @@ extension OutgoingDraft {
             from: account.selfParticipant,
             to: recipients,
             cc: cc,
+            bcc: bcc,
             subject: subject,
             body: body.trimmingCharacters(in: .whitespacesAndNewlines),
             messageID: ReplyBuilder.generateMessageID(for: account),

@@ -185,6 +185,32 @@ final class OutgoingDraftTests: XCTestCase {
         XCTAssertEqual(wire.cc.map(\.address), ["b@x.com"])
     }
 
+    func testBccReachesTheWireKeptApartFromToAndCc() {
+        let draft = OutgoingDraft.new(
+            from: account(),
+            to: [participant("a@x.com")], cc: [participant("b@x.com")],
+            bcc: [participant("secret@x.com", "Secret")],
+            subject: "Hi", body: "yo", sentAt: sentAt
+        )
+        let wire = draft.outgoingMessage
+        XCTAssertEqual(wire.bcc.map(\.address), ["secret@x.com"])
+        XCTAssertEqual(wire.bcc.first?.name, "Secret")
+        // A blind recipient must not bleed into the visible recipient lists.
+        XCTAssertFalse(wire.to.map(\.address).contains("secret@x.com"))
+        XCTAssertFalse(wire.cc.map(\.address).contains("secret@x.com"))
+    }
+
+    func testBccIsAbsentFromTheOptimisticLocalCopy() {
+        let draft = OutgoingDraft.new(
+            from: account(), to: [participant("a@x.com")],
+            bcc: [participant("secret@x.com")],
+            subject: "Hi", body: "yo", sentAt: sentAt
+        )
+        // The local bubble has nowhere to show a blind list, so it keeps none.
+        XCTAssertFalse(draft.localMessage.to.map(\.address).contains("secret@x.com"))
+        XCTAssertFalse(draft.localMessage.cc.map(\.address).contains("secret@x.com"))
+    }
+
     func testLocalMessageIsSeenAndCarriesBody() {
         let draft = OutgoingDraft.new(
             from: account(), to: [participant("a@x.com")], subject: "Hi", body: "the body", sentAt: sentAt

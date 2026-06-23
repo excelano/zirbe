@@ -44,6 +44,14 @@ public final class InboxModel {
     /// sign-out; replaced by the Keychain in M4.
     private var password: String?
 
+    /// Replies whose SMTP send failed, kept so the user can retry them verbatim —
+    /// same recipients, body, attachments, and Message-ID — by tapping the failed
+    /// bubble. Keyed by that Message-ID. An entry is added when a send fails and
+    /// dropped once it finally goes through. Held in memory only: a retry is a
+    /// same-session action, so a failed bubble left by a relaunch shows "Not
+    /// Delivered" without a retry, and the user composes again.
+    private var pendingReplies: [String: OutgoingDraft] = [:]
+
     public init(account: Account, store: MailStore) {
         self.account = account
         self.store = store
@@ -250,10 +258,14 @@ public final class InboxModel {
 
     /// Send a reply into `thread`. Recipients default to reply-all derived from
     /// the latest message, less any addresses the user removed (the group-chat
-    /// "remove someone" gesture). Returns the refreshed conversation with the
-    /// sent bubble in place, or nil if a guardrail fails or the send errors, with
-    /// the reason in `errorMessage`. The user's text gets the quote trailer
-    /// appended; the body passed here is just what they typed.
+    /// "remove someone" gesture). The user's text gets the quote trailer appended;
+    /// the body passed here is just what they typed.
+    ///
+    /// Returns nil only when a guardrail rejects the send (no text, no recipient),
+    /// leaving the composer's text untouched and the reason in `errorMessage`.
+    /// Once the message is built it always returns the refreshed conversation: the
+    /// sent bubble on success, or an undelivered bubble the user can retry when the
+    /// SMTP send failed.
     @discardableResult
     public func sendReply(to thread: Thread, removing removedAddresses: Set<String> = [], body: String, attachments: [DraftAttachment] = []) async -> Thread? {
         guard let password else {
@@ -276,13 +288,51 @@ public final class InboxModel {
         }
 
         let draft = OutgoingDraft.reply(to: thread, as: account, to: to, cc: cc, body: trimmed, attachments: attachments.map(\.outgoing), sentAt: Date())
-        do {
-            try await sync.send(draft, password: password)
-            return try await store.thread(id: thread.id)
-        } catch {
-            errorMessage = error.localizedDescription
+        return await deliverReply(draft, into: thread.id, password: password)
+    }
+
+    /// Whether a failed bubble can be retried in place, i.e. its draft is still
+    /// held from this session. A bubble left undelivered by a relaunch has no held
+    /// draft, so it shows "Not Delivered" without a retry.
+    public func canRetry(messageID: String) -> Bool {
+        pendingReplies[messageID] != nil
+    }
+
+    /// Retry a reply that failed to send, resending the held draft verbatim. The
+    /// reused Message-ID keeps the retry from doubling: a success flips the failed
+    /// bubble to sent in place. Returns the refreshed conversation, or nil if not
+    /// connected or the draft is no longer held (a relaunch cleared it).
+    @discardableResult
+    public func retrySend(messageID: String, in threadID: String) async -> Thread? {
+        guard let password else {
+            errorMessage = "Connect an account first."
             return nil
         }
+        guard let draft = pendingReplies[messageID] else { return nil }
+        return await deliverReply(draft, into: threadID, password: password)
+    }
+
+    /// Transmit a built reply and record the outcome as a bubble in its thread. On
+    /// a successful SMTP send the bubble is filed as sent and a server Sent copy is
+    /// attempted; on failure it is filed as an undelivered bubble and the draft is
+    /// held for retry. Either way the refreshed conversation is returned for the
+    /// view to show.
+    private func deliverReply(_ draft: OutgoingDraft, into threadID: String, password: String) async -> Thread? {
+        do {
+            try await sync.transmit(draft, password: password)
+        } catch {
+            // The undelivered bubble is the indicator, so the shared errorMessage
+            // is left untouched: setting it here would also surface in the next
+            // compose or forward sheet, which reads the same property.
+            pendingReplies[draft.messageID] = draft
+            try? await sync.recordLocal(draft, state: .failed)
+            return try? await store.thread(id: threadID)
+        }
+        try? await sync.recordLocal(draft, state: .sent)
+        pendingReplies[draft.messageID] = nil
+        errorMessage = nil
+        await sync.saveSentCopy(draft, password: password)
+        return try? await store.thread(id: threadID)
     }
 
     /// Start a new conversation. The subject is required (a status panel reads by
@@ -294,6 +344,7 @@ public final class InboxModel {
     public func sendNew(
         to recipients: [Participant],
         cc: [Participant] = [],
+        bcc: [Participant] = [],
         subject: String,
         body: String,
         attachments: [DraftAttachment] = [],
@@ -313,12 +364,12 @@ public final class InboxModel {
             errorMessage = "Write a message or attach a file before sending."
             return false
         }
-        guard !recipients.isEmpty || !cc.isEmpty else {
+        guard !recipients.isEmpty || !cc.isEmpty || !bcc.isEmpty else {
             errorMessage = "Add at least one recipient."
             return false
         }
 
-        let draft = OutgoingDraft.new(from: account, to: recipients, cc: cc, subject: trimmedSubject, body: trimmedBody, attachments: attachments.map(\.outgoing), sentAt: Date())
+        let draft = OutgoingDraft.new(from: account, to: recipients, cc: cc, bcc: bcc, subject: trimmedSubject, body: trimmedBody, attachments: attachments.map(\.outgoing), sentAt: Date())
         do {
             try await sync.send(draft, password: password)
             if let discarding {

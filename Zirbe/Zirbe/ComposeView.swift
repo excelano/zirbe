@@ -23,6 +23,7 @@ struct ComposeView: View {
 
     @State private var toText: String
     @State private var ccText: String
+    @State private var bccText: String
     @State private var subject: String
     @State private var messageBody: String
     @State private var attachments: [StagedAttachment]
@@ -39,9 +40,11 @@ struct ComposeView: View {
     @State private var pickerTarget: Field = .to
     @FocusState private var focus: Field?
 
-    private enum Field { case to, cc, subject, body }
+    private enum Field { case to, cc, bcc, subject, body }
 
-    /// A fresh new-conversation composer, or one prefilled from a saved draft.
+    /// A fresh new-conversation composer, or one prefilled from a saved draft. A
+    /// saved draft carries no Bcc (the blind list is never written to the draft
+    /// copy), so an edited draft opens with an empty Bcc field.
     init(model: InboxModel, editing: DraftEdit? = nil) {
         self.model = model
         let to = editing.map { Self.recipientText($0.to) } ?? ""
@@ -51,11 +54,12 @@ struct ComposeView: View {
         let staged = editing?.attachments.map { StagedAttachment(attachment: $0) } ?? []
         _toText = State(initialValue: to)
         _ccText = State(initialValue: cc)
+        _bccText = State(initialValue: "")
         _subject = State(initialValue: subject)
         _messageBody = State(initialValue: body)
         _attachments = State(initialValue: staged)
         _draftContext = State(initialValue: editing?.context)
-        _savedSnapshot = State(initialValue: Self.snapshot(to: to, cc: cc, subject: subject, body: body, attachments: staged))
+        _savedSnapshot = State(initialValue: Self.snapshot(to: to, cc: cc, bcc: "", subject: subject, body: body, attachments: staged))
     }
 
     var body: some View {
@@ -72,6 +76,9 @@ struct ComposeView: View {
             divider
             field("Cc:", placeholder: "Optional", text: $ccText, field: .cc, email: true,
                   pick: { pickerTarget = .cc; showPicker = true })
+            divider
+            field("Bcc:", placeholder: "Optional", text: $bccText, field: .bcc, email: true,
+                  pick: { pickerTarget = .bcc; showPicker = true })
             divider
             field("Subject:", placeholder: "Subject", text: $subject, field: .subject)
             divider
@@ -134,6 +141,7 @@ struct ComposeView: View {
         switch field {
         case .to: toText = joined(toText, token)
         case .cc: ccText = joined(ccText, token)
+        case .bcc: bccText = joined(bccText, token)
         default: break
         }
     }
@@ -216,8 +224,11 @@ struct ComposeView: View {
         Divider().padding(.leading)
     }
 
+    /// A send needs at least one recipient anywhere (Bcc alone is enough, for an
+    /// announcement that hides its list), a subject, and a body or an attachment.
     private var canSend: Bool {
-        !RecipientParsing.parse(toText).isEmpty
+        let hasRecipient = ![toText, ccText, bccText].allSatisfy { RecipientParsing.parse($0).isEmpty }
+        return hasRecipient
             && !subject.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && (!messageBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty)
     }
@@ -225,7 +236,7 @@ struct ComposeView: View {
     /// Whether the composer holds anything worth keeping. An empty composer closes
     /// without a prompt; a started one offers to save.
     private var hasContent: Bool {
-        ![toText, ccText, subject, messageBody]
+        ![toText, ccText, bccText, subject, messageBody]
             .allSatisfy { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             || !attachments.isEmpty
     }
@@ -234,7 +245,7 @@ struct ComposeView: View {
     /// loaded). Keeps a no-change close or background from re-appending an
     /// identical copy.
     private var isDirty: Bool {
-        Self.snapshot(to: toText, cc: ccText, subject: subject, body: messageBody, attachments: attachments) != savedSnapshot
+        Self.snapshot(to: toText, cc: ccText, bcc: bccText, subject: subject, body: messageBody, attachments: attachments) != savedSnapshot
     }
 
     /// Closing: offer to save when there is unsaved content, otherwise just go.
@@ -252,6 +263,7 @@ struct ComposeView: View {
             let sent = await model.sendNew(
                 to: RecipientParsing.parse(toText),
                 cc: RecipientParsing.parse(ccText),
+                bcc: RecipientParsing.parse(bccText),
                 subject: subject,
                 body: messageBody,
                 attachments: attachments.map(\.attachment),
@@ -276,7 +288,7 @@ struct ComposeView: View {
     /// re-save acts on it) and bank the snapshot so the saved state is no longer
     /// dirty.
     private func saveDraft() async {
-        let saved = Self.snapshot(to: toText, cc: ccText, subject: subject, body: messageBody, attachments: attachments)
+        let saved = Self.snapshot(to: toText, cc: ccText, bcc: bccText, subject: subject, body: messageBody, attachments: attachments)
         let context = await model.saveDraft(
             to: RecipientParsing.parse(toText),
             cc: RecipientParsing.parse(ccText),
@@ -303,11 +315,13 @@ struct ComposeView: View {
         .joined(separator: ", ")
     }
 
-    /// A stable string of the savable fields, used to tell whether the composer
+    /// A stable string of the editable fields, used to tell whether the composer
     /// changed since the last save. Attachments are keyed by name (their bytes
-    /// don't change in place), the rest verbatim.
-    private static func snapshot(to: String, cc: String, subject: String, body: String, attachments: [StagedAttachment]) -> String {
-        ([to, cc, subject, body] + attachments.map(\.attachment.filename)).joined(separator: "\u{1}")
+    /// don't change in place), the rest verbatim. Bcc joins the snapshot so typing
+    /// a blind recipient marks the composer dirty, even though a saved draft does
+    /// not retain it.
+    private static func snapshot(to: String, cc: String, bcc: String, subject: String, body: String, attachments: [StagedAttachment]) -> String {
+        ([to, cc, bcc, subject, body] + attachments.map(\.attachment.filename)).joined(separator: "\u{1}")
     }
 }
 

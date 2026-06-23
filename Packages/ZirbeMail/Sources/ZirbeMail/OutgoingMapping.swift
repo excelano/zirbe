@@ -5,15 +5,18 @@
 import SwiftMail
 
 extension Email {
-    /// Build a SwiftMail email from an outgoing message, preserving the To/Cc
+    /// Build a SwiftMail email from an outgoing message, preserving the To/Cc/Bcc
     /// split and the threading headers. The pre-generated Message-ID is set
     /// explicitly so the SMTP send and the Sent-folder copy agree; In-Reply-To
-    /// and References go through as additional headers.
+    /// and References go through as additional headers. Bcc maps to SwiftMail's
+    /// `bccRecipients`, which reaches the RCPT TO envelope but is left out of the
+    /// serialized headers, so the blind copy stays blind.
     init(_ outgoing: OutgoingMessage) {
         self.init(
             sender: EmailAddress(name: outgoing.from.name, address: outgoing.from.address),
             recipients: outgoing.to.map { EmailAddress(name: $0.name, address: $0.address) },
             ccRecipients: outgoing.cc.map { EmailAddress(name: $0.name, address: $0.address) },
+            bccRecipients: outgoing.bcc.map { EmailAddress(name: $0.name, address: $0.address) },
             subject: outgoing.subject,
             textBody: outgoing.textBody,
             attachments: outgoing.attachments.isEmpty ? nil : outgoing.attachments.map {

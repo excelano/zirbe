@@ -35,6 +35,10 @@ struct MessageRow: Codable, FetchableRecord, PersistableRecord {
     var hasHTML: Bool
     var attachments: [MessageAttachment]
     var threadID: String?
+    /// Delivery state, persisted so a failed-to-send bubble survives a relaunch.
+    /// Stored as the `SendState` raw value; defaults to `sent` for every row that
+    /// predates the column and every message that came from the server.
+    var sendState: String
 
     init(_ message: Message, accountID: String, mailboxName: String) {
         self.id = message.id
@@ -55,6 +59,7 @@ struct MessageRow: Codable, FetchableRecord, PersistableRecord {
         self.hasHTML = message.hasHTML
         self.attachments = message.attachments
         self.threadID = nil
+        self.sendState = message.sendState.rawValue
     }
 
     var message: Message {
@@ -71,7 +76,8 @@ struct MessageRow: Codable, FetchableRecord, PersistableRecord {
             flags: Set(flags),
             bodyText: bodyText,
             hasHTML: hasHTML,
-            attachments: attachments
+            attachments: attachments,
+            sendState: SendState(rawValue: sendState) ?? .sent
         )
     }
 }
@@ -721,6 +727,15 @@ public final class MailStore: @unchecked Sendable {
             try db.create(table: "syncState") { t in
                 t.primaryKey("accountID", .text)
                 t.column("lastNotifiedUID", .integer).notNull().defaults(to: 0)
+            }
+        }
+        // Failed-send state: a locally-composed reply whose SMTP send threw is
+        // kept in the conversation as an undelivered bubble. Additive with a
+        // `sent` default, so every existing row and every server-synced message
+        // reads as delivered; only a failed local copy is ever written `failed`.
+        migrator.registerMigration("v11-message-send-state") { db in
+            try db.alter(table: "message") { t in
+                t.add(column: "sendState", .text).notNull().defaults(to: "sent")
             }
         }
         return migrator
