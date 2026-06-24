@@ -60,6 +60,16 @@ final class NewMailNotifier: NSObject, ObservableObject, UNUserNotificationCente
         try? await center.setBadgeCount(badgeCount)
     }
 
+    /// Set the app icon badge to the inbox's current unread count. The background
+    /// poll sets the badge when it finds mail, but nothing else would, so the count
+    /// would freeze at the last poll's number once the user opened the app and read
+    /// their inbox. The app drives this from the unread count it already tracks, so
+    /// the badge follows what's actually unread (dropping to zero when the inbox is
+    /// cleared) rather than going stale. A no-op without the badge authorization.
+    func updateBadge(unreadCount: Int) async {
+        try? await UNUserNotificationCenter.current().setBadgeCount(unreadCount)
+    }
+
     /// Whether the user's "New mail notifications" toggle is on. Defaults on when
     /// the key was never written, matching the Settings toggle's default.
     private var notificationsEnabled: Bool {

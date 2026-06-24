@@ -114,8 +114,16 @@ struct InboxView: View {
             // start the live watch here; later background/foreground transitions
             // are handled below.
             model.startLiveRefresh()
+            // Reconcile the app icon badge with what's actually unread on launch,
+            // clearing a stale count a background poll may have left.
+            await NewMailNotifier.shared.updateBadge(unreadCount: model.unreadCounts["INBOX"] ?? 0)
         }
         .task(id: searchText) { await runSearch() }
+        // Keep the badge tracking the inbox unread count as mail is read, synced,
+        // or arrives, so it never freezes at a poll's number.
+        .onChange(of: model.unreadCounts["INBOX"] ?? 0) { _, unread in
+            Task { await NewMailNotifier.shared.updateBadge(unreadCount: unread) }
+        }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
             case .active:

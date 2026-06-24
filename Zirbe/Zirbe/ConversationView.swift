@@ -193,7 +193,7 @@ struct ConversationView: View {
                             activeWeb = ActiveWeb(messageID: message.id, body: body, showImages: showImages)
                         },
                         onForward: { forwardingMessage = message },
-                        onRetry: { retry(message, into: thread) }
+                        onRetry: { await retry(message, into: thread) }
                     )
                     .padding(.top, index > 0 && isFirstOfRun(at: index, in: messages) ? 8 : 0)
                 }
@@ -311,12 +311,10 @@ struct ConversationView: View {
     /// thread flips the bubble to sent on success, or leaves it undelivered to try
     /// again. A nil return (the draft was lost, or not connected) leaves the
     /// existing failed bubble as it was.
-    private func retry(_ message: Message, into thread: ZirbeCore.Thread) {
+    private func retry(_ message: Message, into thread: ZirbeCore.Thread) async {
         guard let messageID = message.messageID else { return }
-        Task {
-            if let updated = await model.retrySend(messageID: messageID, in: thread.id) {
-                self.thread = updated
-            }
+        if let updated = await model.retrySend(messageID: messageID, in: thread.id) {
+            self.thread = updated
         }
     }
 }
@@ -624,7 +622,9 @@ private struct MessageBubble: View {
     /// Forward this message: the conversation presents the forward composer.
     let onForward: () -> Void
     /// Retry a failed send: the conversation resends the held draft and refreshes.
-    let onRetry: () -> Void
+    /// Awaited so the footer can drop its in-flight state once the retry resolves,
+    /// whether it succeeded or failed again.
+    let onRetry: () async -> Void
 
     /// True from the moment a retry is tapped until the thread refreshes, so the
     /// failed footer reads "Retrying…" and can't be tapped twice.
@@ -684,7 +684,14 @@ private struct MessageBubble: View {
         Button {
             guard retryable, !isRetrying else { return }
             isRetrying = true
-            onRetry()
+            // Clear the in-flight flag when the retry resolves either way. On
+            // success the footer stops rendering; on a repeat failure the bubble
+            // stays undelivered and becomes tappable again rather than sticking
+            // on "Retrying…".
+            Task {
+                await onRetry()
+                isRetrying = false
+            }
         } label: {
             HStack(spacing: 3) {
                 if isRetrying {

@@ -87,7 +87,8 @@ public actor SyncService {
 
         // A changed UIDVALIDITY invalidates every cached UID for the mailbox; the
         // cache can't be reconciled, only rebuilt, so drop it before re-saving.
-        if let cachedValidity, cachedValidity != Int64(state.uidValidity) {
+        let validityChanged = cachedValidity.map { $0 != Int64(state.uidValidity) } ?? false
+        if validityChanged {
             try await store.clearMessages(accountID: account.id, mailboxName: mailbox)
         }
         try await store.setUIDValidity(Int64(state.uidValidity), accountID: account.id, mailboxName: mailbox)
@@ -101,6 +102,15 @@ public actor SyncService {
             mailboxName: mailbox,
             keepingUIDs: Set(state.uids.map(Int64.init))
         )
+        // A UIDVALIDITY renumber leaves the new-mail high-water mark pointing at
+        // stale UIDs from the old scheme, usually higher than the renumbered ones,
+        // so genuinely new INBOX mail would sit below the mark and never notify
+        // until the server's counter climbed back past it. Reseed the mark to the
+        // rebuilt inbox's top, so the rebuilt inbox isn't announced wholesale and
+        // arrivals after the renumber do notify. Only INBOX carries the mark.
+        if validityChanged, mailbox == Self.inboxMailbox {
+            try await store.markNotificationWatermark(accountID: account.id)
+        }
         try await store.rethread(accountID: account.id)
 
         // Backfill each thread's newest message body so the inbox row shows a
@@ -298,15 +308,21 @@ public actor SyncService {
 
     /// Delete a draft: expunge its server copy from Drafts and drop the local copy,
     /// then rethread so it leaves the Drafts list. Called when a draft is sent (its
-    /// content now lives as a real message) or explicitly discarded. The server
-    /// expunge runs for each of the thread's UID-bearing messages; a draft with no
+    /// content now lives as a real message) or explicitly discarded. A draft with no
     /// known UID (never synced, no UIDPLUS) is only removed locally, and its server
     /// copy is reconciled away on the next Drafts sync.
+    ///
+    /// Only the thread's Drafts-filed messages are expunged: `removeDraft` always
+    /// targets the Drafts folder, so a UID from another folder would be expunged as
+    /// if it were a Drafts UID. A discarded draft is a Drafts-only thread today, so
+    /// this filter is a guard against a future thread bridging Drafts with another
+    /// folder, not a change in behavior.
     public func deleteDraft(threadID: String, password: String) async throws {
-        let refs = try await store.messageRefs(threadID: threadID)
-        if !refs.isEmpty {
+        let draftRefs = try await store.messageRefs(threadID: threadID)
+            .filter { $0.mailbox == Self.localDraftsMailbox }
+        if !draftRefs.isEmpty {
             try await engine.connect(username: account.username, password: password)
-            for ref in refs {
+            for ref in draftRefs {
                 try await engine.removeDraft(uid: ref.uid)
             }
         }
@@ -429,6 +445,11 @@ public actor SyncService {
     public func disconnect() async {
         await engine.disconnect()
     }
+
+    /// The privileged folder synced on launch, watched over IDLE, and polled in
+    /// the background; the only folder the notification high-water mark tracks.
+    /// Matches `MailStore`'s own INBOX scope for that mark.
+    private static let inboxMailbox = "INBOX"
 
     /// The mailbox name the optimistic Sent copy is filed under locally. The
     /// server's real Sent folder is resolved by the engine when appending; a
