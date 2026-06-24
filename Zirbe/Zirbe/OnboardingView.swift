@@ -61,6 +61,7 @@ struct OnboardingView: View {
             .frame(maxWidth: .infinity)
         }
         .scrollDismissesKeyboard(.interactively)
+        .background(Color.zirbeCanvas.ignoresSafeArea())
         .overlay {
             if isConnecting {
                 ProgressView().controlSize(.large)

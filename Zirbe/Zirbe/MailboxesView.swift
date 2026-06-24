@@ -35,9 +35,12 @@ struct MailboxesView: View {
                 ForEach(sortedMailboxes) { mailbox in
                     Button { pick(mailbox) } label: { row(mailbox) }
                         .buttonStyle(.plain)
+                        .listRowBackground(Color.zirbeCanvas)
                 }
             }
             .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(Color.zirbeCanvas)
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

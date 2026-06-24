@@ -74,9 +74,12 @@ struct InboxView: View {
                         enabled: !isSearching,
                         onMove: { moveRequest = MoveRequest(threadIDs: [$0]) }
                     ))
+                    .listRowBackground(Color.zirbeCanvas)
             }
         }
         .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .background(Color.zirbeCanvas)
         .environment(\.editMode, $editMode)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbarContent }

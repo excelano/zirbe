@@ -110,6 +110,7 @@ struct ConversationView: View {
                 )
             }
         }
+        .background(Color.zirbeCanvas.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar)
         .sheet(isPresented: $showRecipients) {
             if let thread {
@@ -766,7 +767,7 @@ private struct MessageBubble: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(
-            isOwn ? Color.accentColor : Color(.secondarySystemBackground),
+            isOwn ? Color.accentColor : Color.zirbeReceived,
             in: BubbleShape(isOwn: isOwn, hasTail: hasTail)
         )
         // The tail droops below the bottom edge. When a timestamp follows it

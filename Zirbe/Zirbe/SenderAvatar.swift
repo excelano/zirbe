@@ -54,19 +54,20 @@ struct SenderAvatar: View {
     }
 }
 
-/// The deterministic monogram colors. Brand navy and cyan lead, then a cool,
-/// muted spread so distinct senders read apart without clashing. White initials
-/// sit on every one of them.
+/// The deterministic monogram colors. Brand pine and teal lead, then a muted
+/// spread from cool to warm so distinct senders read apart without clashing and
+/// the set stays in the icon's natural-green family. White initials sit on every
+/// one of them.
 enum AvatarPalette {
     static let colors: [Color] = [
-        Color(red: 0.05, green: 0.18, blue: 0.36), // brand navy
-        Color(red: 0.00, green: 0.55, blue: 0.78), // brand cyan, darkened for white text
-        Color(red: 0.20, green: 0.40, blue: 0.72), // royal blue
-        Color(red: 0.36, green: 0.32, blue: 0.66), // indigo
-        Color(red: 0.58, green: 0.32, blue: 0.58), // plum
-        Color(red: 0.18, green: 0.52, blue: 0.50), // teal
-        Color(red: 0.74, green: 0.44, blue: 0.30), // terracotta
-        Color(red: 0.40, green: 0.50, blue: 0.28), // olive
+        Color(red: 0.17, green: 0.40, blue: 0.30), // brand pine
+        Color(red: 0.09, green: 0.44, blue: 0.42), // teal
+        Color(red: 0.16, green: 0.43, blue: 0.55), // lake blue
+        Color(red: 0.24, green: 0.31, blue: 0.55), // slate indigo
+        Color(red: 0.42, green: 0.29, blue: 0.46), // plum
+        Color(red: 0.60, green: 0.35, blue: 0.24), // terracotta
+        Color(red: 0.37, green: 0.42, blue: 0.18), // olive
+        Color(red: 0.54, green: 0.43, blue: 0.18), // muted gold
     ]
 
     static func color(for address: String) -> Color {

@@ -88,6 +88,8 @@ struct SettingsView: View {
                     Text("Signing out removes this account and its downloaded mail from this device.")
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(Color.zirbeCanvas)
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
             .task {
