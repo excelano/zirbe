@@ -48,6 +48,7 @@ struct AttachButton: View {
     @State private var showPhotos = false
     @State private var showFiles = false
     @State private var showCamera = false
+    @State private var showRecorder = false
     @State private var photoItems: [PhotosPickerItem] = []
 
     var body: some View {
@@ -63,6 +64,11 @@ struct AttachButton: View {
                 } label: {
                     Label("Take Photo", systemImage: "camera")
                 }
+            }
+            Button {
+                showRecorder = true
+            } label: {
+                Label("Voice Message", systemImage: "mic")
             }
             Button {
                 showFiles = true
@@ -94,6 +100,9 @@ struct AttachButton: View {
                 if let draft = AttachmentLoader.draft(from: image) { append(draft) }
             }
             .ignoresSafeArea()
+        }
+        .sheet(isPresented: $showRecorder) {
+            VoiceRecorderSheet { draft in append(draft) }
         }
     }
 

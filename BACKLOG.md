@@ -80,12 +80,21 @@ and the integrated inbox wait below that line.
   Transport-only for now (not recorded in the Sent copy, no in-app Bcc display).
   Verified on device.
 
+- **Voice messages.** Record a memo from the compose attach menu and send it as an
+  audio attachment over the pipe already built. A received audio attachment renders
+  inline as a small player (play/pause, progress track, running time) rather than a
+  filename to tap; any `audio/*` file gets this, so the rich read is Zirbe-to-Zirbe
+  while other clients still receive a normal playable attachment. The recorder is a
+  staged record-review-attach sheet (mono AAC m4a, voice-grade) that drops a chip
+  into the composer like any other attachment, so a voice memo can ride alongside
+  text or a photo, and a memo sent with no words shows just the player with no
+  placeholder line above it. No backend; the recording stays on device until the
+  message sends. Verified on device.
+
 ## Above the multi-account line
 
 In recommended sequence:
 
-- **Voice messages.** Record a memo and send it as an audio attachment. Genuinely
-  chat-native, and it rides the attachment pipe already built.
 - **In-conversation search.** Find within an open thread, complementing the
   global search already shipped.
 - **Save or share a received attachment.** A share sheet / Save to Files action

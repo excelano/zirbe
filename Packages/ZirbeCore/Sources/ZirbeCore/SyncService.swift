@@ -250,9 +250,9 @@ public actor SyncService {
     /// `state` is stamped on the copy: `.sent` once delivered, `.failed` when the
     /// transmit threw. Re-recording the same draft (a retry) upserts the one row
     /// by its Message-ID, so a failed bubble flips to sent in place rather than
-    /// doubling. Image bytes are stashed in the cache, keyed by the copy's display
-    /// id, so the bubble shows the picture before the Sent re-sync supplies a part
-    /// section to fetch by.
+    /// doubling. Inline-rendered bytes (images, voice memos) are stashed in the
+    /// cache, keyed by the copy's display id, so the bubble shows or plays them
+    /// before the Sent re-sync supplies a part section to fetch by.
     public func recordLocal(_ draft: OutgoingDraft, state: SendState) async throws {
         var local = draft.localMessage
         local.sendState = state
@@ -260,7 +260,12 @@ public actor SyncService {
         try await store.save([local], accountID: account.id, mailboxName: Self.localSentMailbox)
         try await store.rethread(accountID: account.id)
 
-        for attachment in draft.attachments where attachment.mimeType.lowercased().hasPrefix("image/") {
+        // Inline-rendered attachments (images, voice memos) are stashed so the
+        // bubble can show or play them before the Sent re-sync supplies a part
+        // section to fetch by.
+        for attachment in draft.attachments {
+            let type = attachment.mimeType.lowercased()
+            guard type.hasPrefix("image/") || type.hasPrefix("audio/") else { continue }
             AttachmentCache.save(attachment.data, messageID: local.id, filename: attachment.filename)
         }
     }

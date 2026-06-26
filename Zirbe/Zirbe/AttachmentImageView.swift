@@ -66,7 +66,7 @@ struct InlineAttachmentImage: View {
     /// missing or undecodable image drops to the chip fallback.
     private func load() async {
         guard thumbnail == nil, !failed else { return }
-        guard let data = await model.imageData(messageID: messageID, attachment: attachment) else {
+        guard let data = await model.cachedAttachmentData(messageID: messageID, attachment: attachment) else {
             failed = true
             return
         }

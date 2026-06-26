@@ -578,13 +578,14 @@ public final class InboxModel {
         }
     }
 
-    /// The bytes of an image attachment for an inline thumbnail: the cache first
-    /// (instant for a just-sent image, or one viewed before), then a fetch by part
-    /// section, caching the result so the next open is instant too. The disk read
-    /// runs off the main actor. Returns nil for a purely local attachment that was
-    /// never cached, or on a failed fetch; no error is surfaced, since a thumbnail
-    /// that can't load falls back to a chip rather than interrupting the reader.
-    public func imageData(messageID: String, attachment: MessageAttachment) async -> Data? {
+    /// The bytes of an inline-rendered attachment (an image thumbnail or a voice
+    /// memo to play): the cache first (instant for a just-sent file, or one
+    /// loaded before), then a fetch by part section, caching the result so the
+    /// next load is instant too. The disk read runs off the main actor. Returns
+    /// nil for a purely local attachment that was never cached, or on a failed
+    /// fetch; no error is surfaced, since an inline view that can't load falls
+    /// back to a chip rather than interrupting the reader.
+    public func cachedAttachmentData(messageID: String, attachment: MessageAttachment) async -> Data? {
         let filename = attachment.filename
         if let cached = await Task.detached(priority: .userInitiated, operation: {
             AttachmentCache.data(messageID: messageID, filename: filename)

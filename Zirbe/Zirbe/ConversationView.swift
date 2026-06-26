@@ -727,9 +727,12 @@ private struct MessageBubble: View {
     private var bubble: some View {
         VStack(alignment: .leading, spacing: 6) {
             if message.hasHTML { webViewControls }
-            // An image-only message lets the picture speak: the "(no text content)"
-            // placeholder would just clutter the bubble above it.
-            if !(bodyIsEmpty && !message.attachments.isEmpty) {
+            // Let an attachment carry the bubble on its own when there's no visible
+            // text to show above it: a photo or voice message sent with no words,
+            // whether the body is truly empty or nothing but a folded reply quote.
+            // The "(no text content)" / "(quoted message)" placeholder would just
+            // clutter the bubble, and the quote stays reachable below either way.
+            if hasVisibleBody || message.attachments.isEmpty {
                 Text(folded.visible.isEmpty ? "(quoted message)" : folded.visible)
                     .foregroundStyle(folded.visible.isEmpty ? AnyShapeStyle(.secondary) : AnyShapeStyle(isOwn ? .white : .primary))
             }
@@ -737,6 +740,9 @@ private struct MessageBubble: View {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(Array(imageAttachments.enumerated()), id: \.offset) { _, attachment in
                         InlineAttachmentImage(model: model, messageID: message.id, attachment: attachment, isOwn: isOwn)
+                    }
+                    ForEach(Array(audioAttachments.enumerated()), id: \.offset) { _, attachment in
+                        InlineAttachmentAudio(model: model, messageID: message.id, attachment: attachment, isOwn: isOwn)
                     }
                     ForEach(Array(fileAttachments.enumerated()), id: \.offset) { _, attachment in
                         AttachmentChip(model: model, messageID: message.id, attachment: attachment, isOwn: isOwn)
@@ -827,14 +833,30 @@ private struct MessageBubble: View {
         message.bodyText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true
     }
 
+    /// Whether there's real text to show above the attachments: not a blank body,
+    /// and not one that folds to nothing but a reply quote. False for a photo or
+    /// voice message sent with no words, so the attachment stands alone.
+    private var hasVisibleBody: Bool {
+        !bodyIsEmpty && !folded.visible.isEmpty
+    }
+
     /// Image attachments, rendered inline as thumbnails.
     private var imageAttachments: [MessageAttachment] {
         message.attachments.filter { $0.mimeType.lowercased().hasPrefix("image/") }
     }
 
+    /// Audio attachments, rendered inline as a small player (a voice message, or
+    /// any audio file).
+    private var audioAttachments: [MessageAttachment] {
+        message.attachments.filter { $0.mimeType.lowercased().hasPrefix("audio/") }
+    }
+
     /// Everything else, rendered as a tappable chip.
     private var fileAttachments: [MessageAttachment] {
-        message.attachments.filter { !$0.mimeType.lowercased().hasPrefix("image/") }
+        message.attachments.filter {
+            let type = $0.mimeType.lowercased()
+            return !type.hasPrefix("image/") && !type.hasPrefix("audio/")
+        }
     }
 
     /// The body split into the part to show and the quoted history to fold. An
