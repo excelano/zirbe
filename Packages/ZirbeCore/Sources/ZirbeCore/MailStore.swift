@@ -138,15 +138,22 @@ struct MailboxRow: Codable, FetchableRecord, PersistableRecord {
     var accountID: String
     var name: String
     var role: String?
+    var hierarchyDelimiter: String?
 
     init(_ mailbox: Mailbox) {
         self.accountID = mailbox.accountID
         self.name = mailbox.name
         self.role = mailbox.role?.rawValue
+        self.hierarchyDelimiter = mailbox.hierarchyDelimiter
     }
 
     var mailbox: Mailbox {
-        Mailbox(accountID: accountID, name: name, role: role.flatMap(MailboxRole.init(rawValue:)))
+        Mailbox(
+            accountID: accountID,
+            name: name,
+            role: role.flatMap(MailboxRole.init(rawValue:)),
+            hierarchyDelimiter: hierarchyDelimiter
+        )
     }
 }
 
@@ -736,6 +743,15 @@ public final class MailStore: @unchecked Sendable {
         migrator.registerMigration("v11-message-send-state") { db in
             try db.alter(table: "message") { t in
                 t.add(column: "sendState", .text).notNull().defaults(to: "sent")
+            }
+        }
+        // A folder now remembers the server's hierarchy delimiter so its display
+        // name can be flattened to the leaf using the real separator rather than a
+        // guess. Nullable: an existing row predates it and gets it on the next
+        // folder discovery, until which its name shows whole.
+        migrator.registerMigration("v12-mailbox-delimiter") { db in
+            try db.alter(table: "mailbox") { t in
+                t.add(column: "hierarchyDelimiter", .text)
             }
         }
         return migrator

@@ -354,11 +354,11 @@ public final class InboxModel {
             errorMessage = "Connect an account first."
             return false
         }
+        // The title is optional: an unnamed conversation still needs a subject on
+        // the wire, so fall back to the neutral default. Display derives the title
+        // back from this (showing the participants for an unnamed thread).
         let trimmedSubject = subject.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedSubject.isEmpty else {
-            errorMessage = "A new conversation needs a subject."
-            return false
-        }
+        let wireSubject = trimmedSubject.isEmpty ? ConversationDefaults.unnamedSubject : trimmedSubject
         let trimmedBody = body.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedBody.isEmpty || !attachments.isEmpty else {
             errorMessage = "Write a message or attach a file before sending."
@@ -369,7 +369,7 @@ public final class InboxModel {
             return false
         }
 
-        let draft = OutgoingDraft.new(from: account, to: recipients, cc: cc, bcc: bcc, subject: trimmedSubject, body: trimmedBody, attachments: attachments.map(\.outgoing), sentAt: Date())
+        let draft = OutgoingDraft.new(from: account, to: recipients, cc: cc, bcc: bcc, subject: wireSubject, body: trimmedBody, attachments: attachments.map(\.outgoing), sentAt: Date())
         do {
             try await sync.send(draft, password: password)
             if let discarding {

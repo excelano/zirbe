@@ -31,10 +31,21 @@ public struct MailboxInfo: Sendable, Hashable {
     /// Whether the folder can be selected and hold messages. A container folder
     /// that only groups children is not selectable.
     public var isSelectable: Bool
+    /// The server's hierarchy delimiter for this folder ("/" on Gmail, "." on
+    /// Dovecot), or nil when the server didn't report one. The only safe way to
+    /// flatten a nested name to its leaf, since a "." is a separator on one server
+    /// and a literal character on another.
+    public var hierarchyDelimiter: String?
 
-    public init(name: String, specialUse: MailboxSpecialUse? = nil, isSelectable: Bool = true) {
+    public init(
+        name: String,
+        specialUse: MailboxSpecialUse? = nil,
+        isSelectable: Bool = true,
+        hierarchyDelimiter: String? = nil
+    ) {
         self.name = name
         self.specialUse = specialUse
         self.isSelectable = isSelectable
+        self.hierarchyDelimiter = hierarchyDelimiter
     }
 }

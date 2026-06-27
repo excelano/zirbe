@@ -38,9 +38,11 @@ struct ComposeView: View {
     @State private var showCloseOptions = false
     @State private var showPicker = false
     @State private var pickerTarget: Field = .to
+    /// Whether the Cc and Bcc rows are disclosed under To.
+    @State private var showCcBcc = false
     @FocusState private var focus: Field?
 
-    private enum Field { case to, cc, bcc, subject, body }
+    private enum Field { case to, cc, bcc, subject }
 
     /// A fresh new-conversation composer, or one prefilled from a saved draft. A
     /// saved draft carries no Bcc (the blind list is never written to the draft
@@ -66,30 +68,28 @@ struct ComposeView: View {
         VStack(alignment: .leading, spacing: 0) {
             header
 
-            Text("New Conversation")
+            // The title claims the header space and is the conversation's name.
+            // Left blank, it sends as a neutral default and the thread shows by
+            // its participants instead.
+            TextField("New Chat", text: $subject)
                 .font(.largeTitle.weight(.bold))
+                .focused($focus, equals: .subject)
                 .padding(.horizontal)
                 .padding(.bottom, 12)
 
-            field("To:", placeholder: "name@example.com", text: $toText, field: .to, email: true,
-                  pick: { pickerTarget = .to; showPicker = true })
+            // The "To" label doubles as the Cc/Bcc disclosure; the chevron hints
+            // it's tappable and flips when the rows are open.
+            recipientRow("To", text: $toText, field: .to, showsDisclosure: true,
+                         pick: { pickerTarget = .to; showPicker = true })
             divider
-            field("Cc:", placeholder: "Optional", text: $ccText, field: .cc, email: true,
-                  pick: { pickerTarget = .cc; showPicker = true })
-            divider
-            field("Bcc:", placeholder: "Optional", text: $bccText, field: .bcc, email: true,
-                  pick: { pickerTarget = .bcc; showPicker = true })
-            divider
-            field("Subject:", placeholder: "Subject", text: $subject, field: .subject)
-            divider
-
-            HStack(spacing: 8) {
-                AttachButton(attachments: $attachments)
-                AttachmentTray(attachments: $attachments)
+            if ccBccVisible {
+                recipientRow("Cc", text: $ccText, field: .cc, showsDisclosure: false,
+                             pick: { pickerTarget = .cc; showPicker = true })
+                divider
+                recipientRow("Bcc", text: $bccText, field: .bcc, showsDisclosure: false,
+                             pick: { pickerTarget = .bcc; showPicker = true })
+                divider
             }
-            .padding(.horizontal)
-            .padding(.vertical, 8)
-            divider
 
             if let error = model.errorMessage {
                 Text(error)
@@ -98,12 +98,20 @@ struct ComposeView: View {
                     .padding()
             }
 
-            TextField("Message", text: $messageBody, axis: .vertical)
-                .focused($focus, equals: .body)
-                .padding()
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .contentShape(Rectangle())
-                .onTapGesture { focus = .body }
+            // The empty conversation canvas: a new conversation reads like an
+            // empty thread, composed from the bar below.
+            Spacer(minLength: 0)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            Divider()
+            ReplyBar(
+                text: $messageBody,
+                attachments: $attachments,
+                isSending: isSending,
+                placeholder: "Message",
+                canSend: hasRecipient,
+                onSend: send
+            )
         }
         .background(Color(.systemBackground))
         .background(ContactPicker(isPresented: $showPicker) { token in
@@ -156,19 +164,6 @@ struct ComposeView: View {
         HStack {
             circleButton("xmark", action: close)
             Spacer()
-            if isSending {
-                ProgressView().frame(width: 42, height: 42)
-            } else {
-                Button(action: send) {
-                    Image(systemName: "arrow.up")
-                        .font(.system(size: 20, weight: .semibold))
-                        .foregroundStyle(canSend ? .white : Color.secondary)
-                        .frame(width: 42, height: 42)
-                        .background(canSend ? Color.accentColor : Color(.secondarySystemFill), in: Circle())
-                }
-                .disabled(!canSend)
-                .accessibilityLabel("Send")
-            }
         }
         .padding()
     }
@@ -183,38 +178,51 @@ struct ComposeView: View {
         }
     }
 
-    /// One labeled input row: a gray `Label:` prefix and the field, the way Mail's
-    /// compose header reads. `email` rows turn off autocapitalization and
-    /// correction and use the email keyboard; the subject takes normal text.
-    private func field(
+    /// One recipient row: a gray label, the address field, and a contacts "+".
+    /// On the "To" row the label is a button that discloses Cc and Bcc, with a
+    /// chevron that flips when they're open; the other rows use a plain label.
+    private func recipientRow(
         _ label: String,
-        placeholder: String,
         text: Binding<String>,
         field: Field,
-        email: Bool = false,
-        pick: (() -> Void)? = nil
+        showsDisclosure: Bool,
+        pick: @escaping () -> Void
     ) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text(label)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .fixedSize()
-            TextField(placeholder, text: text)
-                .focused($focus, equals: field)
-                .textInputAutocapitalization(email ? .never : .sentences)
-                .autocorrectionDisabled(email)
-                .keyboardType(email ? .emailAddress : .default)
-            if let pick {
-                Button(action: pick) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 28, height: 28)
-                        .background(Color(.secondarySystemFill), in: Circle())
+            if showsDisclosure {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) { showCcBcc.toggle() }
+                } label: {
+                    HStack(spacing: 2) {
+                        Text(label).foregroundStyle(.secondary)
+                        Image(systemName: "chevron.down")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .rotationEffect(.degrees(ccBccVisible ? 180 : 0))
+                    }
                 }
-                .buttonStyle(.borderless)
-                .accessibilityLabel("Add from Contacts")
+                .buttonStyle(.plain)
+                .fixedSize()
+                .accessibilityLabel(ccBccVisible ? "Hide Cc and Bcc" : "Show Cc and Bcc")
+            } else {
+                Text(label)
+                    .foregroundStyle(.secondary)
+                    .fixedSize()
             }
+            TextField(field == .to ? "name@example.com" : "Optional", text: text)
+                .focused($focus, equals: field)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .keyboardType(.emailAddress)
+            Button(action: pick) {
+                Image(systemName: "plus")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 28, height: 28)
+                    .background(Color(.secondarySystemFill), in: Circle())
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel("Add from Contacts")
         }
         .padding(.horizontal)
         .padding(.vertical, 11)
@@ -224,13 +232,19 @@ struct ComposeView: View {
         Divider().padding(.leading)
     }
 
-    /// A send needs at least one recipient anywhere (Bcc alone is enough, for an
-    /// announcement that hides its list), a subject, and a body or an attachment.
-    private var canSend: Bool {
-        let hasRecipient = ![toText, ccText, bccText].allSatisfy { RecipientParsing.parse($0).isEmpty }
-        return hasRecipient
-            && !subject.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && (!messageBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !attachments.isEmpty)
+    /// Whether there's a recipient anywhere. Bcc alone is enough (an announcement
+    /// that hides its list). The message bar adds the "something to send" check,
+    /// and the title is optional, so this is all the composer gates on.
+    private var hasRecipient: Bool {
+        ![toText, ccText, bccText].allSatisfy { RecipientParsing.parse($0).isEmpty }
+    }
+
+    /// Cc and Bcc show once disclosed, or once either holds content, so collapsing
+    /// can't hide a recipient already added (as Mail keeps a filled Cc visible).
+    private var ccBccVisible: Bool {
+        showCcBcc
+            || !ccText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !bccText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     /// Whether the composer holds anything worth keeping. An empty composer closes

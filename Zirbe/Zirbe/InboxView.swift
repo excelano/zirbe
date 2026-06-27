@@ -83,7 +83,7 @@ struct InboxView: View {
         .environment(\.editMode, $editMode)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbarContent }
-        .searchable(text: $searchText, prompt: "Search mail")
+        .searchable(text: $searchText, prompt: "Search chats")
         .sheet(isPresented: $isComposing) {
             ComposeView(model: model)
         }
@@ -168,14 +168,14 @@ struct InboxView: View {
             Button {
                 openDraft(summary)
             } label: {
-                ThreadRow(summary: summary)
+                ThreadRow(summary: summary, selfAddress: model.account.emailAddress)
             }
             .buttonStyle(.plain)
         } else {
             NavigationLink {
                 ConversationView(model: model, summary: summary)
             } label: {
-                ThreadRow(summary: summary)
+                ThreadRow(summary: summary, selfAddress: model.account.emailAddress)
             }
         }
     }
@@ -295,7 +295,7 @@ struct InboxView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                .accessibilityLabel("Switch mailbox, currently \(model.currentMailbox.displayName)")
+                .accessibilityLabel("Switch folder, currently \(model.currentMailbox.displayName)")
             }
             // Top right pairs Select with Settings, the gear sitting at the far
             // edge: Mail's one deliberately overloaded corner, kept to two.
@@ -510,6 +510,11 @@ private struct RowActions: ViewModifier {
 /// one-line preview of the newest message when its body has been fetched.
 private struct ThreadRow: View {
     let summary: ThreadSummary
+    /// The account's own address, so an unnamed chat is titled by the other
+    /// people rather than by the viewer.
+    let selfAddress: String
+    /// How many preview lines to show under the subject (0 hides the preview).
+    @AppStorage(SettingsKeys.previewLineCount) private var previewLineCount = 2
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
@@ -517,42 +522,65 @@ private struct ThreadRow: View {
                 .fill(summary.isUnread ? Color.accentColor : .clear)
                 .frame(width: 9, height: 9)
                 .padding(.top, 6)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack(alignment: .firstTextBaseline) {
+            VStack(alignment: .leading, spacing: 3) {
+                // The subject owns the first line; a flag trails it so subjects
+                // still share a left edge whether flagged or not.
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
                     Text(title)
                         .font(.headline)
                         .fontWeight(summary.isUnread ? .bold : .regular)
                         .lineLimit(1)
-                    Spacer(minLength: 8)
                     if summary.isFlagged {
                         Image(systemName: "flag.fill")
                             .font(.caption)
                             .foregroundStyle(.orange)
                             .accessibilityLabel("Flagged")
                     }
-                    if let date = summary.lastActivity {
-                        Text(date, format: .relative(presentation: .named))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+                    Spacer(minLength: 8)
+                }
+                // Beneath the subject: a named chat's participants on the left, the
+                // timestamp on the right; an unnamed chat's title already names the
+                // people, so the timestamp stands alone.
+                if isNamed || summary.lastActivity != nil {
+                    HStack(alignment: .firstTextBaseline) {
+                        if isNamed {
+                            Text(participantText)
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        Spacer(minLength: 8)
+                        if let date = summary.lastActivity {
+                            Text(date, format: .relative(presentation: .named))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
-                Text(participantText)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                if let preview = summary.preview, !preview.isEmpty {
+                if previewLineCount > 0, let preview = summary.preview, !preview.isEmpty {
                     Text(preview)
                         .font(.footnote)
                         .foregroundStyle(.tertiary)
-                        .lineLimit(1)
+                        .lineLimit(previewLineCount)
                 }
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 5)
+    }
+
+    /// Whether the user titled this chat (vs the default sent for an untitled one),
+    /// which decides whether the participants need their own line.
+    private var isNamed: Bool {
+        let trimmed = summary.subject.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !trimmed.isEmpty && trimmed != ConversationDefaults.unnamedSubject
     }
 
     private var title: String {
-        summary.subject.isEmpty ? "(no subject)" : summary.subject
+        ConversationDefaults.displayTitle(
+            subject: summary.subject,
+            participants: summary.participants,
+            selfAddress: selfAddress
+        )
     }
 
     private var participantText: String {

@@ -154,7 +154,7 @@ public actor SyncService {
         try await engine.connect(username: account.username, password: password)
         let mailboxes = try await engine.listMailboxes()
             .filter(\.isSelectable)
-            .map { Mailbox(accountID: account.id, name: $0.name, role: MailboxRole($0.specialUse)) }
+            .map { Mailbox(accountID: account.id, name: $0.name, role: MailboxRole($0.specialUse), hierarchyDelimiter: $0.hierarchyDelimiter) }
         for mailbox in mailboxes {
             try await store.upsert(mailbox)
         }

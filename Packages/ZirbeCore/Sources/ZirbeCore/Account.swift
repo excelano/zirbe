@@ -61,22 +61,30 @@ public struct Mailbox: Sendable, Hashable, Identifiable, Codable {
     /// The IMAP folder name as the server reports it, e.g. `INBOX`.
     public var name: String
     public var role: MailboxRole?
+    /// The server's hierarchy delimiter ("/" on Gmail, "." on Dovecot), or nil
+    /// when unknown (an old cached row before its first server refresh).
+    public var hierarchyDelimiter: String?
 
-    public init(accountID: String, name: String, role: MailboxRole? = nil) {
+    public init(accountID: String, name: String, role: MailboxRole? = nil, hierarchyDelimiter: String? = nil) {
         self.accountID = accountID
         self.name = name
         self.role = role
+        self.hierarchyDelimiter = hierarchyDelimiter
     }
 
     public var id: String { "\(accountID)/\(name)" }
 
     /// A short, human label for the switcher and titles: the INBOX reads as
-    /// "Inbox", and a nested folder is flattened to its leaf (e.g. `[Gmail]/Sent
-    /// Mail` shows as "Sent Mail"). Nested paths are leaf-only in v1; the full
-    /// tree is out of scope.
+    /// "Inbox", and a nested folder is flattened to its leaf (`INBOX.Sent` →
+    /// "Sent", `[Gmail]/Sent Mail` → "Sent Mail"). Splitting uses the server's
+    /// real delimiter, never a guess: a "." is a separator on Dovecot but a
+    /// literal character in a Gmail label ("node.js"), so guessing would truncate
+    /// it. With no known delimiter we leave the name whole rather than risk that.
+    /// Leaf-only in v1; the full tree is out of scope.
     public var displayName: String {
         if role == .inbox || name == "INBOX" { return "Inbox" }
-        let leaf = name.split(separator: "/").last
+        guard let delimiter = hierarchyDelimiter?.first else { return name }
+        let leaf = name.split(separator: delimiter).last
         return leaf.map(String.init) ?? name
     }
 }

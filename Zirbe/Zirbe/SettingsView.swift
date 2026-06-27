@@ -15,13 +15,16 @@ import ZirbeCore
 /// off: Zirbe shows the plain-text version with remote images blocked unless the
 /// user opts into the richer, less private behavior.
 enum SettingsKeys {
-    /// Open an HTML email in its Web View automatically instead of the text bubble.
+    /// Open an HTML email in the Email View automatically instead of the chat bubble.
     static let openHTMLInWebView = "settings.openHTMLInWebView"
-    /// Load remote images in the Web View by default rather than blocking them.
+    /// Load remote images in the Email View by default rather than blocking them.
     static let loadRemoteImages = "settings.loadRemoteImages"
     /// Post a banner when a background check finds new mail. Defaults on; the
     /// notifier reads the same key and treats an unset value as on.
     static let newMailNotifications = "settings.newMailNotifications"
+    /// How many lines of each message to preview in the inbox row (0 = none).
+    /// Defaults to 2; the inbox row reads the same key.
+    static let previewLineCount = "settings.previewLineCount"
 }
 
 struct SettingsView: View {
@@ -38,6 +41,7 @@ struct SettingsView: View {
     @AppStorage(SettingsKeys.openHTMLInWebView) private var openHTMLInWebView = false
     @AppStorage(SettingsKeys.loadRemoteImages) private var loadRemoteImages = false
     @AppStorage(SettingsKeys.newMailNotifications) private var newMailNotifications = true
+    @AppStorage(SettingsKeys.previewLineCount) private var previewLineCount = 2
 
     var body: some View {
         NavigationStack {
@@ -72,12 +76,25 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    Toggle("Open HTML email in Web View", isOn: $openHTMLInWebView)
+                    Picker("Preview", selection: $previewLineCount) {
+                        Text("None").tag(0)
+                        Text("1 Line").tag(1)
+                        Text("2 Lines").tag(2)
+                        Text("3 Lines").tag(3)
+                    }
+                } header: {
+                    Text("Inbox")
+                } footer: {
+                    Text("How many lines of each message to preview under the subject.")
+                }
+
+                Section {
+                    Toggle("Open HTML email in Email View", isOn: $openHTMLInWebView)
                     Toggle("Load remote images", isOn: $loadRemoteImages)
                 } header: {
                     Text("HTML Email")
                 } footer: {
-                    Text("Zirbe shows the plain-text version by default. Opening the Web View renders the full HTML email. Loading remote images can let a sender know you opened the message and roughly where you are, so it stays off unless you turn it on.")
+                    Text("Zirbe shows the plain-text version as a chat bubble by default. The Email View renders the full HTML message. Loading remote images can let a sender know you opened the message and roughly where you are, so it stays off unless you turn it on.")
                 }
 
                 Section {

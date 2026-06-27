@@ -58,7 +58,7 @@ struct MailboxesView: View {
 
     private var title: String {
         switch mode {
-        case .browse: return "Mailboxes"
+        case .browse: return "Folders"
         case .move: return "Move to"
         }
     }
@@ -112,7 +112,7 @@ struct MailboxesView: View {
 
     private var emptyState: some View {
         ContentUnavailableView(
-            "No mailboxes",
+            "No folders",
             systemImage: "tray.2",
             description: Text("Pull the inbox to refresh, then try again.")
         )

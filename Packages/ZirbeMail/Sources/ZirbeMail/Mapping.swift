@@ -27,7 +27,8 @@ extension MailboxInfo {
         self.init(
             name: info.name,
             specialUse: MailboxSpecialUse(info),
-            isSelectable: info.isSelectable
+            isSelectable: info.isSelectable,
+            hierarchyDelimiter: info.hierarchyDelimiter
         )
     }
 }

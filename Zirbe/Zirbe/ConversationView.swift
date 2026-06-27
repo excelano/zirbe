@@ -148,14 +148,18 @@ struct ConversationView: View {
     }
 
     private var subjectTitle: String {
-        summary.subject.isEmpty ? "(no subject)" : summary.subject
+        ConversationDefaults.displayTitle(
+            subject: summary.subject,
+            participants: summary.participants,
+            selfAddress: model.account.emailAddress
+        )
     }
 
     /// With the "open HTML in Web View" preference on, fetch the newest message's
     /// HTML and set it as the active web view BEFORE the conversation is revealed,
     /// so it opens straight into the web view with no flash of the text bubbles.
     /// Falls through to the chat of bubbles when the preference is off, the newest
-    /// message isn't HTML, or the fetch fails. The tray's "Text View" button still
+    /// message isn't HTML, or the fetch fails. The tray's "Chat View" button still
     /// returns to the bubbles, so this is only the starting view, not a one-way
     /// door. Images load per the image preference.
     private func prepareInitialWebView(_ thread: ZirbeCore.Thread) async {
@@ -210,7 +214,7 @@ struct ConversationView: View {
     private func webTray(_ active: ActiveWeb) -> some View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
-                WebControlButton(title: "Text View", systemImage: "text.alignleft", edge: .leading) {
+                WebControlButton(title: "Chat View", systemImage: "text.alignleft", edge: .leading) {
                     activeWeb = nil
                 }
                 Divider().frame(height: 18)
@@ -349,14 +353,22 @@ private struct ConversationTopBar: View {
                 // a no-op tap rather than a disabled (dimmed) control.
                 if isTruncated { showingFull = true }
             } label: {
-                Text(title)
-                    .font(.headline)
-                    .foregroundStyle(.primary)
-                    .multilineTextAlignment(.leading)
-                    .lineLimit(2)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(truncationProbe)
-                    .contentShape(Rectangle())
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    if isFlagged {
+                        Image(systemName: "flag.fill")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .accessibilityLabel("Flagged")
+                    }
+                    Text(title)
+                        .font(.headline)
+                        .foregroundStyle(.primary)
+                        .multilineTextAlignment(.leading)
+                        .lineLimit(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(truncationProbe)
+                }
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .onPreferenceChange(SubjectTruncationKey.self) { isTruncated = $0 }
@@ -374,14 +386,10 @@ private struct ConversationTopBar: View {
                 .presentationCompactAdaptation(.popover)
             }
 
-            circleButton(
-                systemName: isFlagged ? "flag.fill" : "flag",
-                tint: isFlagged ? .orange : .secondary,
-                action: onToggleFlag
-            )
-            .accessibilityLabel(isFlagged ? "Unflag Conversation" : "Flag Conversation")
-
             Menu {
+                Button(action: onToggleFlag) {
+                    Label(isFlagged ? "Unflag" : "Flag", systemImage: isFlagged ? "flag.slash" : "flag")
+                }
                 Button(action: onArchive) {
                     Label("Archive", systemImage: "archivebox")
                 }
@@ -391,14 +399,14 @@ private struct ConversationTopBar: View {
                 Button(role: .destructive, action: onJunk) {
                     Label("Move to Junk", systemImage: "xmark.bin")
                 }
+                Button(role: .destructive, action: onTrash) {
+                    Label("Trash", systemImage: "trash")
+                }
             } label: {
                 circleLabel(systemName: "ellipsis", tint: .accentColor)
             }
             .alignmentGuide(.top) { dims in (dims.height - titleLineHeight) / 2 }
             .accessibilityLabel("More Actions")
-
-            circleButton(systemName: "trash", tint: .red, action: onTrash)
-                .accessibilityLabel("Trash Conversation")
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
@@ -562,12 +570,21 @@ private struct ParticipantChangeLine: View {
     }
 }
 
-/// The bottom reply bar: a growing text field and a send button, in the Messages
-/// idiom. Send is disabled while empty or in flight.
-private struct ReplyBar: View {
+/// The bottom message bar: a growing text field, an attach button, and a send
+/// button, in the Messages idiom. Shared by a reply (in a conversation) and a new
+/// conversation (the composer), so the two compose the same way. Send is disabled
+/// while in flight, while there's nothing to send, or while an external
+/// precondition isn't met (a new conversation needs a recipient).
+struct ReplyBar: View {
     @Binding var text: String
     @Binding var attachments: [StagedAttachment]
     let isSending: Bool
+    /// The field's empty-state prompt: "Reply" in a thread, "Message" for a new
+    /// conversation.
+    var placeholder: String = "Reply"
+    /// An external requirement beyond having something to send (a new conversation
+    /// needs a recipient). A reply has its recipients already, so this defaults on.
+    var canSend: Bool = true
     let onSend: () -> Void
 
     /// Nothing to send: no typed text and no picked files.
@@ -580,7 +597,7 @@ private struct ReplyBar: View {
             AttachmentTray(attachments: $attachments)
             HStack(alignment: .bottom, spacing: 8) {
                 AttachButton(attachments: $attachments)
-                TextField("Reply", text: $text, axis: .vertical)
+                TextField(placeholder, text: $text, axis: .vertical)
                     .lineLimit(1...5)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 7)
@@ -595,7 +612,7 @@ private struct ReplyBar: View {
                             .font(.system(size: 30))
                     }
                 }
-                .disabled(isSending || isEmpty)
+                .disabled(isSending || isEmpty || !canSend)
             }
         }
         .padding(.horizontal)
@@ -794,7 +811,7 @@ private struct MessageBubble: View {
     private var webViewControls: some View {
         HStack(spacing: 0) {
             WebControlButton(
-                title: "Web View", systemImage: "safari", edge: .leading,
+                title: "Email View", systemImage: "safari", edge: .leading,
                 isLoading: loadingWithImages == loadRemoteImages
             ) { openWebView(showImages: loadRemoteImages) }
             // When images already load by default the second button would just
