@@ -91,14 +91,31 @@ and the integrated inbox wait below that line.
   placeholder line above it. No backend; the recording stays on device until the
   message sends. Verified on device.
 
+- **Save or share a received attachment.** Tapping an attachment opens a full
+  QuickLook preview with its native toolbar, so the Share action (AirDrop, Save to
+  Files, and the rest) and Done are both there — an attachment can leave the app.
+  Shared by the file chip and the inline image view. Verified on device.
+
 ## Above the multi-account line
 
 In recommended sequence:
 
+- **Reactions (tapbacks).** Thumbs-up/down, heart, and the rest on a message
+  bubble — the fun, chat-native touch people expect. Not blocked by the privacy
+  posture: a reaction rides the user's own SMTP/IMAP like any mail, no backend.
+  The real problem is cross-client, and it's beatable the way voice messages are
+  and the way iMessage degrades a tapback to SMS. A reaction sends as a reply to
+  the target message carrying a Zirbe marker (an `X-Zirbe-Reaction` header plus
+  `In-Reply-To`); a receiving Zirbe renders it as a tapback badge and hides the
+  bubble, while other clients fall back to a short readable line ("Reacted 👍 to
+  '…'"). Design question to settle first: every reaction to a non-Zirbe recipient
+  is another email in their inbox, so decide whether to send rich reactions only
+  to correspondents seen using Zirbe (detectable from their headers), gate it
+  behind a setting, or always degrade to text. Medium-large: new send path,
+  routing reaction mail out of the bubble stream, per-message reaction storage,
+  and the picker plus badge UI.
 - **In-conversation search.** Find within an open thread, complementing the
   global search already shipped.
-- **Save or share a received attachment.** A share sheet / Save to Files action
-  from the QuickLook preview, so an attachment can leave the app.
 - **Pin a conversation and swipe-to-reply.** Pin a thread to the top of the
   inbox, and reply with a swipe on a bubble. Cheap quality-of-life lifts.
 - **Junk and block-sender.** A move-to-Junk action and a way to block a sender.
@@ -152,7 +169,5 @@ they stay off the list rather than lingering as someday-maybes:
 
 - **Rich link previews.** Fetching OpenGraph metadata leaks every link a user
   receives to arbitrary third-party servers.
-- **Tapback-style reactions.** No email protocol carries them, so they would be
-  invisible to every other mail client.
 - **Read receipts.** Privacy-hostile by nature, and against the posture even
   where the protocol (MDN) allows it.

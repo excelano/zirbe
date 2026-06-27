@@ -51,7 +51,7 @@ struct InlineAttachmentImage: View {
             }
         }
         .task { await load() }
-        .quickLookPreview($previewURL)
+        .quickLook($previewURL)
     }
 
     /// A sized stand-in while the bytes load, tinted to sit on its bubble.

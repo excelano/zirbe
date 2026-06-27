@@ -930,7 +930,7 @@ struct AttachmentChip: View {
         // A chip cached before part ids were tracked can't be opened (its body
         // re-fetches on next open); until then it's a plain, non-tappable label.
         .disabled(isLoading || attachment.partID.isEmpty)
-        .quickLookPreview($previewURL)
+        .quickLook($previewURL)
     }
 
     /// Fetch the attachment's bytes over the warm session, write them to a temp

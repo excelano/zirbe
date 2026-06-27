@@ -523,7 +523,10 @@ private struct ThreadRow: View {
             Circle()
                 .fill(summary.isUnread ? Color.accentColor : .clear)
                 .frame(width: 8, height: 8)
-            SenderAvatar(participant: avatarParticipant, size: 44)
+            ThreadAvatar(
+                others: otherParticipants,
+                fallback: summary.participants.first ?? Participant(address: selfAddress)
+            )
             VStack(alignment: .leading, spacing: 3) {
                 // The subject owns the first line; a flag trails it so subjects
                 // still share a left edge whether flagged or not.
@@ -570,14 +573,10 @@ private struct ThreadRow: View {
         .padding(.vertical, 5)
     }
 
-    /// The face for the row: the first participant who isn't the account holder
-    /// (the person the chat is with), falling back to self for a note to self.
-    /// A group chat shows its first other member; stacked group avatars are a
-    /// later refinement.
-    private var avatarParticipant: Participant {
-        summary.participants.first { $0.address.lowercased() != selfAddress.lowercased() }
-            ?? summary.participants.first
-            ?? Participant(address: selfAddress)
+    /// Everyone in the thread except the account holder, in order — the faces the
+    /// row shows (one, or two stacked for a group).
+    private var otherParticipants: [Participant] {
+        summary.participants.filter { $0.address.lowercased() != selfAddress.lowercased() }
     }
 
     /// Whether the user titled this chat (vs the default sent for an untitled one),
@@ -599,5 +598,33 @@ private struct ThreadRow: View {
         let names = summary.participants.prefix(3).map(\.label)
         let base = names.isEmpty ? "—" : names.joined(separator: ", ")
         return summary.messageCount > 1 ? "\(base) · \(summary.messageCount)" : base
+    }
+}
+
+/// The avatar (or pair) leading an inbox row: one face for a one-to-one chat, two
+/// overlapping faces for a group, the way Messages and Mail show a group thread. A
+/// thin canvas-colored ring sets the front face off from the one behind it.
+private struct ThreadAvatar: View {
+    /// The thread's participants minus the account holder, in order.
+    let others: [Participant]
+    /// Shown when there's no one else (a note to self): the account's own face.
+    let fallback: Participant
+    var size: CGFloat = 44
+
+    var body: some View {
+        if others.count >= 2 {
+            let face = size * 0.72
+            let shift = size * 0.14
+            ZStack {
+                SenderAvatar(participant: others[1], size: face)
+                    .offset(x: shift, y: -shift)
+                SenderAvatar(participant: others[0], size: face)
+                    .overlay(Circle().stroke(Color.zirbeCanvas, lineWidth: 2))
+                    .offset(x: -shift, y: shift)
+            }
+            .frame(width: size, height: size)
+        } else {
+            SenderAvatar(participant: others.first ?? fallback, size: size)
+        }
     }
 }
