@@ -517,11 +517,13 @@ private struct ThreadRow: View {
     @AppStorage(SettingsKeys.previewLineCount) private var previewLineCount = 2
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .center, spacing: 10) {
+            // A far-left gutter for the unread dot; clear when read so avatars
+            // still line up down the list.
             Circle()
                 .fill(summary.isUnread ? Color.accentColor : .clear)
-                .frame(width: 9, height: 9)
-                .padding(.top, 6)
+                .frame(width: 8, height: 8)
+            SenderAvatar(participant: avatarParticipant, size: 44)
             VStack(alignment: .leading, spacing: 3) {
                 // The subject owns the first line; a flag trails it so subjects
                 // still share a left edge whether flagged or not.
@@ -566,6 +568,16 @@ private struct ThreadRow: View {
             }
         }
         .padding(.vertical, 5)
+    }
+
+    /// The face for the row: the first participant who isn't the account holder
+    /// (the person the chat is with), falling back to self for a note to self.
+    /// A group chat shows its first other member; stacked group avatars are a
+    /// later refinement.
+    private var avatarParticipant: Participant {
+        summary.participants.first { $0.address.lowercased() != selfAddress.lowercased() }
+            ?? summary.participants.first
+            ?? Participant(address: selfAddress)
     }
 
     /// Whether the user titled this chat (vs the default sent for an untitled one),
