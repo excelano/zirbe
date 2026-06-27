@@ -83,7 +83,7 @@ struct InboxView: View {
         .environment(\.editMode, $editMode)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbarContent }
-        .searchable(text: $searchText, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search mail")
+        .searchable(text: $searchText, prompt: "Search mail")
         .sheet(isPresented: $isComposing) {
             ComposeView(model: model)
         }
@@ -212,29 +212,11 @@ struct InboxView: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        ToolbarItem(placement: .principal) {
-            if isSelecting {
+        if isSelecting {
+            ToolbarItem(placement: .principal) {
                 Text(navigationTitle)
                     .font(.headline)
-            } else {
-                Button {
-                    showingMailboxes = true
-                } label: {
-                    HStack(spacing: 4) {
-                        Text(model.currentMailbox.displayName)
-                            .font(.headline)
-                            .foregroundStyle(.primary)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.75)
-                        Image(systemName: "chevron.down")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .accessibilityLabel("Switch mailbox, currently \(model.currentMailbox.displayName)")
             }
-        }
-        if isSelecting {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Done") { endSelecting() }
             }
@@ -296,7 +278,37 @@ struct InboxView: View {
                 .disabled(selection.isEmpty)
             }
         } else {
+            // Top left is the folder selector, the way Mail's leading corner opens
+            // the mailbox list.
             ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    showingMailboxes = true
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(model.currentMailbox.displayName)
+                            .font(.headline)
+                            .foregroundStyle(.primary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
+                        Image(systemName: "chevron.down")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .accessibilityLabel("Switch mailbox, currently \(model.currentMailbox.displayName)")
+            }
+            // Top right pairs Select with Settings, the gear sitting at the far
+            // edge: Mail's one deliberately overloaded corner, kept to two.
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    editMode = .active
+                } label: {
+                    Image(systemName: "checkmark.circle")
+                }
+                .disabled(model.summaries.isEmpty)
+                .accessibilityLabel("Select Conversations")
+            }
+            ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     showingSettings = true
                 } label: {
@@ -304,7 +316,9 @@ struct InboxView: View {
                 }
                 .accessibilityLabel("Settings")
             }
-            ToolbarItemGroup(placement: .topBarTrailing) {
+            // Bottom bar in the Mail idiom: filter at the leading edge, the system
+            // search field centered, compose at the trailing edge.
+            ToolbarItem(placement: .bottomBar) {
                 Button {
                     showUnreadOnly.toggle()
                 } label: {
@@ -313,23 +327,17 @@ struct InboxView: View {
                         : "line.3.horizontal.decrease.circle")
                 }
                 .accessibilityLabel(showUnreadOnly ? "Show all conversations" : "Show unread only")
+            }
+            ToolbarSpacer(.flexible, placement: .bottomBar)
+            DefaultToolbarItem(kind: .search, placement: .bottomBar)
+            ToolbarSpacer(.flexible, placement: .bottomBar)
+            ToolbarItem(placement: .bottomBar) {
                 Button {
                     isComposing = true
                 } label: {
                     Image(systemName: "square.and.pencil")
                 }
                 .accessibilityLabel("New Conversation")
-                Menu {
-                    Button {
-                        editMode = .active
-                    } label: {
-                        Label("Select", systemImage: "checkmark.circle")
-                    }
-                    .disabled(model.summaries.isEmpty)
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                }
-                .accessibilityLabel("More")
             }
         }
     }
