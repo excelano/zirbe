@@ -114,6 +114,11 @@ In recommended sequence:
   behind a setting, or always degrade to text. Medium-large: new send path,
   routing reaction mail out of the bubble stream, per-message reaction storage,
   and the picker plus badge UI.
+- **Contact type-ahead in recipient fields.** As the user types in To, Cc, or
+  Bcc, suggest matching contacts (name or address) from the on-device Contacts
+  store, tap to fill. Local and display-only, the same Contacts access already
+  used for avatars, so no privacy cost and no backend. Pairs with the new
+  collapsed Cc/Bcc composer.
 - **In-conversation search.** Find within an open thread, complementing the
   global search already shipped.
 - **Pin a conversation and swipe-to-reply.** Pin a thread to the top of the
