@@ -54,6 +54,12 @@ public struct Message: Sendable, Hashable, Identifiable {
     /// `.failed` only on a locally-composed message whose SMTP send threw, so the
     /// bubble can show "Not Delivered" with a retry.
     public var sendState: SendState
+    /// When set, this message is a reaction (tapback) rather than a chat message:
+    /// it carries this emoji and reacts to the message named by `inReplyTo`. A
+    /// reaction is filtered out of the bubble stream and shown as a badge on its
+    /// target instead. Nil for every ordinary message. Set from the
+    /// `X-Zirbe-Reaction` header inbound, and on the local copy of one Zirbe sends.
+    public var reaction: String?
 
     public init(
         messageID: String? = nil,
@@ -69,7 +75,8 @@ public struct Message: Sendable, Hashable, Identifiable {
         bodyText: String? = nil,
         hasHTML: Bool = false,
         attachments: [MessageAttachment] = [],
-        sendState: SendState = .sent
+        sendState: SendState = .sent,
+        reaction: String? = nil
     ) {
         self.messageID = messageID
         self.uid = uid
@@ -85,7 +92,11 @@ public struct Message: Sendable, Hashable, Identifiable {
         self.hasHTML = hasHTML
         self.attachments = attachments
         self.sendState = sendState
+        self.reaction = reaction
     }
+
+    /// Whether this message is a reaction (tapback) rather than a chat message.
+    public var isReaction: Bool { reaction != nil }
 
     /// Whether the message failed to send and is waiting to be retried.
     public var didFailToSend: Bool { sendState == .failed }

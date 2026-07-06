@@ -37,6 +37,11 @@ public struct OutgoingMessage: Sendable, Hashable {
     /// plain reply or a new message; a forward fills it with the bytes of the
     /// original's attachments, refetched from the server.
     public var attachments: [OutgoingAttachment]
+    /// Extra raw header fields to write on the message, beyond the standard set
+    /// this type already models. Used for Zirbe's own `X-Zirbe-*` headers (a
+    /// reaction marker); empty for ordinary mail. In-Reply-To and References are
+    /// written from their own fields, not here, so they aren't duplicated.
+    public var headers: [String: String]
 
     public init(
         from: OutgoingAddress,
@@ -48,7 +53,8 @@ public struct OutgoingMessage: Sendable, Hashable {
         inReplyTo: String? = nil,
         references: [String] = [],
         messageID: String,
-        attachments: [OutgoingAttachment] = []
+        attachments: [OutgoingAttachment] = [],
+        headers: [String: String] = [:]
     ) {
         self.from = from
         self.to = to
@@ -60,6 +66,7 @@ public struct OutgoingMessage: Sendable, Hashable {
         self.references = references
         self.messageID = messageID
         self.attachments = attachments
+        self.headers = headers
     }
 }
 

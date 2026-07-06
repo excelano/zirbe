@@ -20,7 +20,14 @@ struct ConversationView: View {
     let summary: ThreadSummary
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
     @State private var thread: ZirbeCore.Thread?
+    /// The user's just-added reactions still inside their undo window, keyed by
+    /// the reacted-to message's Message-ID. Each holds the emoji and the timer
+    /// that will send it; the badge shows it at once, and a remove or change
+    /// before the timer fires means no email was ever sent. Emptied as each one
+    /// commits (or is undone), and flushed early when the view leaves.
+    @State private var pendingReactions: [String: PendingReaction] = [:]
     /// The flagged state shown in the top bar. Seeded from the inbox summary for
     /// an instant read, refined once the thread loads, and toggled optimistically.
     @State private var isFlagged = false
@@ -54,6 +61,15 @@ struct ConversationView: View {
         var messageID: String
         var body: WebViewBody
         var showImages: Bool
+    }
+
+    /// A reaction the user added that hasn't been sent yet: its emoji and the
+    /// timer that will send it once the undo window passes. Cancelling the task
+    /// (a remove, a change, or a re-tap of the same emoji) means the reaction
+    /// never leaves the device.
+    private struct PendingReaction {
+        var emoji: String
+        var task: Task<Void, Never>
     }
 
     var body: some View {
@@ -145,6 +161,14 @@ struct ConversationView: View {
                 await model.markReadOnOpen(loaded)
             }
         }
+        // A pending reaction's undo window is a courtesy, not a way to silently
+        // drop it: leaving the conversation or backgrounding the app sends any
+        // that are still waiting, so the only way to cancel one is an explicit
+        // undo while it's on screen.
+        .onDisappear { flushPendingReactions() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { flushPendingReactions() }
+        }
     }
 
     private var subjectTitle: String {
@@ -171,12 +195,15 @@ struct ConversationView: View {
     }
 
     private func conversation(_ thread: ZirbeCore.Thread) -> some View {
+        // Reactions are shown as badges on their target, not as bubbles, so the
+        // stack, the run grouping, and the join/leave lines are all over the chat
+        // messages alone.
+        let messages = thread.conversationMessages
         let deltas = Dictionary(
-            ParticipantChange.deltas(across: thread.messages, excluding: model.account.emailAddress)
+            ParticipantChange.deltas(across: messages, excluding: model.account.emailAddress)
                 .map { ($0.messageID, $0) },
             uniquingKeysWith: { first, _ in first }
         )
-        let messages = thread.messages
         return ScrollView {
             LazyVStack(spacing: 2) {
                 ForEach(Array(messages.enumerated()), id: \.element.id) { index, message in
@@ -194,6 +221,12 @@ struct ConversationView: View {
                         isOwn: isOwn(message),
                         hasTail: isLastInRun(at: index, in: messages),
                         showSender: !isOwn(message) && isFirstOfRun(at: index, in: messages),
+                        reactions: thread.reactions(forMessageID: message.messageID),
+                        pendingEmoji: pendingReactions[message.messageID ?? ""]?.emoji,
+                        lockedEmoji: myCommittedEmoji(on: message.messageID, in: thread),
+                        selfAddress: model.account.emailAddress,
+                        onReact: { emoji in react(emoji, to: message, in: thread) },
+                        onUndoReaction: { undoReaction(on: message) },
                         onShowWeb: { body, showImages in
                             activeWeb = ActiveWeb(messageID: message.id, body: body, showImages: showImages)
                         },
@@ -204,7 +237,68 @@ struct ConversationView: View {
                 }
             }
             .padding()
+            // Room for a reaction badge overhanging the newest bubble's top edge.
+            .padding(.top, 6)
         }
+    }
+
+    /// The emoji the user has already sent on a message, if any. A sent reaction
+    /// is final, so this is what locks the picker for that message.
+    private func myCommittedEmoji(on messageID: String?, in thread: ZirbeCore.Thread) -> String? {
+        guard let messageID else { return nil }
+        let me = model.account.emailAddress.lowercased()
+        return thread.reactions(forMessageID: messageID)
+            .first { $0.reactor.address.lowercased() == me }?.emoji
+    }
+
+    /// Add, change, or undo the user's reaction to a message. The badge updates at
+    /// once; the email is scheduled for after the undo window. Tapping the emoji
+    /// already pending removes it; a different emoji replaces it and restarts the
+    /// window. A reaction already sent is locked and ignored here.
+    private func react(_ emoji: String, to message: Message, in thread: ZirbeCore.Thread) {
+        guard let mid = message.messageID, !mid.isEmpty else { return }
+        guard myCommittedEmoji(on: mid, in: thread) == nil else { return }
+
+        pendingReactions[mid]?.task.cancel()
+        if pendingReactions[mid]?.emoji == emoji {
+            pendingReactions[mid] = nil
+            return
+        }
+        let task = Task {
+            try? await Task.sleep(for: ReactionPalette.undoWindow)
+            if Task.isCancelled { return }
+            await commitReaction(emoji, to: mid, in: thread)
+        }
+        pendingReactions[mid] = PendingReaction(emoji: emoji, task: task)
+    }
+
+    /// Remove a reaction still inside its undo window. Nothing was sent, so this
+    /// just cancels the pending send and clears the badge.
+    private func undoReaction(on message: Message) {
+        guard let mid = message.messageID else { return }
+        pendingReactions[mid]?.task.cancel()
+        pendingReactions[mid] = nil
+    }
+
+    /// Send a pending reaction once its window has passed, then swap in the
+    /// refreshed thread so the badge carries over from tentative to sent.
+    private func commitReaction(_ emoji: String, to messageID: String, in thread: ZirbeCore.Thread) async {
+        let refreshed = await model.sendReaction(emoji, to: messageID, in: thread)
+        pendingReactions[messageID] = nil
+        if let refreshed { self.thread = refreshed }
+    }
+
+    /// Send every reaction still waiting, now, cancelling their timers. Called
+    /// when the conversation leaves the screen or the app backgrounds, so a
+    /// pending reaction is never silently dropped.
+    private func flushPendingReactions() {
+        guard !pendingReactions.isEmpty, let thread else { return }
+        for (mid, pending) in pendingReactions {
+            pending.task.cancel()
+            let emoji = pending.emoji
+            Task { await model.sendReaction(emoji, to: mid, in: thread) }
+        }
+        pendingReactions = [:]
     }
 
     /// The web view taking over the whole tray: a toggle bar across the top
@@ -633,6 +727,22 @@ private struct MessageBubble: View {
     /// Whether to show the sender's name above, set once atop a run of incoming
     /// messages.
     let showSender: Bool
+    /// The reactions sent on this message, from everyone, drawn as a badge cluster
+    /// on the bubble's corner.
+    let reactions: [Reaction]
+    /// The user's just-added emoji still inside its undo window, shown tentatively
+    /// with an Undo affordance; nil when they have no pending reaction here.
+    let pendingEmoji: String?
+    /// The emoji the user has already sent on this message, which locks the picker
+    /// (a sent reaction can't be changed); nil when they haven't reacted.
+    let lockedEmoji: String?
+    /// The account's own address, to tell the user's reactions from others' in the
+    /// cluster.
+    let selfAddress: String
+    /// Add, change, or remove the user's reaction to this message.
+    let onReact: (String) -> Void
+    /// Pull back the pending reaction before its window passes.
+    let onUndoReaction: () -> Void
     /// Hand the fetched body up so the conversation can take over its tray with
     /// the web view: the HTML plus inline images, and whether to show remote
     /// images on open.
@@ -647,6 +757,8 @@ private struct MessageBubble: View {
     /// True from the moment a retry is tapped until the thread refreshes, so the
     /// failed footer reads "Retrying…" and can't be tapped twice.
     @State private var isRetrying = false
+    /// Whether the reaction picker popover is showing for this bubble.
+    @State private var showingReactionPicker = false
     @State private var quoteExpanded = false
     /// Which action is fetching, so only the tapped button shows a spinner: nil
     /// when idle, true for an images-on open, false for an images-blocked one.
@@ -687,8 +799,27 @@ private struct MessageBubble: View {
                         // Inset from the screen edge, on the side the bubble hugs.
                         .padding(isOwn ? .trailing : .leading, 22)
                 }
+                if pendingEmoji != nil {
+                    undoPill
+                        .padding(isOwn ? .trailing : .leading, 22)
+                }
             }
         }
+    }
+
+    /// The Undo affordance shown while the user's reaction is inside its window:
+    /// tapping it pulls the reaction back before any email is sent. It disappears
+    /// on its own once the window passes and the reaction is on its way.
+    private var undoPill: some View {
+        Button(action: onUndoReaction) {
+            HStack(spacing: 3) {
+                Text(pendingEmoji ?? "")
+                Text("Undo").fontWeight(.semibold)
+            }
+            .font(.caption2)
+            .foregroundStyle(.tint)
+        }
+        .buttonStyle(.plain)
     }
 
     /// The undelivered marker shown under a failed own-bubble, in place of the
@@ -797,10 +928,36 @@ private struct MessageBubble: View {
         // reserves the row's bottom space (and clears the tail horizontally), so
         // explicit clearance is only needed for a tailed bubble with no date.
         .padding(.bottom, (hasTail && message.date == nil) ? BubbleShape.tailDrop : 0)
-        .contextMenu {
-            Button { onForward() } label: {
-                Label("Forward", systemImage: "arrowshape.turn.up.right")
+        // The reaction cluster overhangs the bubble's top inner corner, the way a
+        // tapback sits in Messages: on the leading side of the user's own bubble,
+        // the trailing side of everyone else's. Display-only; Undo lives below.
+        .overlay(alignment: isOwn ? .topLeading : .topTrailing) {
+            if !reactions.isEmpty || pendingEmoji != nil {
+                ReactionCluster(reactions: reactions, pendingEmoji: pendingEmoji, selfAddress: selfAddress)
+                    .offset(x: isOwn ? -8 : 8, y: -12)
+                    .allowsHitTesting(false)
             }
+        }
+        // Long-press opens the reaction bar (and the bubble's actions), replacing
+        // the plain context menu.
+        .onLongPressGesture(minimumDuration: 0.35) {
+            UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+            showingReactionPicker = true
+        }
+        .popover(isPresented: $showingReactionPicker) {
+            ReactionMenu(
+                selected: pendingEmoji ?? lockedEmoji,
+                locked: lockedEmoji != nil,
+                onReact: { emoji in
+                    showingReactionPicker = false
+                    onReact(emoji)
+                },
+                onForward: {
+                    showingReactionPicker = false
+                    onForward()
+                }
+            )
+            .presentationCompactAdaptation(.popover)
         }
     }
 

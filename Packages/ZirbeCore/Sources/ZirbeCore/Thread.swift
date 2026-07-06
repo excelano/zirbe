@@ -37,14 +37,52 @@ public struct Thread: Sendable, Hashable, Identifiable {
         self.lastActivity = lastActivity
     }
 
-    /// A thread is unread if any of its messages is unread.
-    public var isUnread: Bool { messages.contains { !$0.isSeen } }
+    /// A thread is unread if any of its chat messages is unread. Reactions are
+    /// excluded: a tapback landing on your message shouldn't bold the thread, the
+    /// way a reaction is a lightweight acknowledgement rather than new mail.
+    public var isUnread: Bool { messages.contains { !$0.isSeen && !$0.isReaction } }
 
     /// A thread is flagged if any of its messages is flagged, mirroring how
     /// unread reads across the thread.
     public var isFlagged: Bool { messages.contains(where: \.isFlagged) }
 
-    public var messageCount: Int { messages.count }
+    /// The count of chat messages, excluding reactions, since a reaction is a
+    /// badge on a message rather than a message in its own right.
+    public var messageCount: Int { conversationMessages.count }
+
+    /// The messages shown as chat bubbles: every message that isn't a reaction,
+    /// in the thread's existing oldest-first order.
+    public var conversationMessages: [Message] {
+        messages.filter { !$0.isReaction }
+    }
+
+    /// The reactions on each message, keyed by the target message's `Message-ID`
+    /// (the id a reaction names in its `In-Reply-To`). At most one reaction per
+    /// reactor per message: when a reactor's reaction appears more than once, the
+    /// latest by date wins, so a change replaces rather than stacks.
+    public var reactionsByTarget: [String: [Reaction]] {
+        var byReactor: [String: [String: Reaction]] = [:]
+        for message in messages {
+            guard let emoji = message.reaction,
+                  let target = message.inReplyTo, !target.isEmpty,
+                  let from = message.from
+            else { continue }
+            let candidate = Reaction(reactor: from, emoji: emoji, date: message.date)
+            if let existing = byReactor[target]?[from.address],
+               (existing.date ?? .distantPast) >= (message.date ?? .distantPast) {
+                continue
+            }
+            byReactor[target, default: [:]][from.address] = candidate
+        }
+        return byReactor.mapValues { Array($0.values) }
+    }
+
+    /// The reactions on one message, by its `Message-ID`, or an empty list when it
+    /// has none.
+    public func reactions(forMessageID messageID: String?) -> [Reaction] {
+        guard let messageID, !messageID.isEmpty else { return [] }
+        return reactionsByTarget[messageID] ?? []
+    }
 }
 
 /// The inbox-row view of a thread: everything the conversation list shows,

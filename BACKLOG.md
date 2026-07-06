@@ -96,24 +96,27 @@ and the integrated inbox wait below that line.
   Files, and the rest) and Done are both there — an attachment can leave the app.
   Shared by the file chip and the inline image view. Verified on device.
 
+- **Reactions (tapbacks).** Long-press a bubble for a floating emoji bar (👍 👎
+  ❤️ 😂 ‼️ ❓, mirroring Messages) plus Forward; tap one and a badge lands on the
+  bubble's corner. A reaction rides the user's own SMTP/IMAP like any mail (no
+  backend): a real reply carrying an `X-Zirbe-Reaction` header and `In-Reply-To`,
+  so a receiving Zirbe shows the badge and hides the reaction's own bubble while
+  every other client sees a readable "Reacted 👍 to '…'" line (always-send and
+  degrade, the way an iMessage tapback degrades to SMS). Reactions are filtered
+  out of the bubble stream, the inbox preview, the unread state, the folder
+  counts, and the new-mail notifier, so a tapback never bolds a thread or fires a
+  notification. Remove and change work through a short send-delay undo window
+  (~5s): the badge shows at once but the email waits, so pulling it back or
+  switching emoji within the window never sends anything — and once it's out it's
+  locked (no "reaction removed" follow-up email). Leaving the conversation or
+  backgrounding flushes a pending reaction rather than dropping it. Zirbe-to-Zirbe
+  for the rich read; the header round-trips through SwiftMail's existing full-
+  header fetch, no extra round trip. Verified on device.
+
 ## Above the multi-account line
 
 In recommended sequence:
 
-- **Reactions (tapbacks).** Thumbs-up/down, heart, and the rest on a message
-  bubble — the fun, chat-native touch people expect. Not blocked by the privacy
-  posture: a reaction rides the user's own SMTP/IMAP like any mail, no backend.
-  The real problem is cross-client, and it's beatable the way voice messages are
-  and the way iMessage degrades a tapback to SMS. A reaction sends as a reply to
-  the target message carrying a Zirbe marker (an `X-Zirbe-Reaction` header plus
-  `In-Reply-To`); a receiving Zirbe renders it as a tapback badge and hides the
-  bubble, while other clients fall back to a short readable line ("Reacted 👍 to
-  '…'"). Design question to settle first: every reaction to a non-Zirbe recipient
-  is another email in their inbox, so decide whether to send rich reactions only
-  to correspondents seen using Zirbe (detectable from their headers), gate it
-  behind a setting, or always degrade to text. Medium-large: new send path,
-  routing reaction mail out of the bubble stream, per-message reaction storage,
-  and the picker plus badge UI.
 - **Contact type-ahead in recipient fields.** As the user types in To, Cc, or
   Bcc, suggest matching contacts (name or address) from the on-device Contacts
   store, tap to fill. Local and display-only, the same Contacts access already

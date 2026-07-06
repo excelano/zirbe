@@ -39,6 +39,11 @@ struct MessageRow: Codable, FetchableRecord, PersistableRecord {
     /// Stored as the `SendState` raw value; defaults to `sent` for every row that
     /// predates the column and every message that came from the server.
     var sendState: String
+    /// A reaction emoji when this message is a tapback rather than a chat message,
+    /// else nil. Persisted so a received or sent reaction shows as a badge without
+    /// re-reading the header, and so the unread and notification queries can filter
+    /// reactions out at the database.
+    var reaction: String?
 
     init(_ message: Message, accountID: String, mailboxName: String) {
         self.id = message.id
@@ -60,6 +65,7 @@ struct MessageRow: Codable, FetchableRecord, PersistableRecord {
         self.attachments = message.attachments
         self.threadID = nil
         self.sendState = message.sendState.rawValue
+        self.reaction = message.reaction
     }
 
     var message: Message {
@@ -77,7 +83,8 @@ struct MessageRow: Codable, FetchableRecord, PersistableRecord {
             bodyText: bodyText,
             hasHTML: hasHTML,
             attachments: attachments,
-            sendState: SendState(rawValue: sendState) ?? .sent
+            sendState: SendState(rawValue: sendState) ?? .sent,
+            reaction: reaction
         )
     }
 }
@@ -109,7 +116,9 @@ struct ThreadRow: Codable, FetchableRecord, PersistableRecord {
         self.isFlagged = thread.isFlagged
         self.messageCount = thread.messageCount
         self.participants = thread.participants
-        let latest = thread.messages.max {
+        // The preview is the newest chat message, never a reaction: a tapback
+        // shouldn't become the inbox row's glance.
+        let latest = thread.conversationMessages.max {
             ($0.date ?? .distantPast) < ($1.date ?? .distantPast)
         }
         let glance = latest?.bodyText.map { QuotedText.snippet($0) } ?? ""
@@ -465,7 +474,7 @@ public final class MailStore: @unchecked Sendable {
                 .filter(Column("accountID") == accountID)
                 .fetchAll(db)
             var counts: [String: Int] = [:]
-            for row in rows where !row.flags.contains(.seen) {
+            for row in rows where !row.flags.contains(.seen) && row.reaction == nil {
                 counts[row.mailboxName, default: 0] += 1
             }
             return counts
@@ -489,7 +498,8 @@ public final class MailStore: @unchecked Sendable {
                 .filter(Column("accountID") == accountID
                     && Column("mailboxName") == Self.inboxMailbox
                     && Column("uid") != nil
-                    && Column("uid") > watermark)
+                    && Column("uid") > watermark
+                    && Column("reaction") == nil)
                 .order(Column("uid"))
                 .fetchAll(db)
                 .filter { !$0.flags.contains(.seen) }
@@ -573,8 +583,10 @@ public final class MailStore: @unchecked Sendable {
     public func latestMessagesNeedingBodies(accountID: String) async throws -> [(id: String, uid: UInt32, mailbox: String)] {
         try await dbQueue.read { db in
             let rows = try MessageRow
-                .filter(Column("accountID") == accountID && Column("threadID") != nil)
+                .filter(Column("accountID") == accountID && Column("threadID") != nil && Column("reaction") == nil)
                 .fetchAll(db)
+            // Reactions are excluded above, so the "latest" here is the newest
+            // chat message: the one the inbox preview shows, never a tapback.
             return Dictionary(grouping: rows, by: { $0.threadID ?? "" })
                 .compactMap { _, group -> (id: String, uid: UInt32, mailbox: String)? in
                     guard let latest = group.max(by: {
@@ -752,6 +764,17 @@ public final class MailStore: @unchecked Sendable {
         migrator.registerMigration("v12-mailbox-delimiter") { db in
             try db.alter(table: "mailbox") { t in
                 t.add(column: "hierarchyDelimiter", .text)
+            }
+        }
+        // Reactions (tapbacks): a message can be a reaction to another, carrying an
+        // emoji rather than a chat body. Nullable, so every existing and every
+        // ordinary message reads as not-a-reaction; a reaction's emoji is stamped
+        // from its `X-Zirbe-Reaction` header when it syncs, or set on the local
+        // copy of one Zirbe sends. Reactions are filtered out of the bubble stream
+        // and out of the unread and new-mail counts.
+        migrator.registerMigration("v13-message-reaction") { db in
+            try db.alter(table: "message") { t in
+                t.add(column: "reaction", .text)
             }
         }
         return migrator

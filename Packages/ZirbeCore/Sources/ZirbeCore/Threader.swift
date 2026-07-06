@@ -222,7 +222,12 @@ public enum Threader {
         let messages = collected.chronological()
 
         let subject = SubjectNormalizer.normalize(messages.first { ($0.subject?.isEmpty == false) }?.subject)
-        let lastActivity = messages.compactMap(\.date).max()
+        // A reaction shouldn't bump the conversation in the inbox: sort by the
+        // newest chat message. Fall back to all messages so a thread that is
+        // somehow only reactions (its target arrived outside the synced window)
+        // still gets a date rather than sinking to the bottom.
+        let chatDates = messages.filter { !$0.isReaction }.compactMap(\.date)
+        let lastActivity = chatDates.max() ?? messages.compactMap(\.date).max()
 
         var seen = Set<String>()
         var participants: [Participant] = []

@@ -93,6 +93,11 @@ public struct MailEnvelope: Sendable, Hashable, Identifiable {
     /// `References`: the full ancestry chain of the thread.
     public var references: [String]
     public var flags: [String]
+    /// The `X-Zirbe-Reaction` header value when present: this message reacts to
+    /// the one named by `inReplyTo`, with this emoji. Nil for ordinary mail
+    /// (including reactions from clients that don't set the header). Read off the
+    /// full header block the fetch already pulls, so it needs no extra round trip.
+    public var reaction: String?
 
     /// Stable identity for SwiftUI lists: the UID when present, else the
     /// Message-ID, else the sequence number.
@@ -113,7 +118,8 @@ public struct MailEnvelope: Sendable, Hashable, Identifiable {
         messageID: String? = nil,
         inReplyTo: String? = nil,
         references: [String] = [],
-        flags: [String] = []
+        flags: [String] = [],
+        reaction: String? = nil
     ) {
         self.sequenceNumber = sequenceNumber
         self.uid = uid
@@ -126,5 +132,6 @@ public struct MailEnvelope: Sendable, Hashable, Identifiable {
         self.inReplyTo = inReplyTo
         self.references = references
         self.flags = flags
+        self.reaction = reaction
     }
 }

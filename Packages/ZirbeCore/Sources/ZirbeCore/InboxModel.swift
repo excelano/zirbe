@@ -335,6 +335,37 @@ public final class InboxModel {
         return try? await store.thread(id: threadID)
     }
 
+    /// Send a reaction (tapback) to a message in `thread`. The emoji rides out as
+    /// an `X-Zirbe-Reaction` header (a receiving Zirbe shows a badge; any other
+    /// client sees a short readable line), threaded onto the reacted-to message so
+    /// the badge lands on the right bubble. Unlike a reply there is no failed
+    /// bubble to retry: the SMTP send is the gate, and a failure surfaces in
+    /// `errorMessage` having changed nothing. On success the reaction is filed as a
+    /// local copy and the refreshed conversation is returned, the reaction now
+    /// among its messages (rendered as a badge, not a bubble). Returns nil when not
+    /// connected or the target carries no Message-ID to thread onto.
+    ///
+    /// The composer's undo window lives in the view: this is called only once the
+    /// user has let the reaction stand, so by the time it runs the send is final.
+    @discardableResult
+    public func sendReaction(_ emoji: String, to targetMessageID: String, in thread: Thread) async -> Thread? {
+        guard let password else {
+            errorMessage = "Connect an account first."
+            return nil
+        }
+        guard let target = thread.messages.first(where: { $0.messageID == targetMessageID }) else { return nil }
+        let draft = OutgoingDraft.reaction(to: target, in: thread, as: account, emoji: emoji)
+        do {
+            try await sync.transmit(draft, password: password)
+        } catch {
+            errorMessage = "Couldn't send your reaction. Try again."
+            return try? await store.thread(id: thread.id)
+        }
+        try? await sync.recordLocal(draft, state: .sent)
+        await sync.saveSentCopy(draft, password: password)
+        return try? await store.thread(id: thread.id)
+    }
+
     /// Start a new conversation. The subject is required (a status panel reads by
     /// subject, so an empty one is rejected), as are a body and at least one
     /// recipient. Returns whether it sent; on success the inbox summaries refresh

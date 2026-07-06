@@ -17,7 +17,10 @@ extension MailEnvelope {
             messageID: info.messageId?.description,
             inReplyTo: info.inReplyTo?.description,
             references: (info.references ?? []).map(\.description),
-            flags: info.flags.map { String(describing: $0) }
+            flags: info.flags.map { String(describing: $0) },
+            // Custom header keys arrive lowercased from the parser, so the
+            // reaction marker is read by the lowercased name.
+            reaction: info.additionalFields?[MailHeader.zirbeReaction.lowercased()]
         )
     }
 }

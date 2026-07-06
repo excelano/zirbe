@@ -35,6 +35,10 @@ extension Email {
         if !outgoing.references.isEmpty {
             headers["References"] = outgoing.references.joined(separator: " ")
         }
+        // Any Zirbe-specific headers (a reaction marker) ride alongside the
+        // threading ones. The threading fields win a key collision, but the two
+        // sets don't overlap.
+        headers.merge(outgoing.headers) { threading, _ in threading }
         if !headers.isEmpty {
             self.additionalHeaders = headers
         }

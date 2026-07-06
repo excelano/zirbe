@@ -44,6 +44,11 @@ public struct OutgoingDraft: Sendable, Hashable {
     /// section, so they render but can't be re-opened until the Sent re-sync
     /// restamps real ones.
     public var attachments: [OutgoingAttachment]
+    /// A reaction emoji when this draft is a tapback rather than a chat message,
+    /// else nil. It rides out as the `X-Zirbe-Reaction` header (see
+    /// `outgoingMessage`) and is stamped on the optimistic local copy so the
+    /// badge appears at once (see `localMessage`).
+    public var reaction: String?
 
     public init(
         from: Participant,
@@ -56,7 +61,8 @@ public struct OutgoingDraft: Sendable, Hashable {
         references: [String] = [],
         messageID: String,
         date: Date,
-        attachments: [OutgoingAttachment] = []
+        attachments: [OutgoingAttachment] = [],
+        reaction: String? = nil
     ) {
         self.from = from
         self.to = to
@@ -69,6 +75,7 @@ public struct OutgoingDraft: Sendable, Hashable {
         self.messageID = messageID
         self.date = date
         self.attachments = attachments
+        self.reaction = reaction
     }
 
     /// The wire form handed to the mail engine for SMTP send and Sent-append.
@@ -83,7 +90,8 @@ public struct OutgoingDraft: Sendable, Hashable {
             inReplyTo: inReplyTo,
             references: references,
             messageID: messageID,
-            attachments: attachments
+            attachments: attachments,
+            headers: reaction.map { [MailHeader.zirbeReaction: $0] } ?? [:]
         )
     }
 
@@ -107,7 +115,8 @@ public struct OutgoingDraft: Sendable, Hashable {
                 // No part section yet: the chip names the file but stays
                 // un-openable until the Sent re-sync supplies the real section.
                 MessageAttachment(filename: $0.filename, mimeType: $0.mimeType, partID: "")
-            }
+            },
+            reaction: reaction
         )
     }
 
@@ -166,6 +175,39 @@ extension OutgoingDraft {
             messageID: ReplyBuilder.generateMessageID(for: account),
             date: date,
             attachments: attachments
+        )
+    }
+
+    /// A reaction (tapback) to `target` within `thread`, sent as `account`. It
+    /// carries the emoji as the `X-Zirbe-Reaction` header so a receiving Zirbe
+    /// renders a badge, and a readable body ("Reacted 👍 to '…'") so any other
+    /// client shows a sensible line instead. Threading points `In-Reply-To` at
+    /// the reacted-to message specifically (not the thread's latest), so the
+    /// badge lands on the right bubble; recipients are the thread's reply-all set,
+    /// so in a group everyone sees the reaction. The caller guarantees `target`
+    /// carries a Message-ID, which is what the reaction threads onto.
+    public static func reaction(
+        to target: Message,
+        in thread: Thread,
+        as account: Account,
+        emoji: String,
+        sentAt date: Date = Date()
+    ) -> OutgoingDraft {
+        let (to, cc) = ReplyBuilder.replyAllRecipients(to: thread, as: account)
+        let targetID = target.messageID ?? ""
+        var references = target.references.filter { !$0.isEmpty }
+        if !targetID.isEmpty, references.last != targetID { references.append(targetID) }
+        return OutgoingDraft(
+            from: account.selfParticipant,
+            to: to,
+            cc: cc,
+            subject: ReplyBuilder.replySubject(for: thread),
+            body: ReactionText.body(emoji: emoji, target: target),
+            inReplyTo: targetID.isEmpty ? nil : targetID,
+            references: references,
+            messageID: ReplyBuilder.generateMessageID(for: account),
+            date: date,
+            reaction: emoji
         )
     }
 
