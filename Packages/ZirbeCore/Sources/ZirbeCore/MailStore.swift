@@ -316,6 +316,26 @@ public final class MailStore: @unchecked Sendable {
         }
     }
 
+    /// Pin or unpin a conversation. Purely local, keyed by thread id within the
+    /// account: a row present means pinned. The reads sort pinned threads to the
+    /// top. Survives a rethread (which the thread rows don't), since this table is
+    /// keyed by the stable thread id rather than rebuilt from messages.
+    public func setPinned(_ pinned: Bool, threadID: String, accountID: String) async throws {
+        try await dbQueue.write { db in
+            if pinned {
+                try db.execute(
+                    sql: "INSERT OR IGNORE INTO pinnedThread (accountID, threadID) VALUES (?, ?)",
+                    arguments: [accountID, threadID]
+                )
+            } else {
+                try db.execute(
+                    sql: "DELETE FROM pinnedThread WHERE accountID = ? AND threadID = ?",
+                    arguments: [accountID, threadID]
+                )
+            }
+        }
+    }
+
     /// Delete every message in a thread, locally. Used when a conversation is
     /// trashed: after the server move, the local copies go too. The caller
     /// rethreads after, which drops the now-empty thread from the inbox.
@@ -430,14 +450,12 @@ public final class MailStore: @unchecked Sendable {
 
     // MARK: Reads
 
-    /// The inbox: thread summaries for an account, most recent activity first.
+    /// The inbox: thread summaries for an account, pinned conversations first and
+    /// the rest by most recent activity.
     public func threadSummaries(accountID: String) async throws -> [ThreadSummary] {
         try await dbQueue.read { db in
-            try ThreadRow
-                .filter(Column("accountID") == accountID)
-                .order(Column("lastActivity").desc)
-                .fetchAll(db)
-                .map(\.summary)
+            let rows = try ThreadRow.filter(Column("accountID") == accountID).fetchAll(db)
+            return try Self.ordered(rows, pinnedIn: db, accountID: accountID)
         }
     }
 
@@ -454,12 +472,34 @@ public final class MailStore: @unchecked Sendable {
                 WHERE accountID = ? AND mailboxName = ? AND threadID IS NOT NULL
                 """, arguments: [accountID, mailboxName])
             guard !threadIDs.isEmpty else { return [] }
-            return try ThreadRow
+            let rows = try ThreadRow
                 .filter(Column("accountID") == accountID && threadIDs.contains(Column("id")))
-                .order(Column("lastActivity").desc)
                 .fetchAll(db)
-                .map(\.summary)
+            return try Self.ordered(rows, pinnedIn: db, accountID: accountID)
         }
+    }
+
+    /// Turn thread rows into summaries, marking the pinned ones from the
+    /// `pinnedThread` table and sorting pinned conversations to the top, each group
+    /// by most recent activity. Shared by the inbox and per-folder reads so both
+    /// order the same way. Search results are ordered separately (by recency), so
+    /// they don't route through here.
+    private static func ordered(_ rows: [ThreadRow], pinnedIn db: Database, accountID: String) throws -> [ThreadSummary] {
+        let pinned = try String.fetchSet(
+            db,
+            sql: "SELECT threadID FROM pinnedThread WHERE accountID = ?",
+            arguments: [accountID]
+        )
+        return rows
+            .map { row -> ThreadSummary in
+                var summary = row.summary
+                summary.isPinned = pinned.contains(row.id)
+                return summary
+            }
+            .sorted { lhs, rhs in
+                if lhs.isPinned != rhs.isPinned { return lhs.isPinned }
+                return (lhs.lastActivity ?? .distantPast) > (rhs.lastActivity ?? .distantPast)
+            }
     }
 
     /// The unread message count of each folder, keyed by mailbox name, for the
@@ -775,6 +815,18 @@ public final class MailStore: @unchecked Sendable {
         migrator.registerMigration("v13-message-reaction") { db in
             try db.alter(table: "message") { t in
                 t.add(column: "reaction", .text)
+            }
+        }
+        // Pinned conversations: local-only app state, so it can't ride on the
+        // thread row (which `rethread` deletes and rebuilds from messages every
+        // sync). A row here means the thread is pinned; the reads join it in and
+        // sort pinned conversations to the top. Keyed by thread id within an
+        // account. Wiped on sign-out, since `eraseAll` re-runs this migrator.
+        migrator.registerMigration("v14-pinned-thread") { db in
+            try db.create(table: "pinnedThread") { t in
+                t.column("accountID", .text).notNull()
+                t.column("threadID", .text).notNull()
+                t.primaryKey(["accountID", "threadID"])
             }
         }
         return migrator

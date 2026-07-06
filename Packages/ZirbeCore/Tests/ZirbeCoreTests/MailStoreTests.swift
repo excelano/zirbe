@@ -24,6 +24,41 @@ final class MailStoreTests: XCTestCase {
         )
     }
 
+    func testPinSortsToTopSurvivesRethreadAndUnpins() async throws {
+        let store = try MailStore()
+        let acct = account()
+        try await store.upsert(acct)
+
+        let older = msg(id: "<a@x>", subject: "Lunch", from: "p@x.com", minutes: 1)
+        let newer = msg(id: "<z@x>", subject: "Invoice", from: "r@x.com", minutes: 5)
+        try await store.save([older, newer], accountID: acct.id, mailboxName: "INBOX")
+        try await store.rethread(accountID: acct.id)
+
+        // By recency the newer Invoice leads.
+        var summaries = try await store.threadSummaries(accountID: acct.id)
+        XCTAssertEqual(summaries.map(\.subject), ["Invoice", "Lunch"])
+
+        // Pin the older Lunch: it jumps to the top and reads as pinned.
+        let lunchID = try XCTUnwrap(summaries.first { $0.subject == "Lunch" }?.id)
+        try await store.setPinned(true, threadID: lunchID, accountID: acct.id)
+        summaries = try await store.threadSummaries(accountID: acct.id)
+        XCTAssertEqual(summaries.map(\.subject), ["Lunch", "Invoice"])
+        XCTAssertTrue(summaries.first { $0.subject == "Lunch" }?.isPinned ?? false)
+        XCTAssertFalse(summaries.first { $0.subject == "Invoice" }?.isPinned ?? true)
+
+        // The pin is keyed by thread id, not stored on the rebuilt thread row, so
+        // it survives a rethread.
+        try await store.rethread(accountID: acct.id)
+        summaries = try await store.threadSummaries(accountID: acct.id)
+        XCTAssertEqual(summaries.map(\.subject), ["Lunch", "Invoice"])
+
+        // Unpin restores recency order.
+        try await store.setPinned(false, threadID: lunchID, accountID: acct.id)
+        summaries = try await store.threadSummaries(accountID: acct.id)
+        XCTAssertEqual(summaries.map(\.subject), ["Invoice", "Lunch"])
+        XCTAssertFalse(summaries.contains { $0.isPinned })
+    }
+
     func testSaveRethreadAndQuery() async throws {
         let store = try MailStore()
         let acct = account()

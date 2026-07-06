@@ -465,6 +465,14 @@ private struct RowActions: ViewModifier {
                 }
                 .contextMenu {
                     Button {
+                        Task { await model.setPinned(threadID: summary.id, pinned: !summary.isPinned) }
+                    } label: {
+                        Label(
+                            summary.isPinned ? "Unpin" : "Pin",
+                            systemImage: summary.isPinned ? "pin.slash" : "pin"
+                        )
+                    }
+                    Button {
                         Task { await model.archive(summary) }
                     } label: {
                         Label("Archive", systemImage: "archivebox")
@@ -490,6 +498,15 @@ private struct RowActions: ViewModifier {
                         )
                     }
                     .tint(.blue)
+                    Button {
+                        Task { await model.setPinned(threadID: summary.id, pinned: !summary.isPinned) }
+                    } label: {
+                        Label(
+                            summary.isPinned ? "Unpin" : "Pin",
+                            systemImage: summary.isPinned ? "pin.slash" : "pin"
+                        )
+                    }
+                    .tint(.yellow)
                     Button {
                         Task { await model.markFlagged(threadID: summary.id, flagged: !summary.isFlagged) }
                     } label: {
@@ -528,13 +545,19 @@ private struct ThreadRow: View {
                 fallback: summary.participants.first ?? Participant(address: selfAddress)
             )
             VStack(alignment: .leading, spacing: 3) {
-                // The subject owns the first line; a flag trails it so subjects
-                // still share a left edge whether flagged or not.
+                // The subject owns the first line; a pin and flag trail it so
+                // subjects still share a left edge whatever their markers.
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
                     Text(title)
                         .font(.headline)
                         .fontWeight(summary.isUnread ? .bold : .regular)
                         .lineLimit(1)
+                    if summary.isPinned {
+                        Image(systemName: "pin.fill")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .accessibilityLabel("Pinned")
+                    }
                     if summary.isFlagged {
                         Image(systemName: "flag.fill")
                             .font(.caption)

@@ -143,12 +143,18 @@ and the integrated inbox wait below that line.
   is simultaneous with the scroll so it never blocks it, engaging only on a
   leftward, horizontal-dominant drag. Verified on device.
 
+- **Pin a conversation.** Pin a thread to keep it at the top of the inbox, via a
+  leading swipe action, a context-menu item, and a small pin marker on the row.
+  Pinning is local-only app state (no server flag), so it needs no connection; it
+  lives in its own `pinnedThread` table keyed by thread id rather than on the
+  thread row, so it survives the rethread that rebuilds thread rows every sync.
+  The inbox and per-folder reads sort pinned conversations to the top, then by
+  recency; search results stay recency-ordered. Verified on device.
+
 ## Above the multi-account line
 
 In recommended sequence:
 
-- **Pin a conversation.** Pin a thread to the top of the inbox, with a swipe
-  action and context item to toggle it. A cheap quality-of-life lift.
 - **Peek per-bubble timestamps.** Drag the whole message stack to the left to
   reveal each bubble's send time along the trailing edge, iMessage-style, sliding
   back when released. A read-only glance, distinct from the per-bubble swipe (that

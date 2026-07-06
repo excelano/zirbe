@@ -578,6 +578,16 @@ public final class InboxModel {
         await markFlagged(threadIDs: [threadID], flagged: flagged)
     }
 
+    /// Pin or unpin a conversation, keeping it at the top of the inbox. Local-only
+    /// app state, so unlike flagging it needs no connection and touches no server;
+    /// the list simply re-sorts on reload. Errors surface in `errorMessage`.
+    public func setPinned(threadID: String, pinned: Bool) async {
+        await attempt {
+            try await self.store.setPinned(pinned, threadID: threadID, accountID: self.account.id)
+            try await self.reloadList()
+        }
+    }
+
     /// Fetch one message's HTML for the Web View, with its inline images, on
     /// demand when the user taps it. Returns nil if not connected, the message is
     /// unknown, or it has no HTML, with any error in `errorMessage`. The body is
