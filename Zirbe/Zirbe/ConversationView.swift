@@ -32,6 +32,18 @@ struct ConversationView: View {
     /// an instant read, refined once the thread loads, and toggled optimistically.
     @State private var isFlagged = false
     @State private var isLoading = true
+    /// Whether the find-in-conversation panel is up, and its live query and
+    /// results. The panel overlays the (still-mounted) chat, so closing it and
+    /// scrolling to a hit is instant.
+    @State private var isSearching = false
+    @State private var searchText = ""
+    @State private var searchHits: [ConversationSearch.Hit] = []
+    /// A message to scroll to (a tapped search result); consumed and cleared by
+    /// the chat's scroll reader.
+    @State private var scrollTarget: String?
+    /// A message to briefly emphasize after a jump, so the eye finds where it
+    /// landed; cleared on its own after a moment.
+    @State private var flashedMessage: String?
     @State private var replyText = ""
     @State private var replyAttachments: [StagedAttachment] = []
     @State private var isSending = false
@@ -99,23 +111,42 @@ struct ConversationView: View {
                     dismiss()
                     Task { await model.junk(summary) }
                 },
-                onMove: { isMoving = true }
+                onMove: { isMoving = true },
+                // Find works over the chat of bubbles, so leave any open Web View
+                // first; the tapped result lands on a bubble.
+                onFind: { activeWeb = nil; isSearching = true }
             )
             Divider()
             if let thread {
-                RecipientHeader(
-                    to: activeTo(in: thread),
-                    cc: activeCc(in: thread),
-                    isNoteToSelf: isNoteToSelf(in: thread)
-                ) { showRecipients = true }
-                Divider()
-                if let active = activeWeb {
-                    webTray(active)
-                } else {
-                    conversation(thread)
+                if !isSearching {
+                    RecipientHeader(
+                        to: activeTo(in: thread),
+                        cc: activeCc(in: thread),
+                        isNoteToSelf: isNoteToSelf(in: thread)
+                    ) { showRecipients = true }
+                    Divider()
                 }
-                Divider()
-                ReplyBar(text: $replyText, attachments: $replyAttachments, isSending: isSending, onSend: { send(into: thread) })
+                // The chat stays mounted under the search panel so closing Find
+                // and scrolling to a tapped result is instant, with no rebuild.
+                ZStack {
+                    if let active = activeWeb {
+                        webTray(active)
+                    } else {
+                        conversation(thread)
+                    }
+                    if isSearching {
+                        ConversationSearchPanel(
+                            text: $searchText,
+                            hits: searchHits,
+                            onCancel: { exitSearch() },
+                            onJump: { jump(to: $0) }
+                        )
+                    }
+                }
+                if !isSearching {
+                    Divider()
+                    ReplyBar(text: $replyText, attachments: $replyAttachments, isSending: isSending, onSend: { send(into: thread) })
+                }
             } else if isLoading {
                 ProgressView("Loading…").frame(maxHeight: .infinity)
             } else {
@@ -169,6 +200,37 @@ struct ConversationView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { flushPendingReactions() }
         }
+        // Recompute the find results as the query changes, debounced so a burst of
+        // keystrokes issues one pass. Mirrors the inbox search.
+        .task(id: searchText) { await runConversationSearch() }
+    }
+
+    /// Filter the loaded thread to the messages matching the current query, after
+    /// a short debounce. A blank query clears the results.
+    private func runConversationSearch() async {
+        guard let thread,
+              !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            searchHits = []
+            return
+        }
+        try? await Task.sleep(for: .milliseconds(150))
+        if Task.isCancelled { return }
+        searchHits = ConversationSearch.hits(for: searchText, in: thread.conversationMessages)
+    }
+
+    /// Close the find panel and jump the chat to the tapped message, flashing it
+    /// briefly so the eye finds where it landed.
+    private func jump(to messageID: String) {
+        exitSearch()
+        flashedMessage = messageID
+        scrollTarget = messageID
+    }
+
+    /// Leave find: hide the panel and drop the query and its results.
+    private func exitSearch() {
+        isSearching = false
+        searchText = ""
+        searchHits = []
     }
 
     private var subjectTitle: String {
@@ -204,41 +266,59 @@ struct ConversationView: View {
                 .map { ($0.messageID, $0) },
             uniquingKeysWith: { first, _ in first }
         )
-        return ScrollView {
-            LazyVStack(spacing: 2) {
-                ForEach(Array(messages.enumerated()), id: \.element.id) { index, message in
-                    if let dayDate = daySeparatorDate(at: index, in: messages) {
-                        DaySeparatorView(date: dayDate)
-                            .padding(.vertical, 4)
+        return ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 2) {
+                    ForEach(Array(messages.enumerated()), id: \.element.id) { index, message in
+                        if let dayDate = daySeparatorDate(at: index, in: messages) {
+                            DaySeparatorView(date: dayDate)
+                                .padding(.vertical, 4)
+                        }
+                        if let delta = deltas[message.id] {
+                            ParticipantChangeLine(delta: delta)
+                                .padding(.vertical, 8)
+                        }
+                        MessageBubble(
+                            model: model,
+                            message: message,
+                            isOwn: isOwn(message),
+                            hasTail: isLastInRun(at: index, in: messages),
+                            showSender: !isOwn(message) && isFirstOfRun(at: index, in: messages),
+                            reactions: thread.reactions(forMessageID: message.messageID),
+                            pendingEmoji: pendingReactions[message.messageID ?? ""]?.emoji,
+                            lockedEmoji: myCommittedEmoji(on: message.messageID, in: thread),
+                            selfAddress: model.account.emailAddress,
+                            isFlashed: flashedMessage == message.id,
+                            onReact: { emoji in react(emoji, to: message, in: thread) },
+                            onUndoReaction: { undoReaction(on: message) },
+                            onShowWeb: { body, showImages in
+                                activeWeb = ActiveWeb(messageID: message.id, body: body, showImages: showImages)
+                            },
+                            onForward: { forwardingMessage = message },
+                            onRetry: { await retry(message, into: thread) }
+                        )
+                        .padding(.top, index > 0 && isFirstOfRun(at: index, in: messages) ? 8 : 0)
                     }
-                    if let delta = deltas[message.id] {
-                        ParticipantChangeLine(delta: delta)
-                            .padding(.vertical, 8)
+                }
+                .padding()
+                // Room for a reaction badge overhanging the newest bubble's top edge.
+                .padding(.top, 6)
+            }
+            // A tapped search result scrolls its bubble to center; the flash it set
+            // fades on its own shortly after.
+            .onChange(of: scrollTarget) { _, target in
+                guard let target else { return }
+                withAnimation(.easeInOut(duration: 0.25)) {
+                    proxy.scrollTo(target, anchor: .center)
+                }
+                scrollTarget = nil
+                Task {
+                    try? await Task.sleep(for: .seconds(1.4))
+                    if flashedMessage == target {
+                        withAnimation { flashedMessage = nil }
                     }
-                    MessageBubble(
-                        model: model,
-                        message: message,
-                        isOwn: isOwn(message),
-                        hasTail: isLastInRun(at: index, in: messages),
-                        showSender: !isOwn(message) && isFirstOfRun(at: index, in: messages),
-                        reactions: thread.reactions(forMessageID: message.messageID),
-                        pendingEmoji: pendingReactions[message.messageID ?? ""]?.emoji,
-                        lockedEmoji: myCommittedEmoji(on: message.messageID, in: thread),
-                        selfAddress: model.account.emailAddress,
-                        onReact: { emoji in react(emoji, to: message, in: thread) },
-                        onUndoReaction: { undoReaction(on: message) },
-                        onShowWeb: { body, showImages in
-                            activeWeb = ActiveWeb(messageID: message.id, body: body, showImages: showImages)
-                        },
-                        onForward: { forwardingMessage = message },
-                        onRetry: { await retry(message, into: thread) }
-                    )
-                    .padding(.top, index > 0 && isFirstOfRun(at: index, in: messages) ? 8 : 0)
                 }
             }
-            .padding()
-            // Room for a reaction badge overhanging the newest bubble's top edge.
-            .padding(.top, 6)
         }
     }
 
@@ -433,6 +513,7 @@ private struct ConversationTopBar: View {
     let onArchive: () -> Void
     let onJunk: () -> Void
     let onMove: () -> Void
+    let onFind: () -> Void
 
     @State private var isTruncated = false
     @State private var showingFull = false
@@ -481,6 +562,9 @@ private struct ConversationTopBar: View {
             }
 
             Menu {
+                Button(action: onFind) {
+                    Label("Find in Conversation", systemImage: "magnifyingglass")
+                }
                 Button(action: onToggleFlag) {
                     Label(isFlagged ? "Unflag" : "Flag", systemImage: isFlagged ? "flag.slash" : "flag")
                 }
@@ -739,6 +823,9 @@ private struct MessageBubble: View {
     /// The account's own address, to tell the user's reactions from others' in the
     /// cluster.
     let selfAddress: String
+    /// True while this bubble is the just-jumped-to search result, drawing a brief
+    /// accent outline so the eye finds where the jump landed.
+    let isFlashed: Bool
     /// Add, change, or remove the user's reaction to this message.
     let onReact: (String) -> Void
     /// Pull back the pending reaction before its window passes.
@@ -924,6 +1011,12 @@ private struct MessageBubble: View {
             isOwn ? Color.accentColor : Color.zirbeReceived,
             in: BubbleShape(isOwn: isOwn, hasTail: hasTail)
         )
+        // The search-jump flash: a brief accent outline on the landed-on bubble.
+        .overlay {
+            BubbleShape(isOwn: isOwn, hasTail: hasTail)
+                .stroke(Color.accentColor, lineWidth: 2)
+                .opacity(isFlashed ? 1 : 0)
+        }
         // The tail droops below the bottom edge. When a timestamp follows it
         // reserves the row's bottom space (and clears the tail horizontally), so
         // explicit clearance is only needed for a tailed bubble with no date.

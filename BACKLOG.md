@@ -113,17 +113,29 @@ and the integrated inbox wait below that line.
   for the rich read; the header round-trips through SwiftMail's existing full-
   header fetch, no extra round trip. Verified on device.
 
+- **Contact type-ahead in recipient fields.** As the user types in To, Cc, or
+  Bcc, matching contacts (by name or address) from the on-device Contacts store
+  are suggested to tap, filling the field as a `Name <addr>` token. The address
+  book is loaded once into memory and filtered per keystroke, ranked prefix
+  first; it reuses the same local, display-only Contacts access already used for
+  avatars, so nothing leaves the device and there's no backend. A denied
+  permission simply yields no suggestions, and the field still takes a typed
+  address. Verified on device.
+
+- **In-conversation search.** A "Find in Conversation" action in the thread's ⋯
+  menu opens a search panel over the open conversation; typing filters it to the
+  messages that contain the query, each shown as a result row with the sender and
+  a one-line snippet with the match tinted. Tapping a result closes the panel and
+  scrolls that bubble to center with a brief accent-outline flash. Matching is
+  case- and diacritic-insensitive over the visible body text (quoted history and
+  HTML aren't searched, so what you find is what the bubble shows), computed in
+  memory over the already-loaded thread, so there's no network and the same
+  no-backend posture as the inbox search. Verified on device.
+
 ## Above the multi-account line
 
 In recommended sequence:
 
-- **Contact type-ahead in recipient fields.** As the user types in To, Cc, or
-  Bcc, suggest matching contacts (name or address) from the on-device Contacts
-  store, tap to fill. Local and display-only, the same Contacts access already
-  used for avatars, so no privacy cost and no backend. Pairs with the new
-  collapsed Cc/Bcc composer.
-- **In-conversation search.** Find within an open thread, complementing the
-  global search already shipped.
 - **Pin a conversation and swipe-to-reply.** Pin a thread to the top of the
   inbox, and reply with a swipe on a bubble. Cheap quality-of-life lifts.
 - **Junk and block-sender.** A move-to-Junk action and a way to block a sender.
