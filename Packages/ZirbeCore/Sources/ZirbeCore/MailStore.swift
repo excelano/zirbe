@@ -263,12 +263,21 @@ public final class MailStore: @unchecked Sendable {
     @discardableResult
     public func pruneMessages(accountID: String, mailboxName: String, keepingUIDs: Set<Int64>) async throws -> Int {
         try await dbQueue.write { db in
-            let stale = try MessageRow
-                .filter(Column("accountID") == accountID && Column("mailboxName") == mailboxName && Column("uid") != nil)
-                .fetchAll(db)
-                .filter { row in row.uid.map { !keepingUIDs.contains($0) } ?? false }
-            for row in stale { try row.delete(db) }
-            return stale.count
+            // Read only id + uid to decide what's stale, so a prune (every sync)
+            // never decodes bodyText or the JSON blobs of rows it's just testing.
+            // The keep-set can be large, so the membership test stays in Swift;
+            // only the small stale set is bound into the delete.
+            let candidates = try Row.fetchAll(
+                db,
+                sql: "SELECT id, uid FROM message WHERE accountID = ? AND mailboxName = ? AND uid IS NOT NULL",
+                arguments: [accountID, mailboxName]
+            )
+            let staleIDs = candidates.compactMap { row -> String? in
+                keepingUIDs.contains(row["uid"] as Int64) ? nil : row["id"]
+            }
+            guard !staleIDs.isEmpty else { return 0 }
+            try MessageRow.filter(staleIDs.contains(Column("id"))).deleteAll(db)
+            return staleIDs.count
         }
     }
 
@@ -405,19 +414,24 @@ public final class MailStore: @unchecked Sendable {
     /// omitted; it has nothing to act on server-side.
     public func blockedInboxRefs(accountID: String) async throws -> [(id: String, uid: UInt32)] {
         try await dbQueue.read { db in
-            let blocked = try String.fetchSet(
+            let blocked = try String.fetchAll(
                 db,
                 sql: "SELECT address FROM blockedSender WHERE accountID = ?",
                 arguments: [accountID]
             )
             guard !blocked.isEmpty else { return [] }
-            return try MessageRow
-                .filter(Column("accountID") == accountID
-                    && Column("mailboxName") == Self.inboxMailbox
-                    && Column("uid") != nil)
-                .fetchAll(db)
-                .filter { row in row.fromAddress.map { blocked.contains($0.lowercased()) } ?? false }
-                .compactMap { row in row.uid.map { (id: row.id, uid: UInt32(truncatingIfNeeded: $0)) } }
+            // Filter to blocked senders in SQL and read only id + uid, so the INBOX
+            // isn't fully decoded every sync just to find a handful of blocked
+            // rows. Addresses are stored normalized, so a lowercased column match
+            // is exact; the blocklist is small, so the IN list is well within
+            // SQLite's parameter limit.
+            let placeholders = databaseQuestionMarks(count: blocked.count)
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT id, uid FROM message
+                WHERE accountID = ? AND mailboxName = ? AND uid IS NOT NULL
+                  AND LOWER(fromAddress) IN (\(placeholders))
+                """, arguments: StatementArguments([accountID, Self.inboxMailbox] + blocked))
+            return rows.map { (id: $0["id"], uid: UInt32(truncatingIfNeeded: $0["uid"] as Int64)) }
         }
     }
 
@@ -739,18 +753,23 @@ public final class MailStore: @unchecked Sendable {
     /// skipping threads whose newest message is already cached.
     public func latestMessagesNeedingBodies(accountID: String) async throws -> [(id: String, uid: UInt32, mailbox: String)] {
         try await dbQueue.read { db in
-            let rows = try MessageRow
-                .filter(Column("accountID") == accountID && Column("threadID") != nil && Column("reaction") == nil)
-                .fetchAll(db)
-            // Reactions are excluded above, so the "latest" here is the newest
-            // chat message: the one the inbox preview shows, never a tapback.
-            return Dictionary(grouping: rows, by: { $0.threadID ?? "" })
+            // Only the columns needed to pick each thread's newest chat message and
+            // see whether its body is cached, so this per-sync scan never decodes
+            // the bodyText or JSON blobs of every message. `bodyText IS NULL` comes
+            // back as the needs-body flag. Reactions are excluded so the "latest"
+            // is the newest chat message (the inbox preview), never a tapback.
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT id, uid, mailboxName, date, threadID, (bodyText IS NULL) AS needsBody
+                FROM message
+                WHERE accountID = ? AND threadID IS NOT NULL AND reaction IS NULL
+                """, arguments: [accountID])
+            return Dictionary(grouping: rows, by: { $0["threadID"] as String })
                 .compactMap { _, group -> (id: String, uid: UInt32, mailbox: String)? in
                     guard let latest = group.max(by: {
-                        ($0.date ?? .distantPast) < ($1.date ?? .distantPast)
+                        (($0["date"] as Date?) ?? .distantPast) < (($1["date"] as Date?) ?? .distantPast)
                     }) else { return nil }
-                    guard latest.bodyText == nil, let uid = latest.uid else { return nil }
-                    return (id: latest.id, uid: UInt32(truncatingIfNeeded: uid), mailbox: latest.mailboxName)
+                    guard (latest["needsBody"] as Int) != 0, let uid = latest["uid"] as Int64? else { return nil }
+                    return (id: latest["id"], uid: UInt32(truncatingIfNeeded: uid), mailbox: latest["mailboxName"])
                 }
         }
     }
