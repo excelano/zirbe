@@ -29,11 +29,16 @@ extension Email {
         }
 
         var headers: [String: String] = [:]
+        // In-Reply-To and References echo Message-IDs that originate in received
+        // mail, so a crafted value could carry a CR/LF and inject extra headers
+        // into this outgoing reply — SwiftMail writes additional-header values
+        // verbatim. Strip control characters at the point they're written, so the
+        // injection surface is closed regardless of how the parse side tokenizes.
         if let inReplyTo = outgoing.inReplyTo, !inReplyTo.isEmpty {
-            headers["In-Reply-To"] = inReplyTo
+            headers["In-Reply-To"] = sanitizedHeaderValue(inReplyTo)
         }
         if !outgoing.references.isEmpty {
-            headers["References"] = outgoing.references.joined(separator: " ")
+            headers["References"] = sanitizedHeaderValue(outgoing.references.joined(separator: " "))
         }
         // Any Zirbe-specific headers (a reaction marker) ride alongside the
         // threading ones. The threading fields win a key collision, but the two
@@ -43,4 +48,15 @@ extension Email {
             self.additionalHeaders = headers
         }
     }
+}
+
+/// Remove control characters (CR and LF included) from a header value, collapsing
+/// each run to a single space and trimming the ends. Used for the threading
+/// headers, whose values come from received mail, to prevent header injection.
+private func sanitizedHeaderValue(_ value: String) -> String {
+    value
+        .components(separatedBy: .controlCharacters)
+        .filter { !$0.isEmpty }
+        .joined(separator: " ")
+        .trimmingCharacters(in: .whitespaces)
 }
