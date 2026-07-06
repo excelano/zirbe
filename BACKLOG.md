@@ -221,32 +221,25 @@ Below the line: more than one account, and the auth tracks that widen reach.
   attachment isn't hidden. Today the trailing segment is usually empty, so this is
   a correctness edge, not a common loss.
 
-### Deferred from the 2026-07-06 code review (batch 2)
+### From the 2026-07-06 code review
 
 A three-lens review (correctness, performance, security) ran after block-sender
-shipped. The safe, high-value fixes landed the same day (bulk-action rethreading,
-the narrowed unread-count read plus a mailbox index, TLS required on the
-transports, header-injection sanitizing, a type-ahead race). These three want
-more care or an on-device feel-check and were deferred:
+shipped. Batch 1 landed the safe, high-value fixes the same day: bulk-action
+rethreading, the narrowed unread-count read plus a mailbox index, TLS required on
+the transports, header-injection sanitizing, and a type-ahead race. Batch 2
+followed with the three that wanted more care: the pin now follows a thread
+across a re-root (it was keyed by the thread id, which changes when an earlier
+ancestor re-roots the tree); the conversation view caches its derived render
+inputs off the thread so the timestamp peek stays smooth on long threads; and the
+per-sync store reads (`pruneMessages`, `blockedInboxRefs`,
+`latestMessagesNeedingBodies`) were narrowed to the columns they use, with
+`blockedInboxRefs` also filtering in SQL.
 
-- **Pin survives a thread re-root (correctness).** A pin is keyed by thread id,
-  but a thread's id changes when a late-arriving earlier ancestor re-roots the
-  tree in `rethread`, orphaning the `pinnedThread` row so the conversation
-  silently drops out of the pinned group. Flag/read/reaction state ride on message
-  rows and are immune. Re-key pins to a rethread-stable id, or reconcile
-  `pinnedThread` against surviving thread ids inside `rethread`. Real but
-  uncommon trigger.
-- **Conversation render cost (performance).** `ConversationView.conversation()`
-  rebuilds the whole reactions dictionary twice per row (O(N²)) and re-runs it on
-  every timestamp-peek drag frame, so a long thread drops frames during the peek.
-  Compute `reactionsByTarget` once, hoist `conversationMessages`/`deltas` out of
-  `body`, and decouple `peekOffset` so the parent body doesn't re-evaluate per
-  drag delta. Needs a device feel-check.
-- **Sync-path SQL (performance).** `pruneMessages` and `blockedInboxRefs` fetch
-  every row and filter in Swift where a single SQL `DELETE`/`WHERE … IN` would do,
-  and `reconcile` runs two full rethreads per sync (the second only to recompute
-  snippets). Push the filters into SQL and collapse the second rethread to a
-  snippet update. Once-per-sync, so lower urgency than the mutation hot path.
+One review item was intentionally left: `reconcile` still runs a second full
+rethread after backfilling bodies, purely to recompute inbox snippets. It's
+conditional on new mail arriving, and collapsing it to a targeted snippet update
+would duplicate the snippet logic that lives in `ThreadRow`, so it waits until
+that cost shows up in practice.
 
 Parked as polish: FTS5 for local search (the 6-column leading-wildcard LIKE),
 caching decoded avatar images, a selection-lookup dictionary, and redacting the
