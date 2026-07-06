@@ -40,13 +40,6 @@ struct ComposeView: View {
     @State private var pickerTarget: Field = .to
     /// Whether the Cc and Bcc rows are disclosed under To.
     @State private var showCcBcc = false
-    /// Address-book matches for the fragment being typed in the focused recipient
-    /// field, shown beneath it to tap; empty when nothing matches or a non-
-    /// recipient field is focused.
-    @State private var suggestions: [ContactSuggestion] = []
-    /// Bumped on each search so a slower earlier lookup can't overwrite a newer
-    /// one's results.
-    @State private var searchGeneration = 0
     @FocusState private var focus: Field?
 
     private enum Field { case to, cc, bcc, subject }
@@ -138,15 +131,6 @@ struct ComposeView: View {
                 Task { await saveDraft() }
             }
         }
-        .onChange(of: focus) { _, newFocus in
-            // Suggestions belong to the focused recipient field: refresh them for a
-            // field that already holds a partial address, and clear them when focus
-            // moves to the subject or away.
-            switch newFocus {
-            case .to, .cc, .bcc: updateSuggestions(for: newFocus!, text: fieldText(newFocus!))
-            default: suggestions = []
-            }
-        }
         .onAppear { focus = .to }
     }
 
@@ -156,49 +140,6 @@ struct ComposeView: View {
             ProgressView("Saving Draft…")
                 .padding(20)
                 .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
-        }
-    }
-
-    /// Search the address book for the fragment being typed in `field` and show
-    /// the matches beneath it. A generation counter drops a stale earlier result
-    /// so the newest keystroke's matches always win. Clears the list when the
-    /// fragment is empty or a non-recipient field is focused.
-    private func updateSuggestions(for field: Field, text: String) {
-        guard focus == field else { return }
-        let fragment = RecipientDraftText.currentFragment(text)
-        guard !fragment.isEmpty else { suggestions = []; return }
-        searchGeneration += 1
-        let generation = searchGeneration
-        Task {
-            let matches = await ContactSearchService.shared.search(fragment)
-            if generation == searchGeneration, focus == field {
-                suggestions = matches
-            }
-        }
-    }
-
-    /// Fill a chosen contact into its field, replacing the in-progress fragment,
-    /// and clear the suggestions.
-    private func choose(_ suggestion: ContactSuggestion, in field: Field) {
-        setFieldText(field, RecipientDraftText.completing(fieldText(field), with: suggestion.token))
-        suggestions = []
-    }
-
-    private func fieldText(_ field: Field) -> String {
-        switch field {
-        case .to: return toText
-        case .cc: return ccText
-        case .bcc: return bccText
-        case .subject: return ""
-        }
-    }
-
-    private func setFieldText(_ field: Field, _ value: String) {
-        switch field {
-        case .to: toText = value
-        case .cc: ccText = value
-        case .bcc: bccText = value
-        case .subject: break
         }
     }
 
@@ -274,9 +215,6 @@ struct ComposeView: View {
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .keyboardType(.emailAddress)
-                    .onChange(of: text.wrappedValue) { _, newValue in
-                        updateSuggestions(for: field, text: newValue)
-                    }
                 Button(action: pick) {
                     Image(systemName: "plus")
                         .font(.system(size: 15, weight: .semibold))
@@ -290,44 +228,8 @@ struct ComposeView: View {
             .padding(.horizontal)
             .padding(.vertical, 11)
 
-            if focus == field, !suggestions.isEmpty {
-                suggestionList(for: field)
-            }
+            RecipientSuggestions(text: text, isFocused: focus == field)
         }
-    }
-
-    /// The address-book matches beneath a focused recipient field: tap one to fill
-    /// it in. Each shows the contact's avatar, name, and the matched email.
-    private func suggestionList(for field: Field) -> some View {
-        VStack(spacing: 0) {
-            ForEach(suggestions) { suggestion in
-                Button {
-                    choose(suggestion, in: field)
-                } label: {
-                    HStack(spacing: 10) {
-                        SenderAvatar(participant: suggestion.participant, size: 32)
-                        VStack(alignment: .leading, spacing: 1) {
-                            if !suggestion.name.isEmpty {
-                                Text(suggestion.name).foregroundStyle(.primary)
-                            }
-                            Text(suggestion.email)
-                                .font(suggestion.name.isEmpty ? .body : .subheadline)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer(minLength: 0)
-                    }
-                    .padding(.vertical, 6)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-
-                if suggestion.id != suggestions.last?.id {
-                    Divider().padding(.leading, 52)
-                }
-            }
-        }
-        .padding(.horizontal)
-        .padding(.bottom, 6)
     }
 
     private var divider: some View {

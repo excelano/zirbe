@@ -165,30 +165,37 @@ struct ForwardView: View {
         email: Bool = false,
         pick: (() -> Void)? = nil
     ) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 6) {
-            Text(label)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-                .fixedSize()
-            TextField(placeholder, text: text)
-                .focused($focus, equals: field)
-                .textInputAutocapitalization(email ? .never : .sentences)
-                .autocorrectionDisabled(email)
-                .keyboardType(email ? .emailAddress : .default)
-            if let pick {
-                Button(action: pick) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 28, height: 28)
-                        .background(Color(.secondarySystemFill), in: Circle())
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(label)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .fixedSize()
+                TextField(placeholder, text: text)
+                    .focused($focus, equals: field)
+                    .textInputAutocapitalization(email ? .never : .sentences)
+                    .autocorrectionDisabled(email)
+                    .keyboardType(email ? .emailAddress : .default)
+                if let pick {
+                    Button(action: pick) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 28, height: 28)
+                            .background(Color(.secondarySystemFill), in: Circle())
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("Add from Contacts")
                 }
-                .buttonStyle(.borderless)
-                .accessibilityLabel("Add from Contacts")
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 11)
+
+            // Type-ahead only on the address fields, not the subject.
+            if email {
+                RecipientSuggestions(text: text, isFocused: focus == field)
             }
         }
-        .padding(.horizontal)
-        .padding(.vertical, 11)
     }
 
     private var divider: some View {
