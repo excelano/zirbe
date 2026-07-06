@@ -15,6 +15,12 @@ import UniformTypeIdentifiers
 import ZirbeCore
 import KlartextUI
 
+/// The timestamp peek: how far the message stack slides left to reveal each
+/// bubble's send time at the trailing edge.
+enum TimestampPeek {
+    static let width: CGFloat = 64
+}
+
 struct ConversationView: View {
     let model: InboxModel
     let summary: ThreadSummary
@@ -51,6 +57,9 @@ struct ConversationView: View {
     @State private var replyTarget: Message?
     /// A one-shot flag that asks the reply bar to take focus after a swipe.
     @State private var focusReply = false
+    /// The live timestamp-peek offset: 0 at rest, negative while the message stack
+    /// is dragged left to reveal send times, springing back on release.
+    @State private var peekOffset: CGFloat = 0
     @State private var isSending = false
     @State private var removedAddresses: Set<String> = []
     @State private var showRecipients = false
@@ -290,10 +299,12 @@ struct ConversationView: View {
                         if let dayDate = daySeparatorDate(at: index, in: messages) {
                             DaySeparatorView(date: dayDate)
                                 .padding(.vertical, 4)
+                                .offset(x: peekOffset)
                         }
                         if let delta = deltas[message.id] {
                             ParticipantChangeLine(delta: delta)
                                 .padding(.vertical, 8)
+                                .offset(x: peekOffset)
                         }
                         MessageBubble(
                             model: model,
@@ -306,6 +317,7 @@ struct ConversationView: View {
                             lockedEmoji: myCommittedEmoji(on: message.messageID, in: thread),
                             selfAddress: model.account.emailAddress,
                             isFlashed: flashedMessage == message.id,
+                            peekOffset: peekOffset,
                             onReact: { emoji in react(emoji, to: message, in: thread) },
                             onUndoReaction: { undoReaction(on: message) },
                             onReply: { beginReply(to: message) },
@@ -337,7 +349,27 @@ struct ConversationView: View {
                     }
                 }
             }
+            .simultaneousGesture(peekGesture)
         }
+    }
+
+    /// The timestamp-peek drag: a leftward, horizontal-dominant drag on the message
+    /// stack slides every bubble left to reveal its send time, capped, and springs
+    /// back on release. Simultaneous with the scroll so vertical scrolling still
+    /// wins, and the opposite direction from the per-bubble reply swipe so the two
+    /// never fight.
+    private var peekGesture: some Gesture {
+        DragGesture(minimumDistance: 15)
+            .onChanged { value in
+                guard abs(value.translation.width) > abs(value.translation.height),
+                      value.translation.width < 0 else { return }
+                peekOffset = max(value.translation.width, -TimestampPeek.width)
+            }
+            .onEnded { _ in
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    peekOffset = 0
+                }
+            }
     }
 
     /// The emoji the user has already sent on a message, if any. A sent reaction
@@ -915,6 +947,10 @@ private struct MessageBubble: View {
     /// True while this bubble is the just-jumped-to search result, drawing a brief
     /// accent outline so the eye finds where the jump landed.
     let isFlashed: Bool
+    /// The shared timestamp-peek offset (0 at rest, negative while the stack is
+    /// dragged left). The bubble slides left by this and reveals its send time at
+    /// the trailing edge, iMessage-style.
+    let peekOffset: CGFloat
     /// Add, change, or remove the user's reaction to this message.
     let onReact: (String) -> Void
     /// Pull back the pending reaction before its window passes.
@@ -958,6 +994,22 @@ private struct MessageBubble: View {
     private var gutter: CGFloat { avatarSize + avatarGap }
 
     var body: some View {
+        // A pinned send-time sits at the trailing edge, revealed as the row slides
+        // left under the timestamp-peek drag. Only bubbles that don't already show
+        // a time below (the mid-run ones) reveal it, filling the gaps.
+        ZStack(alignment: .trailing) {
+            if canPeekTime, let date = message.date {
+                Text(date, format: .dateTime.hour().minute())
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .padding(.trailing, 8)
+                    .opacity(peekProgress)
+            }
+            row.offset(x: peekOffset)
+        }
+    }
+
+    private var row: some View {
         HStack(alignment: .bottom, spacing: avatarGap) {
             if !isOwn { avatarGutter }
             VStack(alignment: isOwn ? .trailing : .leading, spacing: 3) {
@@ -974,7 +1026,7 @@ private struct MessageBubble: View {
                 }
                 if message.didFailToSend {
                     failedFooter
-                } else if hasTail, let date = message.date {
+                } else if showsFooterTime, let date = message.date {
                     Text(date, format: .dateTime.month().day().hour().minute())
                         .font(.caption2)
                         .foregroundStyle(.secondary)
@@ -987,6 +1039,23 @@ private struct MessageBubble: View {
                 }
             }
         }
+    }
+
+    /// Whether this bubble already shows its send time below (a run-ending bubble),
+    /// so the peek needn't reveal one.
+    private var showsFooterTime: Bool {
+        !message.didFailToSend && hasTail && message.date != nil
+    }
+
+    /// Whether this bubble should reveal its time on the peek: it has a date and
+    /// doesn't already show one below.
+    private var canPeekTime: Bool {
+        message.date != nil && !showsFooterTime
+    }
+
+    /// How far the peek time has faded in, 0…1, tracking the leftward stack drag.
+    private var peekProgress: Double {
+        Double(min(-peekOffset, TimestampPeek.width) / TimestampPeek.width)
     }
 
     /// The Undo affordance shown while the user's reaction is inside its window:
@@ -1151,39 +1220,41 @@ private struct MessageBubble: View {
             )
             .presentationCompactAdaptation(.popover)
         }
-        // Swipe the bubble left to reply to it: it slides under the finger,
+        // Swipe the bubble right to reply to it: it slides under the finger,
         // revealing a reply arrow, and passing the threshold on release starts a
-        // reply aimed at this message. Simultaneous so vertical scrolling still
-        // wins; the gesture only engages on a leftward, horizontal-dominant drag.
+        // reply aimed at this message. Right is the common reply direction (as in
+        // WhatsApp, Signal, Telegram) and leaves the left drag free for the
+        // timestamp peek. Simultaneous so vertical scrolling still wins; the
+        // gesture only engages on a rightward, horizontal-dominant drag.
         .offset(x: replyDragOffset)
-        .overlay(alignment: .trailing) {
+        .overlay(alignment: .leading) {
             Image(systemName: "arrowshape.turn.up.left.fill")
                 .foregroundStyle(.secondary)
                 .opacity(replyRevealProgress)
-                .offset(x: 30)
+                .offset(x: -30)
         }
         .simultaneousGesture(replyDragGesture)
     }
 
-    /// How far the reply arrow has faded in, 0…1, tracking the leftward drag up to
-    /// the trigger threshold.
+    /// How far the reply arrow has faded in, 0…1, tracking the rightward drag up
+    /// to the trigger threshold.
     private var replyRevealProgress: Double {
-        Double(min(-replyDragOffset, 55) / 55)
+        Double(min(replyDragOffset, 55) / 55)
     }
 
-    /// The swipe-to-reply drag: track a leftward, horizontal-dominant drag as a
+    /// The swipe-to-reply drag: track a rightward, horizontal-dominant drag as a
     /// bubble offset, fire the reply on release past the threshold, and spring
     /// back either way.
     private var replyDragGesture: some Gesture {
         DragGesture(minimumDistance: 20)
             .onChanged { value in
                 guard abs(value.translation.width) > abs(value.translation.height),
-                      value.translation.width < 0 else { return }
-                replyDragOffset = max(value.translation.width, -70)
+                      value.translation.width > 0 else { return }
+                replyDragOffset = min(value.translation.width, 70)
             }
             .onEnded { value in
                 let horizontal = abs(value.translation.width) > abs(value.translation.height)
-                if horizontal, value.translation.width < -55 {
+                if horizontal, value.translation.width > 55 {
                     UIImpactFeedbackGenerator(style: .light).impactOccurred()
                     onReply()
                 }

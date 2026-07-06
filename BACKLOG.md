@@ -133,15 +133,23 @@ and the integrated inbox wait below that line.
   memory over the already-loaded thread, so there's no network and the same
   no-backend posture as the inbox search. Verified on device.
 
-- **Swipe-to-reply.** Swipe a bubble left to reply to that message specifically:
-  it slides under the finger revealing a reply arrow, and past the threshold on
-  release it starts a reply aimed at that message, with a "Replying to…" chip
-  above the reply bar (✕ to cancel, which also drops the keyboard) and the field
-  focused. A "Reply" item in the long-press menu is the non-gesture path. On send,
-  that message is quoted and the reply threads onto it (`In-Reply-To`) rather than
-  the thread's latest; clearing the chip falls back to a normal reply. The gesture
-  is simultaneous with the scroll so it never blocks it, engaging only on a
-  leftward, horizontal-dominant drag. Verified on device.
+- **Swipe-to-reply.** Swipe a bubble right to reply to that message specifically
+  (right being the common reply direction, and leaving the left drag for the
+  timestamp peek): it slides under the finger revealing a reply arrow, and past
+  the threshold on release it starts a reply aimed at that message, with a
+  "Replying to…" chip above the reply bar (✕ to cancel, which also drops the
+  keyboard) and the field focused. A "Reply" item in the long-press menu is the
+  non-gesture path. On send, that message is quoted and the reply threads onto it
+  (`In-Reply-To`) rather than the thread's latest; clearing the chip falls back to
+  a normal reply. The gesture is simultaneous with the scroll so it never blocks
+  it, engaging only on a rightward, horizontal-dominant drag. Verified on device.
+
+- **Peek per-bubble timestamps.** Drag the message stack left and every bubble
+  slides under the finger to reveal its send time along the trailing edge,
+  iMessage-style, springing back on release. Only the mid-run bubbles that don't
+  already show a time below reveal one, filling the gaps. A simultaneous,
+  leftward-only, horizontal-dominant drag, so it never blocks the scroll and never
+  collides with the rightward reply swipe. View-layer only. Verified on device.
 
 - **Pin a conversation.** Pin a thread to keep it at the top of the inbox, via a
   leading swipe action, a context-menu item, and a small pin marker on the row.
@@ -155,11 +163,6 @@ and the integrated inbox wait below that line.
 
 In recommended sequence:
 
-- **Peek per-bubble timestamps.** Drag the whole message stack to the left to
-  reveal each bubble's send time along the trailing edge, iMessage-style, sliding
-  back when released. A read-only glance, distinct from the per-bubble swipe (that
-  gesture is reply). Only bubbles that don't already show a timestamp (the
-  non-run-ending ones) need to reveal it.
 - **Junk and block-sender.** A move-to-Junk action and a way to block a sender.
   Depends on folders, so it naturally follows that item.
 
