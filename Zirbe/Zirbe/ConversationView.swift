@@ -60,6 +60,13 @@ struct ConversationView: View {
     /// The live timestamp-peek offset: 0 at rest, negative while the message stack
     /// is dragged left to reveal send times, springing back on release.
     @State private var peekOffset: CGFloat = 0
+    // Derived from `thread` once per change and cached, so the render — which
+    // re-runs on every peek-drag frame as `peekOffset` animates — doesn't rebuild
+    // them each frame. Without this the reactions map was rebuilt twice per row
+    // (O(N²)) and the message/delta scans re-ran per frame.
+    @State private var conversationMessages: [Message] = []
+    @State private var participantDeltas: [String: ParticipantChange.Delta] = [:]
+    @State private var reactionsByTarget: [String: [Reaction]] = [:]
     @State private var isSending = false
     @State private var removedAddresses: Set<String> = []
     @State private var showRecipients = false
@@ -230,7 +237,7 @@ struct ConversationView: View {
             // loading spinner is still up, so the conversation opens straight into
             // the web view instead of flashing the text bubbles first.
             if let loaded { await prepareInitialWebView(loaded) }
-            thread = loaded
+            setThread(loaded)
             isLoading = false
             if let loaded {
                 isFlagged = loaded.isFlagged
@@ -301,16 +308,36 @@ struct ConversationView: View {
         }
     }
 
-    private func conversation(_ thread: ZirbeCore.Thread) -> some View {
-        // Reactions are shown as badges on their target, not as bubbles, so the
-        // stack, the run grouping, and the join/leave lines are all over the chat
-        // messages alone.
-        let messages = thread.conversationMessages
-        let deltas = Dictionary(
-            ParticipantChange.deltas(across: messages, excluding: model.account.emailAddress)
+    /// Set the thread and refresh the cached render inputs in the same step, the
+    /// single funnel for every thread change (load, send, retry, reaction). The
+    /// render reads the caches instead of rebuilding the message filter, the
+    /// participant deltas, and the reactions map, so it stays cheap while the peek
+    /// offset animates. Updating them alongside `thread` keeps them in step with no
+    /// stale frame.
+    private func setThread(_ newValue: ZirbeCore.Thread?) {
+        thread = newValue
+        guard let newValue else {
+            conversationMessages = []
+            participantDeltas = [:]
+            reactionsByTarget = [:]
+            return
+        }
+        conversationMessages = newValue.conversationMessages
+        participantDeltas = Dictionary(
+            ParticipantChange.deltas(across: conversationMessages, excluding: model.account.emailAddress)
                 .map { ($0.messageID, $0) },
             uniquingKeysWith: { first, _ in first }
         )
+        reactionsByTarget = newValue.reactionsByTarget
+    }
+
+    private func conversation(_ thread: ZirbeCore.Thread) -> some View {
+        // Reactions are shown as badges on their target, not as bubbles, so the
+        // stack, the run grouping, and the join/leave lines are all over the chat
+        // messages alone. These come from `conversationMessages` / `participantDeltas`
+        // / `reactionsByTarget`, cached off `thread` (see `rebuildDerived`), so this
+        // render stays cheap while the peek offset animates.
+        let messages = conversationMessages
         return ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 2) {
@@ -320,20 +347,21 @@ struct ConversationView: View {
                                 .padding(.vertical, 4)
                                 .offset(x: peekOffset)
                         }
-                        if let delta = deltas[message.id] {
+                        if let delta = participantDeltas[message.id] {
                             ParticipantChangeLine(delta: delta)
                                 .padding(.vertical, 8)
                                 .offset(x: peekOffset)
                         }
+                        let rowReactions = reactionsByTarget[message.messageID ?? ""] ?? []
                         MessageBubble(
                             model: model,
                             message: message,
                             isOwn: isOwn(message),
                             hasTail: isLastInRun(at: index, in: messages),
                             showSender: !isOwn(message) && isFirstOfRun(at: index, in: messages),
-                            reactions: thread.reactions(forMessageID: message.messageID),
+                            reactions: rowReactions,
                             pendingEmoji: pendingReactions[message.messageID ?? ""]?.emoji,
-                            lockedEmoji: myCommittedEmoji(on: message.messageID, in: thread),
+                            lockedEmoji: myCommittedEmoji(in: rowReactions),
                             selfAddress: model.account.emailAddress,
                             isFlashed: flashedMessage == message.id,
                             peekOffset: peekOffset,
@@ -391,13 +419,11 @@ struct ConversationView: View {
             }
     }
 
-    /// The emoji the user has already sent on a message, if any. A sent reaction
-    /// is final, so this is what locks the picker for that message.
-    private func myCommittedEmoji(on messageID: String?, in thread: ZirbeCore.Thread) -> String? {
-        guard let messageID else { return nil }
+    /// The emoji the user has already sent among a message's reactions, if any. A
+    /// sent reaction is final, so this is what locks the picker for that message.
+    private func myCommittedEmoji(in reactions: [Reaction]) -> String? {
         let me = model.account.emailAddress.lowercased()
-        return thread.reactions(forMessageID: messageID)
-            .first { $0.reactor.address.lowercased() == me }?.emoji
+        return reactions.first { $0.reactor.address.lowercased() == me }?.emoji
     }
 
     /// Add, change, or undo the user's reaction to a message. The badge updates at
@@ -406,7 +432,7 @@ struct ConversationView: View {
     /// window. A reaction already sent is locked and ignored here.
     private func react(_ emoji: String, to message: Message, in thread: ZirbeCore.Thread) {
         guard let mid = message.messageID, !mid.isEmpty else { return }
-        guard myCommittedEmoji(on: mid, in: thread) == nil else { return }
+        guard myCommittedEmoji(in: reactionsByTarget[mid] ?? []) == nil else { return }
 
         pendingReactions[mid]?.task.cancel()
         if pendingReactions[mid]?.emoji == emoji {
@@ -434,7 +460,7 @@ struct ConversationView: View {
     private func commitReaction(_ emoji: String, to messageID: String, in thread: ZirbeCore.Thread) async {
         let refreshed = await model.sendReaction(emoji, to: messageID, in: thread)
         pendingReactions[messageID] = nil
-        if let refreshed { self.thread = refreshed }
+        if let refreshed { setThread(refreshed) }
     }
 
     /// Send every reaction still waiting, now, cancelling their timers. Called
@@ -562,7 +588,7 @@ struct ConversationView: View {
             let updated = await model.sendReply(to: thread, removing: removedAddresses, body: text, attachments: files, replyingToMessageID: targetID)
             isSending = false
             if let updated {
-                self.thread = updated
+                setThread(updated)
                 replyText = ""
                 replyAttachments = []
                 replyTarget = nil
@@ -591,7 +617,7 @@ struct ConversationView: View {
     private func retry(_ message: Message, into thread: ZirbeCore.Thread) async {
         guard let messageID = message.messageID else { return }
         if let updated = await model.retrySend(messageID: messageID, in: thread.id) {
-            self.thread = updated
+            setThread(updated)
         }
     }
 }
