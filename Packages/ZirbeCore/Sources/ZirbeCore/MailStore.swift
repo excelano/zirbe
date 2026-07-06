@@ -515,12 +515,45 @@ public final class MailStore: @unchecked Sendable {
                 try ThreadRow(thread, accountID: accountID).insert(db)
                 for message in thread.messages { threadByMessage[message.id] = thread.id }
             }
+            // A thread's id is its root Message-ID, which changes when a late-
+            // arriving earlier ancestor re-roots the tree. Track the old→new id of
+            // each re-rooted thread (a changed row still carries its prior thread id
+            // here) so local-only state keyed by thread id can be moved with it.
+            var oldToNew: [String: String] = [:]
             for row in rows where row.threadID != threadByMessage[row.id] {
+                let newID = threadByMessage[row.id]
                 try db.execute(
                     sql: "UPDATE message SET threadID = ? WHERE id = ?",
-                    arguments: [threadByMessage[row.id], row.id]
+                    arguments: [newID, row.id]
                 )
+                if let old = row.threadID, let newID { oldToNew[old] = newID }
             }
+            // Follow pins across the re-root, so a pinned conversation keeps its pin
+            // instead of silently dropping out of the pinned group. Nothing else is
+            // keyed by thread id (read/flag/reaction ride on message rows).
+            try Self.repin(across: oldToNew, in: db, accountID: accountID)
+        }
+    }
+
+    /// Rewrite `pinnedThread` rows whose thread id changed in a rethread, moving
+    /// each pin from the old id to the new one. A no-op when nothing re-rooted.
+    private static func repin(across oldToNew: [String: String], in db: Database, accountID: String) throws {
+        guard !oldToNew.isEmpty else { return }
+        let pinned = try String.fetchAll(
+            db,
+            sql: "SELECT threadID FROM pinnedThread WHERE accountID = ?",
+            arguments: [accountID]
+        )
+        for old in pinned {
+            guard let new = oldToNew[old], new != old else { continue }
+            try db.execute(
+                sql: "DELETE FROM pinnedThread WHERE accountID = ? AND threadID = ?",
+                arguments: [accountID, old]
+            )
+            try db.execute(
+                sql: "INSERT OR IGNORE INTO pinnedThread (accountID, threadID) VALUES (?, ?)",
+                arguments: [accountID, new]
+            )
         }
     }
 

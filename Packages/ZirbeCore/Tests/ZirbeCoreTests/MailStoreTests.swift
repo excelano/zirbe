@@ -202,6 +202,36 @@ final class MailStoreTests: XCTestCase {
         XCTAssertEqual(summaries.first?.messageCount, 2)
     }
 
+    func testPinFollowsThreadAcrossReRoot() async throws {
+        let store = try MailStore()
+        let acct = account()
+        try await store.upsert(acct)
+
+        // A standalone message with no references: its thread id is its own id.
+        let a = msg(id: "<a@x>", subject: "Plan", from: "p@x.com", minutes: 1)
+        try await store.save([a], accountID: acct.id, mailboxName: "INBOX")
+        try await store.rethread(accountID: acct.id)
+        var summaries = try await store.threadSummaries(accountID: acct.id)
+        let originalID = try XCTUnwrap(summaries.first?.id)
+        XCTAssertEqual(originalID, "mid:<a@x>")
+
+        // Pin it.
+        try await store.setPinned(true, threadID: originalID, accountID: acct.id)
+
+        // A reply arrives referencing an earlier, previously-unseen ancestor,
+        // which re-roots the tree so the thread id changes.
+        let b = msg(id: "<b@x>", references: ["<a0@x>", "<a@x>"], subject: "Re: Plan", from: "q@x.com", minutes: 2)
+        try await store.save([b], accountID: acct.id, mailboxName: "INBOX")
+        try await store.rethread(accountID: acct.id)
+        summaries = try await store.threadSummaries(accountID: acct.id)
+        XCTAssertEqual(summaries.count, 1)
+        let newID = try XCTUnwrap(summaries.first?.id)
+        XCTAssertNotEqual(newID, originalID)   // the id really did change
+
+        // The pin followed the thread to its new id rather than being orphaned.
+        XCTAssertTrue(summaries.first?.isPinned ?? false)
+    }
+
     func testBodyCachingAndPreservation() async throws {
         let store = try MailStore()
         let acct = account()
