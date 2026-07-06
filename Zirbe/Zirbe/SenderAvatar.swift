@@ -100,7 +100,7 @@ actor ContactAvatarService {
     }
 
     private func lookup(_ address: String) async -> Avatar {
-        guard await hasAccess() else { return Avatar(imageData: nil, fullName: nil) }
+        guard await ContactsAuthorization.granted(store) else { return Avatar(imageData: nil, fullName: nil) }
         let keys: [CNKeyDescriptor] = [
             CNContactThumbnailImageDataKey as CNKeyDescriptor,
             CNContactFormatter.descriptorForRequiredKeys(for: .fullName),
@@ -112,20 +112,5 @@ actor ContactAvatarService {
             imageData: contact.thumbnailImageData,
             fullName: CNContactFormatter.string(from: contact, style: .fullName)
         )
-    }
-
-    /// Whether the store may be read, requesting permission once if it has never
-    /// been asked. Limited access (iOS 18+) is enough to read matches.
-    private func hasAccess() async -> Bool {
-        let status = CNContactStore.authorizationStatus(for: .contacts)
-        switch status {
-        case .authorized:
-            return true
-        case .notDetermined:
-            return (try? await store.requestAccess(for: .contacts)) ?? false
-        default:
-            if #available(iOS 18.0, *), status == .limited { return true }
-            return false
-        }
     }
 }
