@@ -59,6 +59,48 @@ final class MailStoreTests: XCTestCase {
         XCTAssertFalse(summaries.contains { $0.isPinned })
     }
 
+    func testBlockedSenderRefsAndListManagement() async throws {
+        let store = try MailStore()
+        let acct = account()
+        try await store.upsert(acct)
+
+        // Two INBOX messages, one from the sender we'll block (stored mixed-case
+        // to prove matching folds case) and one from someone else, plus a message
+        // in another folder from the blocked sender that must be left untouched.
+        let blocked = Message(messageID: "<b1@x>", uid: 10, subject: "Spam", from: Participant(address: "Spammer@X.com"), date: Date(timeIntervalSince1970: 60))
+        let keep = Message(messageID: "<k1@x>", uid: 11, subject: "Hi", from: Participant(address: "friend@x.com"), date: Date(timeIntervalSince1970: 120))
+        let elsewhere = Message(messageID: "<e1@x>", uid: 12, subject: "Old spam", from: Participant(address: "spammer@x.com"), date: Date(timeIntervalSince1970: 30))
+        try await store.save([blocked, keep], accountID: acct.id, mailboxName: "INBOX")
+        try await store.save([elsewhere], accountID: acct.id, mailboxName: "Archive")
+
+        // Nothing blocked yet: no refs, empty list.
+        var refs = try await store.blockedInboxRefs(accountID: acct.id)
+        XCTAssertTrue(refs.isEmpty)
+        var list = try await store.blockedSenders(accountID: acct.id)
+        XCTAssertTrue(list.isEmpty)
+
+        // Block the sender, typed in yet another case than stored or queried.
+        try await store.setBlocked(true, address: "SPAMMER@x.com", accountID: acct.id)
+        list = try await store.blockedSenders(accountID: acct.id)
+        XCTAssertEqual(list, ["spammer@x.com"])
+
+        // Only the blocked sender's INBOX message is returned: the friend's INBOX
+        // message and the blocked sender's Archive message are left out.
+        refs = try await store.blockedInboxRefs(accountID: acct.id)
+        XCTAssertEqual(refs.map(\.uid), [10])
+        XCTAssertEqual(refs.map(\.id), [blocked.id])
+
+        // Dropping those locally clears the refs; the Archive copy still stands.
+        try await store.deleteMessages(ids: refs.map(\.id))
+        refs = try await store.blockedInboxRefs(accountID: acct.id)
+        XCTAssertTrue(refs.isEmpty)
+
+        // Unblock empties the list.
+        try await store.setBlocked(false, address: "spammer@x.com", accountID: acct.id)
+        list = try await store.blockedSenders(accountID: acct.id)
+        XCTAssertTrue(list.isEmpty)
+    }
+
     func testSaveRethreadAndQuery() async throws {
         let store = try MailStore()
         let acct = account()

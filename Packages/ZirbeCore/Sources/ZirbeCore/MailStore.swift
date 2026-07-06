@@ -345,6 +345,73 @@ public final class MailStore: @unchecked Sendable {
         }
     }
 
+    /// Delete specific messages by id, locally. Used after the sync moves a
+    /// blocked sender's INBOX mail to Junk on the server: the local copies go
+    /// too, so blocked mail leaves the inbox. The caller rethreads after.
+    public func deleteMessages(ids: [String]) async throws {
+        guard !ids.isEmpty else { return }
+        try await dbQueue.write { db in
+            _ = try MessageRow.filter(ids.contains(Column("id"))).deleteAll(db)
+        }
+    }
+
+    /// Block or unblock a sender for an account: a row present means the address
+    /// is blocked. Purely local app state, keyed by the normalized (lowercased)
+    /// address within the account. The sync consults it to auto-junk that
+    /// sender's INBOX mail. Survives a rethread, since it hangs off the address
+    /// rather than a message or thread row.
+    public func setBlocked(_ blocked: Bool, address: String, accountID: String) async throws {
+        let normalized = address.lowercased()
+        try await dbQueue.write { db in
+            if blocked {
+                try db.execute(
+                    sql: "INSERT OR IGNORE INTO blockedSender (accountID, address) VALUES (?, ?)",
+                    arguments: [accountID, normalized]
+                )
+            } else {
+                try db.execute(
+                    sql: "DELETE FROM blockedSender WHERE accountID = ? AND address = ?",
+                    arguments: [accountID, normalized]
+                )
+            }
+        }
+    }
+
+    /// The blocked sender addresses for an account, normalized and sorted, for
+    /// the management list. Empty when nothing is blocked.
+    public func blockedSenders(accountID: String) async throws -> [String] {
+        try await dbQueue.read { db in
+            try String.fetchAll(
+                db,
+                sql: "SELECT address FROM blockedSender WHERE accountID = ? ORDER BY address",
+                arguments: [accountID]
+            )
+        }
+    }
+
+    /// The server references (id and UID) of the account's INBOX messages whose
+    /// sender is blocked, so the sync can move them to Junk and then drop the
+    /// local copies. Address matching is case-insensitive, mirroring how the
+    /// blocklist is stored normalized. A locally-composed copy with no UID is
+    /// omitted; it has nothing to act on server-side.
+    public func blockedInboxRefs(accountID: String) async throws -> [(id: String, uid: UInt32)] {
+        try await dbQueue.read { db in
+            let blocked = try String.fetchSet(
+                db,
+                sql: "SELECT address FROM blockedSender WHERE accountID = ?",
+                arguments: [accountID]
+            )
+            guard !blocked.isEmpty else { return [] }
+            return try MessageRow
+                .filter(Column("accountID") == accountID
+                    && Column("mailboxName") == Self.inboxMailbox
+                    && Column("uid") != nil)
+                .fetchAll(db)
+                .filter { row in row.fromAddress.map { blocked.contains($0.lowercased()) } ?? false }
+                .compactMap { row in row.uid.map { (id: row.id, uid: UInt32(truncatingIfNeeded: $0)) } }
+        }
+    }
+
     /// The UID-validity last recorded for a mailbox, or nil if none is stored yet
     /// (a mailbox never synced). Compared against the server's current value to
     /// decide whether the cache can be reconciled or must be rebuilt.
@@ -827,6 +894,18 @@ public final class MailStore: @unchecked Sendable {
                 t.column("accountID", .text).notNull()
                 t.column("threadID", .text).notNull()
                 t.primaryKey(["accountID", "threadID"])
+            }
+        }
+        // Blocked senders: local-only app state listing addresses whose incoming
+        // INBOX mail is auto-moved to Junk during sync. Keyed by the normalized
+        // (lowercased) address within an account. Nothing rides on a message or
+        // thread row, so it survives the rethread that rebuilds those every sync.
+        // Wiped on sign-out, since `eraseAll` re-runs this migrator.
+        migrator.registerMigration("v15-blocked-sender") { db in
+            try db.create(table: "blockedSender") { t in
+                t.column("accountID", .text).notNull()
+                t.column("address", .text).notNull()
+                t.primaryKey(["accountID", "address"])
             }
         }
         return migrator

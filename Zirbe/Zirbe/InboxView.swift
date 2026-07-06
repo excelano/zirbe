@@ -91,7 +91,7 @@ struct InboxView: View {
             ComposeView(model: model, editing: request.edit)
         }
         .sheet(isPresented: $showingSettings) {
-            SettingsView(account: model.account, onSignOut: onSignOut)
+            SettingsView(account: model.account, model: model, onSignOut: onSignOut)
         }
         .sheet(isPresented: $showingMailboxes) {
             MailboxesView(model: model, mode: .browse)

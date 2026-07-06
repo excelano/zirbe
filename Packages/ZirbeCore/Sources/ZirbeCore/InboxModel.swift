@@ -36,6 +36,9 @@ public final class InboxModel {
     /// The folder currently on screen. INBOX is home and the default; selecting
     /// another swaps the list to that folder's scoped view.
     public private(set) var currentMailbox: Mailbox
+    /// The blocked sender addresses, for the management list in Settings.
+    /// Normalized and sorted; loaded on demand and updated on block/unblock.
+    public private(set) var blockedSenders: [String] = []
 
     public let account: Account
     private let store: MailStore
@@ -763,6 +766,43 @@ public final class InboxModel {
     /// Mark a single conversation as junk.
     public func junk(_ summary: ThreadSummary) async {
         await junk(threadIDs: [summary.id])
+    }
+
+    /// Block a sender: add the address to the blocklist and sync, which moves
+    /// their existing INBOX mail to Junk and keeps new arrivals out on every
+    /// later sync. The address is normalized; the account's own address can't be
+    /// blocked. Server-touching (the sync moves the backlog), so a failed sync
+    /// surfaces in `errorMessage` with the address still added.
+    public func block(address: String) async {
+        guard let password else {
+            errorMessage = "Connect an account first."
+            return
+        }
+        let normalized = address.lowercased()
+        guard !normalized.isEmpty, normalized != account.emailAddress.lowercased() else { return }
+        await attempt {
+            try await self.store.setBlocked(true, address: normalized, accountID: self.account.id)
+            try await self.sync.syncInbox(password: password)
+            self.blockedSenders = try await self.store.blockedSenders(accountID: self.account.id)
+            try await self.reloadList()
+        }
+    }
+
+    /// Unblock a sender: remove the address so their future mail stays in the
+    /// inbox. Mail already moved to Junk is left there; unblocking only stops
+    /// future junking. Local-only, no network. Errors surface in `errorMessage`.
+    public func unblock(address: String) async {
+        await attempt {
+            try await self.store.setBlocked(false, address: address, accountID: self.account.id)
+            self.blockedSenders = try await self.store.blockedSenders(accountID: self.account.id)
+        }
+    }
+
+    /// Load the blocked sender list into `blockedSenders` for the management UI.
+    public func loadBlockedSenders() async {
+        await attempt {
+            self.blockedSenders = try await self.store.blockedSenders(accountID: self.account.id)
+        }
     }
 
     /// Move one or more conversations to `destination` (a folder name) and drop

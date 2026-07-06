@@ -29,6 +29,8 @@ enum SettingsKeys {
 
 struct SettingsView: View {
     let account: Account
+    /// The inbox model, for the blocked-sender list this sheet manages.
+    let model: InboxModel
     /// Full sign-out: forget the credential and wipe the local copy. Routed up to
     /// the session, which swaps the UI back to onboarding.
     let onSignOut: () -> Void
@@ -98,6 +100,20 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    NavigationLink {
+                        BlockedSendersView(model: model)
+                    } label: {
+                        LabeledContent("Blocked Senders") {
+                            Text(model.blockedSenders.isEmpty ? "None" : "\(model.blockedSenders.count)")
+                        }
+                    }
+                } header: {
+                    Text("Privacy")
+                } footer: {
+                    Text("A blocked sender's mail is moved to your Junk folder as it arrives, and their existing mail is moved there when you block them.")
+                }
+
+                Section {
                     Button("Sign Out", role: .destructive) {
                         confirmingSignOut = true
                     }
@@ -112,6 +128,7 @@ struct SettingsView: View {
             .task {
                 let settings = await UNUserNotificationCenter.current().notificationSettings()
                 notificationsDenied = settings.authorizationStatus == .denied
+                await model.loadBlockedSenders()
             }
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -131,5 +148,43 @@ struct SettingsView: View {
                 Text("This removes the account and its downloaded mail from this device.")
             }
         }
+    }
+}
+
+/// The list of blocked senders, reached from Settings. Each row is an address;
+/// swipe or tap Unblock to remove it, which only stops future junking (mail
+/// already moved to Junk stays there). Empty until someone is blocked.
+private struct BlockedSendersView: View {
+    let model: InboxModel
+
+    var body: some View {
+        List {
+            if model.blockedSenders.isEmpty {
+                Section {
+                    Text("No blocked senders. Block someone from the ⋯ menu in a conversation, and their mail moves to Junk.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Section {
+                    ForEach(model.blockedSenders, id: \.self) { address in
+                        Text(address)
+                            .swipeActions(edge: .trailing) {
+                                Button("Unblock") {
+                                    Task { await model.unblock(address: address) }
+                                }
+                                .tint(.accentColor)
+                            }
+                    }
+                } footer: {
+                    Text("Unblocking lets their future mail reach your inbox again. Mail already moved to Junk stays there.")
+                }
+            }
+        }
+        .scrollContentBackground(.hidden)
+        .background(Color.zirbeCanvas)
+        .navigationTitle("Blocked Senders")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await model.loadBlockedSenders() }
     }
 }

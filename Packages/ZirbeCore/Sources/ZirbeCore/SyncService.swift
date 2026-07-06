@@ -111,6 +111,13 @@ public actor SyncService {
         if validityChanged, mailbox == Self.inboxMailbox {
             try await store.markNotificationWatermark(accountID: account.id)
         }
+        // Enforce the sender blocklist before rethreading, so a blocked sender's
+        // mail is gone from the inbox in the same pass it arrives. INBOX-scoped,
+        // and catches both new arrivals just fetched and any backlog left when a
+        // sender was newly blocked.
+        if mailbox == Self.inboxMailbox {
+            try await enforceBlocklist()
+        }
         try await store.rethread(accountID: account.id)
 
         // Backfill each thread's newest message body so the inbox row shows a
@@ -430,6 +437,17 @@ public actor SyncService {
         }
         try await store.deleteThread(threadID: threadID)
         try await store.rethread(accountID: account.id)
+    }
+
+    /// Move any INBOX mail from a blocked sender to the server's Junk folder and
+    /// drop the local copies, so a blocked sender's mail never surfaces in the
+    /// inbox. Reuses the same server move as `junk`. The engine is already
+    /// connected by the surrounding reconcile; the caller rethreads after.
+    private func enforceBlocklist() async throws {
+        let refs = try await store.blockedInboxRefs(accountID: account.id)
+        guard !refs.isEmpty else { return }
+        try await engine.markJunk(in: Self.inboxMailbox, uids: refs.map(\.uid))
+        try await store.deleteMessages(ids: refs.map(\.id))
     }
 
     /// Begin watching the inbox for server-side changes, yielding once per change

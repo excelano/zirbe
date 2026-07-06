@@ -65,6 +65,9 @@ struct ConversationView: View {
     @State private var showRecipients = false
     /// Presents the move-destination picker for this conversation.
     @State private var isMoving = false
+    /// The sender awaiting block confirmation, set when "Block Sender" is chosen
+    /// from the menu and cleared when the dialog resolves.
+    @State private var pendingBlock: Participant?
     /// The message the user chose to forward, presenting the forward composer;
     /// nil when no forward is in progress.
     @State private var forwardingMessage: Message?
@@ -128,7 +131,9 @@ struct ConversationView: View {
                 onMove: { isMoving = true },
                 // Find works over the chat of bubbles, so leave any open Web View
                 // first; the tapped result lands on a bubble.
-                onFind: { activeWeb = nil; isSearching = true }
+                onFind: { activeWeb = nil; isSearching = true },
+                blockSenderLabel: blockableSender?.label,
+                onBlock: { pendingBlock = blockableSender }
             )
             Divider()
             if let thread {
@@ -202,6 +207,20 @@ struct ConversationView: View {
                 mode: .move(threadIDs: [summary.id]),
                 onMoved: { dismiss() }
             )
+        }
+        .confirmationDialog(
+            pendingBlock.map { "Block \($0.label)?" } ?? "Block Sender?",
+            isPresented: Binding(get: { pendingBlock != nil }, set: { if !$0 { pendingBlock = nil } }),
+            titleVisibility: .visible,
+            presenting: pendingBlock
+        ) { sender in
+            Button("Block Sender", role: .destructive) {
+                dismiss()
+                Task { await model.block(address: sender.address) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: { _ in
+            Text("Their mail moves to Junk and future mail is kept out. Unblock anytime in Settings.")
         }
         .task {
             isFlagged = summary.isFlagged
@@ -513,6 +532,19 @@ struct ConversationView: View {
         return cc.filter { !removedAddresses.contains($0.address) }
     }
 
+    /// The sender this conversation would block: the most recent incoming
+    /// message's sender, falling back to the first non-self participant. Nil for
+    /// a note-to-self thread, which has no one to block, so the menu hides the
+    /// item.
+    private var blockableSender: Participant? {
+        let me = model.account.emailAddress.lowercased()
+        if let thread,
+           let incoming = thread.messages.last(where: { ($0.from?.address.lowercased() ?? me) != me }) {
+            return incoming.from
+        }
+        return summary.participants.first { $0.address.lowercased() != me }
+    }
+
     /// Whether this conversation is just the user talking to themselves, so the
     /// header reads "Note to self" and isn't editable. True when reply-all lands
     /// on the account alone.
@@ -580,6 +612,10 @@ private struct ConversationTopBar: View {
     let onJunk: () -> Void
     let onMove: () -> Void
     let onFind: () -> Void
+    /// The sender's label for the "Block …" menu item, or nil to hide it (a
+    /// note-to-self thread has no one to block).
+    let blockSenderLabel: String?
+    let onBlock: () -> Void
 
     @State private var isTruncated = false
     @State private var showingFull = false
@@ -642,6 +678,11 @@ private struct ConversationTopBar: View {
                 }
                 Button(role: .destructive, action: onJunk) {
                     Label("Move to Junk", systemImage: "xmark.bin")
+                }
+                if let blockSenderLabel {
+                    Button(role: .destructive, action: onBlock) {
+                        Label("Block \(blockSenderLabel)", systemImage: "hand.raised")
+                    }
                 }
                 Button(role: .destructive, action: onTrash) {
                     Label("Trash", systemImage: "trash")

@@ -159,12 +159,26 @@ and the integrated inbox wait below that line.
   The inbox and per-folder reads sort pinned conversations to the top, then by
   recency; search results stay recency-ordered. Verified on device.
 
+- **Junk and block-sender.** Move-to-Junk shipped with folders; block-sender
+  completes it. Blocking a sender moves their existing INBOX mail to Junk and
+  keeps new arrivals out, moving them to Junk during every sync before they reach
+  the inbox. The blocklist is local app state (a `blockedSender` table keyed by
+  the normalized address, surviving the rethread that rebuilds thread rows) and is
+  enforced at sync time, reusing the same server move as the manual junk action,
+  so nothing new leaves the device. You block from the conversation's ⋯ menu,
+  with a confirmation since it sweeps existing mail, and manage the list in
+  Settings › Blocked Senders (swipe to unblock). Matching is by exact address,
+  case-insensitive; the account's own address can't be blocked. Unblocking stops
+  future junking but leaves already-junked mail where it is. Retroactive over the
+  synced INBOX window, not a sender's full history still on the server. Verified
+  on device.
+
 ## Above the multi-account line
 
-In recommended sequence:
-
-- **Junk and block-sender.** A move-to-Junk action and a way to block a sender.
-  Depends on folders, so it naturally follows that item.
+Clear. With junk and block-sender shipped, Zirbe meets the bar set at the top of
+this file: a full single-account Apple Mail replacement, as chat-native as the
+Messages metaphor allows. New single-account feature requests land here as they
+surface; otherwise the next work is below the line.
 
 ## The multi-account line
 
