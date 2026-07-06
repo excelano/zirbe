@@ -77,9 +77,14 @@ struct RecipientSuggestions: View {
     /// when the fragment is empty.
     private func search(_ text: String) {
         let fragment = RecipientDraftText.currentFragment(text)
-        guard !fragment.isEmpty else { suggestions = []; return }
+        // Bump the generation before the empty-fragment return too, so an in-flight
+        // lookup from the last non-empty fragment can't repopulate the list after
+        // it's been cleared (e.g. once `choose` fills the field, leaving an empty
+        // trailing fragment). Without this, a slow first lookup re-shows the menu
+        // over a field the user already completed.
         generation += 1
         let current = generation
+        guard !fragment.isEmpty else { suggestions = []; return }
         Task {
             let matches = await ContactSearchService.shared.search(fragment)
             if current == generation { suggestions = matches }
@@ -87,9 +92,11 @@ struct RecipientSuggestions: View {
     }
 
     /// Fill the chosen contact into the field, replacing the in-progress fragment,
-    /// and clear the list.
+    /// and clear the list. Bumping the generation invalidates any lookup still in
+    /// flight, so a late result can't re-open the menu after the pick.
     private func choose(_ suggestion: ContactSuggestion) {
         text = RecipientDraftText.completing(text, with: suggestion.token)
         suggestions = []
+        generation += 1
     }
 }
