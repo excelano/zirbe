@@ -267,7 +267,7 @@ public final class InboxModel {
     /// sent bubble on success, or an undelivered bubble the user can retry when the
     /// SMTP send failed.
     @discardableResult
-    public func sendReply(to thread: Thread, removing removedAddresses: Set<String> = [], body: String, attachments: [DraftAttachment] = []) async -> Thread? {
+    public func sendReply(to thread: Thread, removing removedAddresses: Set<String> = [], body: String, attachments: [DraftAttachment] = [], replyingToMessageID: String? = nil) async -> Thread? {
         guard let password else {
             errorMessage = "Connect an account first."
             return nil
@@ -287,7 +287,12 @@ public final class InboxModel {
             return nil
         }
 
-        let draft = OutgoingDraft.reply(to: thread, as: account, to: to, cc: cc, body: trimmed, attachments: attachments.map(\.outgoing), sentAt: Date())
+        // A swipe-to-reply names an earlier message to answer; quote and thread
+        // onto it rather than the conversation's latest.
+        let target = replyingToMessageID.flatMap { id in
+            thread.messages.first { $0.messageID == id }
+        }
+        let draft = OutgoingDraft.reply(to: thread, as: account, to: to, cc: cc, body: trimmed, attachments: attachments.map(\.outgoing), replyingTo: target, sentAt: Date())
         return await deliverReply(draft, into: thread.id, password: password)
     }
 

@@ -31,6 +31,7 @@ struct ReactionMenu: View {
     /// emoji row is shown for reference but disabled.
     let locked: Bool
     let onReact: (String) -> Void
+    let onReply: () -> Void
     let onForward: () -> Void
 
     var body: some View {
@@ -62,6 +63,14 @@ struct ReactionMenu: View {
                     .padding(.bottom, 8)
             }
 
+            Divider()
+            Button { onReply() } label: {
+                Label("Reply", systemImage: "arrowshape.turn.up.left")
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 11)
+            }
+            .buttonStyle(.plain)
             Divider()
             Button { onForward() } label: {
                 Label("Forward", systemImage: "arrowshape.turn.up.right")

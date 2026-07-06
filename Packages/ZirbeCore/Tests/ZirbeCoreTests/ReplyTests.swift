@@ -83,6 +83,50 @@ final class ReplyTests: XCTestCase {
         XCTAssertEqual(references, ["<a@x>", "<b@x>"])
     }
 
+    func testThreadingHeadersForASpecificEarlierMessage() {
+        // A swipe-to-reply on the first of two messages threads onto that one,
+        // not the latest.
+        let first = message(id: "<a@x>", from: "p@x.com", references: ["<root@x>"], minutes: 0)
+        let (inReplyTo, references) = ReplyBuilder.threadingHeaders(replyingTo: first)
+        XCTAssertEqual(inReplyTo, "<a@x>")
+        XCTAssertEqual(references, ["<root@x>", "<a@x>"])
+    }
+
+    // MARK: - Targeted reply (swipe-to-reply)
+
+    func testTargetedReplyThreadsAndQuotesTheNamedMessage() {
+        // Two messages; the reply aims at the earlier one. It must thread onto
+        // that message and quote its body, not the latest's.
+        var first = message(id: "<a@x>", from: "p@x.com", minutes: 0)
+        first.bodyText = "the earlier point"
+        var latest = message(id: "<b@x>", from: "p@x.com", references: ["<a@x>"], minutes: 1)
+        latest.bodyText = "a newer aside"
+        let t = thread([first, latest])
+
+        let draft = OutgoingDraft.reply(
+            to: t, as: account(), to: [participant("p@x.com")], cc: [],
+            body: "answering the first", replyingTo: first, sentAt: Date(timeIntervalSince1970: 0)
+        )
+        XCTAssertEqual(draft.inReplyTo, "<a@x>")
+        XCTAssertTrue(draft.body.contains("the earlier point"))
+        XCTAssertFalse(draft.body.contains("a newer aside"))
+    }
+
+    func testDefaultReplyStillTargetsTheLatestMessage() {
+        var first = message(id: "<a@x>", from: "p@x.com", minutes: 0)
+        first.bodyText = "the earlier point"
+        var latest = message(id: "<b@x>", from: "p@x.com", references: ["<a@x>"], minutes: 1)
+        latest.bodyText = "a newer aside"
+        let t = thread([first, latest])
+
+        let draft = OutgoingDraft.reply(
+            to: t, as: account(), to: [participant("p@x.com")], cc: [],
+            body: "answering", sentAt: Date(timeIntervalSince1970: 0)
+        )
+        XCTAssertEqual(draft.inReplyTo, "<b@x>")
+        XCTAssertTrue(draft.body.contains("a newer aside"))
+    }
+
     func testGeneratedMessageIDIsWellFormed() {
         let id = ReplyBuilder.generateMessageID(for: account())
         XCTAssertTrue(id.hasPrefix("<"))

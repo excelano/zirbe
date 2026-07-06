@@ -148,7 +148,9 @@ extension OutgoingDraft {
     /// explicitly (the UI starts from `ReplyBuilder.replyAllRecipients` and lets
     /// the user remove people, group-chat style), while the subject, threading
     /// headers, quote trailer, and Message-ID are derived from the thread. The
-    /// quoted message is the conversation's most recent.
+    /// quoted message defaults to the conversation's most recent; pass `replyingTo`
+    /// to answer an earlier message specifically (swipe-to-reply), which quotes and
+    /// threads onto that message instead.
     public static func reply(
         to thread: Thread,
         as account: Account,
@@ -156,12 +158,15 @@ extension OutgoingDraft {
         cc: [Participant],
         body userText: String,
         attachments: [OutgoingAttachment] = [],
+        replyingTo target: Message? = nil,
         sentAt date: Date,
         locale: Locale = .current,
         timeZone: TimeZone = .current
     ) -> OutgoingDraft {
-        let (inReplyTo, references) = ReplyBuilder.threadingHeaders(replyingTo: thread)
-        let composed = thread.messages.last.map {
+        let quoted = target ?? thread.messages.last
+        let (inReplyTo, references) = target.map { ReplyBuilder.threadingHeaders(replyingTo: $0) }
+            ?? ReplyBuilder.threadingHeaders(replyingTo: thread)
+        let composed = quoted.map {
             QuotedText.replyBody(userText, quoting: $0, locale: locale, timeZone: timeZone)
         } ?? userText.trimmingCharacters(in: .whitespacesAndNewlines)
         return OutgoingDraft(

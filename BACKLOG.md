@@ -120,7 +120,8 @@ and the integrated inbox wait below that line.
   first; it reuses the same local, display-only Contacts access already used for
   avatars, so nothing leaves the device and there's no backend. A denied
   permission simply yields no suggestions, and the field still takes a typed
-  address. Verified on device.
+  address. Shared by the new-conversation composer and the forward composer
+  through one recipient-field component. Verified on device.
 
 - **In-conversation search.** A "Find in Conversation" action in the thread's ⋯
   menu opens a search panel over the open conversation; typing filters it to the
@@ -132,12 +133,27 @@ and the integrated inbox wait below that line.
   memory over the already-loaded thread, so there's no network and the same
   no-backend posture as the inbox search. Verified on device.
 
+- **Swipe-to-reply.** Swipe a bubble left to reply to that message specifically:
+  it slides under the finger revealing a reply arrow, and past the threshold on
+  release it starts a reply aimed at that message, with a "Replying to…" chip
+  above the reply bar (✕ to cancel, which also drops the keyboard) and the field
+  focused. A "Reply" item in the long-press menu is the non-gesture path. On send,
+  that message is quoted and the reply threads onto it (`In-Reply-To`) rather than
+  the thread's latest; clearing the chip falls back to a normal reply. The gesture
+  is simultaneous with the scroll so it never blocks it, engaging only on a
+  leftward, horizontal-dominant drag. Verified on device.
+
 ## Above the multi-account line
 
 In recommended sequence:
 
-- **Pin a conversation and swipe-to-reply.** Pin a thread to the top of the
-  inbox, and reply with a swipe on a bubble. Cheap quality-of-life lifts.
+- **Pin a conversation.** Pin a thread to the top of the inbox, with a swipe
+  action and context item to toggle it. A cheap quality-of-life lift.
+- **Peek per-bubble timestamps.** Drag the whole message stack to the left to
+  reveal each bubble's send time along the trailing edge, iMessage-style, sliding
+  back when released. A read-only glance, distinct from the per-bubble swipe (that
+  gesture is reply). Only bubbles that don't already show a timestamp (the
+  non-run-ending ones) need to reveal it.
 - **Junk and block-sender.** A move-to-Junk action and a way to block a sender.
   Depends on folders, so it naturally follows that item.
 

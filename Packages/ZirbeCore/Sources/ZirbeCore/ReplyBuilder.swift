@@ -56,6 +56,20 @@ public enum ReplyBuilder {
         return (latest.messageID, references)
     }
 
+    /// The `In-Reply-To` and `References` for a reply aimed at one specific
+    /// message (a swipe-to-reply on an earlier bubble), rather than the thread's
+    /// latest. In-Reply-To is that message's Message-ID; References extends its
+    /// chain with its own id, so the reply slots in beneath it.
+    public static func threadingHeaders(
+        replyingTo message: Message
+    ) -> (inReplyTo: String?, references: [String]) {
+        var references = message.references.filter { !$0.isEmpty }
+        if let mid = message.messageID, !mid.isEmpty, references.last != mid {
+            references.append(mid)
+        }
+        return (message.messageID, references)
+    }
+
     /// A fresh, globally-unique Message-ID for an outgoing message, in
     /// `<id@domain>` form. The domain comes from the account address so the id is
     /// well-formed; it is generated before sending so the SMTP send and the

@@ -46,6 +46,11 @@ struct ConversationView: View {
     @State private var flashedMessage: String?
     @State private var replyText = ""
     @State private var replyAttachments: [StagedAttachment] = []
+    /// The earlier message a swipe-to-reply is answering, shown as a chip above the
+    /// reply bar; nil for a normal reply into the thread (which answers the latest).
+    @State private var replyTarget: Message?
+    /// A one-shot flag that asks the reply bar to take focus after a swipe.
+    @State private var focusReply = false
     @State private var isSending = false
     @State private var removedAddresses: Set<String> = []
     @State private var showRecipients = false
@@ -145,7 +150,19 @@ struct ConversationView: View {
                 }
                 if !isSearching {
                     Divider()
-                    ReplyBar(text: $replyText, attachments: $replyAttachments, isSending: isSending, onSend: { send(into: thread) })
+                    if let target = replyTarget {
+                        ReplyTargetChip(message: target) {
+                            replyTarget = nil
+                            dismissKeyboard()
+                        }
+                    }
+                    ReplyBar(
+                        text: $replyText,
+                        attachments: $replyAttachments,
+                        isSending: isSending,
+                        focusRequest: $focusReply,
+                        onSend: { send(into: thread) }
+                    )
                 }
             } else if isLoading {
                 ProgressView("Loading…").frame(maxHeight: .infinity)
@@ -291,6 +308,7 @@ struct ConversationView: View {
                             isFlashed: flashedMessage == message.id,
                             onReact: { emoji in react(emoji, to: message, in: thread) },
                             onUndoReaction: { undoReaction(on: message) },
+                            onReply: { beginReply(to: message) },
                             onShowWeb: { body, showImages in
                                 activeWeb = ActiveWeb(messageID: message.id, body: body, showImages: showImages)
                             },
@@ -474,16 +492,32 @@ struct ConversationView: View {
     private func send(into thread: ZirbeCore.Thread) {
         let text = replyText
         let files = replyAttachments.map(\.attachment)
+        let targetID = replyTarget?.messageID
         isSending = true
         Task {
-            let updated = await model.sendReply(to: thread, removing: removedAddresses, body: text, attachments: files)
+            let updated = await model.sendReply(to: thread, removing: removedAddresses, body: text, attachments: files, replyingToMessageID: targetID)
             isSending = false
             if let updated {
                 self.thread = updated
                 replyText = ""
                 replyAttachments = []
+                replyTarget = nil
             }
         }
+    }
+
+    /// Begin a reply aimed at a specific message (a swipe on its bubble, or its
+    /// long-press Reply): remember it as the target and focus the reply bar.
+    private func beginReply(to message: Message) {
+        replyTarget = message
+        focusReply = true
+    }
+
+    /// Resign the reply field's keyboard. Used when canceling a swipe-to-reply, so
+    /// clearing the target also puts the keyboard away rather than leaving a stray
+    /// cursor in the reply box.
+    private func dismissKeyboard() {
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
     }
 
     /// Retry a reply that failed to send, resending the held draft. The refreshed
@@ -763,7 +797,13 @@ struct ReplyBar: View {
     /// An external requirement beyond having something to send (a new conversation
     /// needs a recipient). A reply has its recipients already, so this defaults on.
     var canSend: Bool = true
+    /// A one-shot request to focus the field, flipped true by the caller (a
+    /// swipe-to-reply focuses the bar). The bar takes focus and resets it. Nil for
+    /// callers that don't drive focus, like the new-conversation composer.
+    var focusRequest: Binding<Bool>? = nil
     let onSend: () -> Void
+
+    @FocusState private var fieldFocused: Bool
 
     /// Nothing to send: no typed text and no picked files.
     private var isEmpty: Bool {
@@ -777,6 +817,7 @@ struct ReplyBar: View {
                 AttachButton(attachments: $attachments)
                 TextField(placeholder, text: $text, axis: .vertical)
                     .lineLimit(1...5)
+                    .focused($fieldFocused)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 7)
                     .background(Color(.secondarySystemBackground))
@@ -795,6 +836,54 @@ struct ReplyBar: View {
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
+        // A swipe-to-reply asks the bar to take focus; consume the request so it
+        // fires once per swipe.
+        .onChange(of: focusRequest?.wrappedValue ?? false) { _, want in
+            if want {
+                fieldFocused = true
+                focusRequest?.wrappedValue = false
+            }
+        }
+    }
+}
+
+/// The strip above the reply bar naming the earlier message a swipe-to-reply is
+/// answering: a reply arrow, who wrote it, a one-line glance of its text, and an
+/// ✕ to cancel and return to a normal reply into the thread.
+private struct ReplyTargetChip: View {
+    let message: Message
+    let onClear: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "arrowshape.turn.up.left.fill")
+                .font(.caption)
+                .foregroundStyle(.tint)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Replying to \(message.from?.label ?? "the sender")")
+                    .font(.caption.weight(.semibold))
+                if !snippet.isEmpty {
+                    Text(snippet)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            Spacer()
+            Button(action: onClear) {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Cancel reply")
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 6)
+        .background(Color(.secondarySystemBackground))
+    }
+
+    private var snippet: String {
+        QuotedText.snippet(message.bodyText ?? "", maxLength: 64)
     }
 }
 
@@ -830,6 +919,9 @@ private struct MessageBubble: View {
     let onReact: (String) -> Void
     /// Pull back the pending reaction before its window passes.
     let onUndoReaction: () -> Void
+    /// Answer this message specifically (a swipe on the bubble, or Reply from the
+    /// long-press menu): the conversation targets it and focuses the reply bar.
+    let onReply: () -> Void
     /// Hand the fetched body up so the conversation can take over its tray with
     /// the web view: the HTML plus inline images, and whether to show remote
     /// images on open.
@@ -846,6 +938,9 @@ private struct MessageBubble: View {
     @State private var isRetrying = false
     /// Whether the reaction picker popover is showing for this bubble.
     @State private var showingReactionPicker = false
+    /// The live horizontal offset while swiping the bubble to reply; springs back
+    /// to zero on release.
+    @State private var replyDragOffset: CGFloat = 0
     @State private var quoteExpanded = false
     /// Which action is fetching, so only the tapped button shows a spinner: nil
     /// when idle, true for an images-on open, false for an images-blocked one.
@@ -1045,6 +1140,10 @@ private struct MessageBubble: View {
                     showingReactionPicker = false
                     onReact(emoji)
                 },
+                onReply: {
+                    showingReactionPicker = false
+                    onReply()
+                },
                 onForward: {
                     showingReactionPicker = false
                     onForward()
@@ -1052,6 +1151,46 @@ private struct MessageBubble: View {
             )
             .presentationCompactAdaptation(.popover)
         }
+        // Swipe the bubble left to reply to it: it slides under the finger,
+        // revealing a reply arrow, and passing the threshold on release starts a
+        // reply aimed at this message. Simultaneous so vertical scrolling still
+        // wins; the gesture only engages on a leftward, horizontal-dominant drag.
+        .offset(x: replyDragOffset)
+        .overlay(alignment: .trailing) {
+            Image(systemName: "arrowshape.turn.up.left.fill")
+                .foregroundStyle(.secondary)
+                .opacity(replyRevealProgress)
+                .offset(x: 30)
+        }
+        .simultaneousGesture(replyDragGesture)
+    }
+
+    /// How far the reply arrow has faded in, 0…1, tracking the leftward drag up to
+    /// the trigger threshold.
+    private var replyRevealProgress: Double {
+        Double(min(-replyDragOffset, 55) / 55)
+    }
+
+    /// The swipe-to-reply drag: track a leftward, horizontal-dominant drag as a
+    /// bubble offset, fire the reply on release past the threshold, and spring
+    /// back either way.
+    private var replyDragGesture: some Gesture {
+        DragGesture(minimumDistance: 20)
+            .onChanged { value in
+                guard abs(value.translation.width) > abs(value.translation.height),
+                      value.translation.width < 0 else { return }
+                replyDragOffset = max(value.translation.width, -70)
+            }
+            .onEnded { value in
+                let horizontal = abs(value.translation.width) > abs(value.translation.height)
+                if horizontal, value.translation.width < -55 {
+                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    onReply()
+                }
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                    replyDragOffset = 0
+                }
+            }
     }
 
     /// The "Web View" affordances, shown when the message carries an HTML
