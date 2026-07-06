@@ -346,7 +346,7 @@ public actor SyncService {
     /// server (grouped by mailbox), then update the local store and rethread so
     /// the inbox unread state follows. The server update is skipped when the
     /// thread has no server-backed messages (a purely local conversation).
-    public func setRead(threadID: String, seen: Bool, password: String) async throws {
+    public func setRead(threadID: String, seen: Bool, password: String, rethread: Bool = true) async throws {
         let refs = try await store.messageRefs(threadID: threadID)
         if !refs.isEmpty {
             try await engine.connect(username: account.username, password: password)
@@ -355,14 +355,14 @@ public actor SyncService {
             }
         }
         try await store.setSeen(seen, threadID: threadID)
-        try await store.rethread(accountID: account.id)
+        if rethread { try await store.rethread(accountID: account.id) }
     }
 
     /// Flag or unflag a thread: set or clear `\Flagged` on its messages on the
     /// server (grouped by mailbox), then update the local store and rethread so
     /// the inbox flagged state follows. The server update is skipped when the
     /// thread has no server-backed messages (a purely local conversation).
-    public func setFlagged(threadID: String, flagged: Bool, password: String) async throws {
+    public func setFlagged(threadID: String, flagged: Bool, password: String, rethread: Bool = true) async throws {
         let refs = try await store.messageRefs(threadID: threadID)
         if !refs.isEmpty {
             try await engine.connect(username: account.username, password: password)
@@ -371,14 +371,14 @@ public actor SyncService {
             }
         }
         try await store.setFlagged(flagged, threadID: threadID)
-        try await store.rethread(accountID: account.id)
+        if rethread { try await store.rethread(accountID: account.id) }
     }
 
     /// Trash a thread: move its server-backed messages to the server's Trash
     /// (grouped by mailbox), then delete the local copies and rethread so the
     /// conversation leaves the inbox. The server move is the gate for messages
     /// that have it; local-only messages are simply dropped.
-    public func trash(threadID: String, password: String) async throws {
+    public func trash(threadID: String, password: String, rethread: Bool = true) async throws {
         let refs = try await store.messageRefs(threadID: threadID)
         if !refs.isEmpty {
             try await engine.connect(username: account.username, password: password)
@@ -387,7 +387,7 @@ public actor SyncService {
             }
         }
         try await store.deleteThread(threadID: threadID)
-        try await store.rethread(accountID: account.id)
+        if rethread { try await store.rethread(accountID: account.id) }
     }
 
     /// Move a thread's server-backed messages to `destination` (grouped by their
@@ -396,7 +396,7 @@ public actor SyncService {
     /// messages that have a UID; local-only messages are simply dropped. The
     /// destination folder shows them on its next sync (a moved message gets a new
     /// UID there, so it is re-fetched rather than carried over with a stale one).
-    public func move(threadID: String, to destination: String, password: String) async throws {
+    public func move(threadID: String, to destination: String, password: String, rethread: Bool = true) async throws {
         let refs = try await store.messageRefs(threadID: threadID)
         if !refs.isEmpty {
             try await engine.connect(username: account.username, password: password)
@@ -405,14 +405,14 @@ public actor SyncService {
             }
         }
         try await store.deleteThread(threadID: threadID)
-        try await store.rethread(accountID: account.id)
+        if rethread { try await store.rethread(accountID: account.id) }
     }
 
     /// Archive a thread: move its server-backed messages to the server's Archive
     /// folder (resolved by the engine), preserving their read state, then drop the
     /// local copies and rethread. Same shape as `move`, with the destination the
     /// engine's archive folder rather than a caller-named one.
-    public func archive(threadID: String, password: String) async throws {
+    public func archive(threadID: String, password: String, rethread: Bool = true) async throws {
         let refs = try await store.messageRefs(threadID: threadID)
         if !refs.isEmpty {
             try await engine.connect(username: account.username, password: password)
@@ -421,13 +421,13 @@ public actor SyncService {
             }
         }
         try await store.deleteThread(threadID: threadID)
-        try await store.rethread(accountID: account.id)
+        if rethread { try await store.rethread(accountID: account.id) }
     }
 
     /// Mark a thread as junk: move its server-backed messages to the server's Junk
     /// folder (resolved by the engine, with a name fallback), then drop the local
     /// copies and rethread. Same shape as `archive`.
-    public func junk(threadID: String, password: String) async throws {
+    public func junk(threadID: String, password: String, rethread: Bool = true) async throws {
         let refs = try await store.messageRefs(threadID: threadID)
         if !refs.isEmpty {
             try await engine.connect(username: account.username, password: password)
@@ -436,6 +436,13 @@ public actor SyncService {
             }
         }
         try await store.deleteThread(threadID: threadID)
+        if rethread { try await store.rethread(accountID: account.id) }
+    }
+
+    /// Recompute threads for the account once. Bulk callers pass `rethread: false`
+    /// to the per-thread mutations above and call this a single time after the
+    /// loop, so K selected conversations cost one rethread rather than K.
+    public func rethread() async throws {
         try await store.rethread(accountID: account.id)
     }
 

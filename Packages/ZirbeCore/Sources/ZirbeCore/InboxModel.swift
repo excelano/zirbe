@@ -530,20 +530,35 @@ public final class InboxModel {
         }
     }
 
+    /// Apply a per-thread server mutation across a selection, rethreading and
+    /// refreshing once at the end rather than once per thread: K selected
+    /// conversations cost one rethread, not K. Even if a mutation fails midway the
+    /// threads already changed are rethreaded and shown before the error surfaces,
+    /// so partial progress isn't lost. The shared shape of the bulk read/flag/
+    /// trash/archive/junk/move actions; each passes `rethread: false` to the
+    /// per-thread sync call. Errors surface in `errorMessage`.
+    private func bulkMutate(_ threadIDs: [String], _ mutate: @escaping (String) async throws -> Void) async {
+        await attempt {
+            var caught: Error?
+            for id in threadIDs {
+                do { try await mutate(id) } catch { caught = error; break }
+            }
+            try await self.sync.rethread()
+            try await self.reloadList()
+            if let caught { throw caught }
+        }
+    }
+
     /// Mark one or more conversations read or unread, reflecting each on the
-    /// server and then refreshing the inbox rows once. The server updates loop
-    /// over the warm session; the single store re-read at the end reflects them
-    /// all at once. Errors surface in `errorMessage`.
+    /// server and then refreshing the inbox rows once. Errors surface in
+    /// `errorMessage`.
     public func markRead(threadIDs: [String], read: Bool) async {
         guard let password else {
             errorMessage = "Connect an account first."
             return
         }
-        await attempt {
-            for id in threadIDs {
-                try await self.sync.setRead(threadID: id, seen: read, password: password)
-            }
-            try await self.reloadList()
+        await bulkMutate(threadIDs) { id in
+            try await self.sync.setRead(threadID: id, seen: read, password: password, rethread: false)
         }
     }
 
@@ -568,11 +583,8 @@ public final class InboxModel {
             errorMessage = "Connect an account first."
             return
         }
-        await attempt {
-            for id in threadIDs {
-                try await self.sync.setFlagged(threadID: id, flagged: flagged, password: password)
-            }
-            try await self.reloadList()
+        await bulkMutate(threadIDs) { id in
+            try await self.sync.setFlagged(threadID: id, flagged: flagged, password: password, rethread: false)
         }
     }
 
@@ -712,11 +724,8 @@ public final class InboxModel {
             errorMessage = "Connect an account first."
             return
         }
-        await attempt {
-            for id in threadIDs {
-                try await self.sync.trash(threadID: id, password: password)
-            }
-            try await self.reloadList()
+        await bulkMutate(threadIDs) { id in
+            try await self.sync.trash(threadID: id, password: password, rethread: false)
         }
     }
 
@@ -734,11 +743,8 @@ public final class InboxModel {
             errorMessage = "Connect an account first."
             return
         }
-        await attempt {
-            for id in threadIDs {
-                try await self.sync.archive(threadID: id, password: password)
-            }
-            try await self.reloadList()
+        await bulkMutate(threadIDs) { id in
+            try await self.sync.archive(threadID: id, password: password, rethread: false)
         }
     }
 
@@ -755,11 +761,8 @@ public final class InboxModel {
             errorMessage = "Connect an account first."
             return
         }
-        await attempt {
-            for id in threadIDs {
-                try await self.sync.junk(threadID: id, password: password)
-            }
-            try await self.reloadList()
+        await bulkMutate(threadIDs) { id in
+            try await self.sync.junk(threadID: id, password: password, rethread: false)
         }
     }
 
@@ -813,11 +816,8 @@ public final class InboxModel {
             errorMessage = "Connect an account first."
             return
         }
-        await attempt {
-            for id in threadIDs {
-                try await self.sync.move(threadID: id, to: destination, password: password)
-            }
-            try await self.reloadList()
+        await bulkMutate(threadIDs) { id in
+            try await self.sync.move(threadID: id, to: destination, password: password, rethread: false)
         }
     }
 
