@@ -21,7 +21,21 @@ public actor MailSender {
 
     public init(config: MailServerConfig, logger: Logger = Logger(label: "zirbe.smtp")) {
         self.logger = logger
-        self.server = SMTPServer(host: config.host, port: config.port)
+        self.server = SMTPServer(
+            host: config.host,
+            port: config.port,
+            transportSecurity: Self.transportSecurity(port: config.port)
+        )
+    }
+
+    /// Require TLS rather than leave it opportunistic. 465 is implicit TLS; every
+    /// other submission port (587, legacy 25) upgrades via STARTTLS and we demand
+    /// it — not "if available", which a network attacker can strip to plaintext
+    /// and capture the login. This matters most here because SwiftMail's automatic
+    /// inference sends in the clear on a non-standard SMTP port; requiring STARTTLS
+    /// instead fails closed if the server can't secure the connection.
+    private static func transportSecurity(port: Int) -> MailTransportSecurity {
+        port == 465 ? .implicitTLS : .startTLS
     }
 
     /// Send one message: open an authenticated SMTP connection, send, and close

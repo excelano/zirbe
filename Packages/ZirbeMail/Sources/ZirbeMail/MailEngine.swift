@@ -47,7 +47,20 @@ public actor MailEngine {
 
     public init(config: MailServerConfig, logger: Logger = Logger(label: "zirbe.mail")) {
         self.logger = logger
-        self.server = IMAPServer(host: config.host, port: config.port)
+        self.server = IMAPServer(
+            host: config.host,
+            port: config.port,
+            transportSecurity: Self.transportSecurity(port: config.port)
+        )
+    }
+
+    /// Require TLS rather than leave it opportunistic. 993 is implicit TLS; every
+    /// other port (including 143) upgrades via STARTTLS and we demand it — not
+    /// "if available", which a network attacker can strip to plaintext and capture
+    /// the app password. This never falls through to a plaintext connection: a
+    /// server that can't do TLS fails to connect, which is the safe direction.
+    private static func transportSecurity(port: Int) -> MailTransportSecurity {
+        port == 993 ? .implicitTLS : .startTLS
     }
 
     /// Establish or reuse an authenticated session with these credentials.
