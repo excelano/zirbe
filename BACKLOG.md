@@ -221,6 +221,37 @@ Below the line: more than one account, and the auth tracks that widen reach.
   attachment isn't hidden. Today the trailing segment is usually empty, so this is
   a correctness edge, not a common loss.
 
+### Deferred from the 2026-07-06 code review (batch 2)
+
+A three-lens review (correctness, performance, security) ran after block-sender
+shipped. The safe, high-value fixes landed the same day (bulk-action rethreading,
+the narrowed unread-count read plus a mailbox index, TLS required on the
+transports, header-injection sanitizing, a type-ahead race). These three want
+more care or an on-device feel-check and were deferred:
+
+- **Pin survives a thread re-root (correctness).** A pin is keyed by thread id,
+  but a thread's id changes when a late-arriving earlier ancestor re-roots the
+  tree in `rethread`, orphaning the `pinnedThread` row so the conversation
+  silently drops out of the pinned group. Flag/read/reaction state ride on message
+  rows and are immune. Re-key pins to a rethread-stable id, or reconcile
+  `pinnedThread` against surviving thread ids inside `rethread`. Real but
+  uncommon trigger.
+- **Conversation render cost (performance).** `ConversationView.conversation()`
+  rebuilds the whole reactions dictionary twice per row (O(N²)) and re-runs it on
+  every timestamp-peek drag frame, so a long thread drops frames during the peek.
+  Compute `reactionsByTarget` once, hoist `conversationMessages`/`deltas` out of
+  `body`, and decouple `peekOffset` so the parent body doesn't re-evaluate per
+  drag delta. Needs a device feel-check.
+- **Sync-path SQL (performance).** `pruneMessages` and `blockedInboxRefs` fetch
+  every row and filter in Swift where a single SQL `DELETE`/`WHERE … IN` would do,
+  and `reconcile` runs two full rethreads per sync (the second only to recompute
+  snippets). Push the filters into SQL and collapse the second rethread to a
+  snippet update. Once-per-sync, so lower urgency than the mutation hot path.
+
+Parked as polish: FTS5 for local search (the 6-column leading-wildcard LIKE),
+caching decoded avatar images, a selection-lookup dictionary, and redacting the
+account email from debug logs.
+
 ## Out of scope (privacy posture)
 
 These can't be built without breaking the no-backend, no-third-party rule, so
