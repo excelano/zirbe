@@ -89,6 +89,15 @@ struct MessageRow: Codable, FetchableRecord, PersistableRecord {
     }
 }
 
+/// A two-column projection of `message` for the unread-count read: just the
+/// mailbox and the flags JSON, so counting unseen mail never decodes a full
+/// `MessageRow` (body text, participant and attachment blobs). GRDB decodes the
+/// `flags` column the same way `MessageRow` does.
+private struct UnreadProbe: Decodable, FetchableRecord {
+    var mailboxName: String
+    var flags: [Flag]
+}
+
 /// One persisted thread row, carrying everything the inbox list shows so the
 /// list never has to load messages.
 struct ThreadRow: Codable, FetchableRecord, PersistableRecord {
@@ -577,11 +586,19 @@ public final class MailStore: @unchecked Sendable {
     /// model avoids; a folder's count becomes exact once it has been opened once.
     public func unreadCounts(accountID: String) async throws -> [String: Int] {
         try await dbQueue.read { db in
-            let rows = try MessageRow
-                .filter(Column("accountID") == accountID)
-                .fetchAll(db)
+            // Only the two columns the count needs, so the full row — the KB-scale
+            // `bodyText` and the JSON participant/attachment blobs — is never
+            // decoded. This runs after every sync, every IDLE tick, and every
+            // mutation, so keeping the read narrow matters. Reactions are excluded
+            // in SQL so they never bold a folder; unseen is decided from the small
+            // flags JSON rather than a fragile `LIKE`.
+            let rows = try UnreadProbe.fetchAll(
+                db,
+                sql: "SELECT mailboxName, flags FROM message WHERE accountID = ? AND reaction IS NULL",
+                arguments: [accountID]
+            )
             var counts: [String: Int] = [:]
-            for row in rows where !row.flags.contains(.seen) && row.reaction == nil {
+            for row in rows where !row.flags.contains(.seen) {
                 counts[row.mailboxName, default: 0] += 1
             }
             return counts
@@ -907,6 +924,19 @@ public final class MailStore: @unchecked Sendable {
                 t.column("address", .text).notNull()
                 t.primaryKey(["accountID", "address"])
             }
+        }
+        // The message table only had single-column indexes on accountID and
+        // threadID. The hot reads are mailbox-scoped within an account
+        // (threadSummaries, pruneMessages, blockedInboxRefs) and MAX(uid) per
+        // mailbox (the notification watermark), all of which scan under the lone
+        // accountID index. This composite covers them: leading accountID +
+        // mailboxName narrows to a folder, trailing uid serves the range and MAX.
+        migrator.registerMigration("v16-message-mailbox-index") { db in
+            try db.create(
+                index: "message_on_account_mailbox_uid",
+                on: "message",
+                columns: ["accountID", "mailboxName", "uid"]
+            )
         }
         return migrator
     }()
