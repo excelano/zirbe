@@ -13,6 +13,7 @@
 
 /* Begin PBXFileReference section */
 		6BD51CD72FD7C4D60091C368 /* Zirbe.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Zirbe.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		6BD51D0A2FD8C4D60091C368 /* Version.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Version.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -39,9 +40,18 @@
 		6BD51CCE2FD7C4D50091C368 = {
 			isa = PBXGroup;
 			children = (
+				6BD51D0B2FD8C4D60091C368 /* Config */,
 				6BD51CD92FD7C4D60091C368 /* Zirbe */,
 				6BD51CD82FD7C4D60091C368 /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		6BD51D0B2FD8C4D60091C368 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				6BD51D0A2FD8C4D60091C368 /* Version.xcconfig */,
+			);
+			path = Config;
 			sourceTree = "<group>";
 		};
 		6BD51CD82FD7C4D60091C368 /* Products */ = {
@@ -140,6 +150,7 @@
 /* Begin XCBuildConfiguration section */
 		6BD51CE02FD7C4D70091C368 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 6BD51D0A2FD8C4D60091C368 /* Version.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
@@ -204,6 +215,7 @@
 		};
 		6BD51CE12FD7C4D70091C368 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = 6BD51D0A2FD8C4D60091C368 /* Version.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
@@ -265,7 +277,6 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 9K6W5PMFYP;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -280,7 +291,6 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.excelano.Zirbe;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
@@ -299,7 +309,6 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 9K6W5PMFYP;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
@@ -314,7 +323,6 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.excelano.Zirbe;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;

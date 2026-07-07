@@ -1,0 +1,11 @@
+// Zirbe version — single source of truth.
+//
+// MARKETING_VERSION is the store version (e.g. 1.0). CURRENT_PROJECT_VERSION is
+// the global, monotonic build number, bumped on every upload regardless of
+// whether the release is a patch or a feature. Bump both here and nowhere else.
+//
+// Do not re-declare either key in the target's build settings: a target-level
+// value shadows this file and the surfaces silently drift apart.
+
+MARKETING_VERSION = 1.0
+CURRENT_PROJECT_VERSION = 1
