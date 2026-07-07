@@ -40,7 +40,7 @@ rejection always takes the next number.
 
 Before the first archive can be uploaded there has to be an app record to receive
 it. In App Store Connect, **Apps → + → New App**: platform iOS, the primary language,
-the bundle ID `com.excelano.Zirbe` (must already exist in the Developer portal's
+the bundle ID `com.excelano.zirbe` (must already exist in the Developer portal's
 Identifiers, and match the project's `PRODUCT_BUNDLE_IDENTIFIER`), and an SKU (any
 stable internal string, e.g. `zirbe-ios`). The name reserved here is the store name;
 see `app-store-connect-metadata.md` for the exact text to use.
