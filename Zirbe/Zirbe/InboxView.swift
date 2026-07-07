@@ -84,6 +84,13 @@ struct InboxView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbarContent }
         .searchable(text: $searchText, prompt: "Search chats")
+        #if DEBUG
+        // Demo/screenshot capture: pre-fill the search field so the results
+        // screen can be grabbed without typing.
+        .task {
+            if let query = DemoMode.searchQuery, searchText.isEmpty { searchText = query }
+        }
+        #endif
         .sheet(isPresented: $isComposing) {
             ComposeView(model: model)
         }

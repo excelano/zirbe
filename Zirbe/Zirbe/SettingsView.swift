@@ -44,6 +44,9 @@ struct SettingsView: View {
     @AppStorage(SettingsKeys.loadRemoteImages) private var loadRemoteImages = false
     @AppStorage(SettingsKeys.newMailNotifications) private var newMailNotifications = true
     @AppStorage(SettingsKeys.previewLineCount) private var previewLineCount = 2
+    #if DEBUG
+    @AppStorage(DemoMode.userDefaultsKey) private var demoMode = false
+    #endif
 
     var body: some View {
         NavigationStack {
@@ -120,6 +123,16 @@ struct SettingsView: View {
                 } footer: {
                     Text("Signing out removes this account and its downloaded mail from this device.")
                 }
+
+                #if DEBUG
+                Section {
+                    Toggle("Demo mode", isOn: $demoMode)
+                } header: {
+                    Text("Developer")
+                } footer: {
+                    Text("Replaces your mail with generic sample conversations for App Store screenshots. Relaunch the app to apply. Your real account is left untouched.")
+                }
+                #endif
             }
             .scrollContentBackground(.hidden)
             .background(Color.zirbeCanvas)
