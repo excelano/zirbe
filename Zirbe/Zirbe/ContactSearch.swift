@@ -18,6 +18,9 @@ import ZirbeCore
 /// matches).
 enum ContactsAuthorization {
     static func granted(_ store: CNContactStore) async -> Bool {
+        // Demo/screenshot mode never touches Contacts, so no permission alert can
+        // land on a capture. Avatars fall back to monograms, which is the intent.
+        if DemoMode.isActive { return false }
         let status = CNContactStore.authorizationStatus(for: .contacts)
         switch status {
         case .authorized:

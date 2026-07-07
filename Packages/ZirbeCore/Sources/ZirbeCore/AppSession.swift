@@ -40,6 +40,12 @@ public final class AppSession {
     public func restore() async {
         guard model == nil else { isRestoring = false; return }
         defer { isRestoring = false }
+        #if DEBUG
+        if DemoMode.isActive {
+            await enterDemo()
+            return
+        }
+        #endif
         do {
             let store = try ensureStore()
             guard let account = try await store.accounts().first else { return }
@@ -81,6 +87,26 @@ public final class AppSession {
         }
         try? await store?.eraseAll()
     }
+
+    #if DEBUG
+    /// Enter demo/screenshot mode: build an isolated in-memory store, seed it with
+    /// sample conversations, and connect a demo model to it, all without touching
+    /// the signed-in account, its Keychain password, or the on-disk cache. The gate
+    /// in RootView then shows the inbox as if signed in.
+    private func enterDemo() async {
+        do {
+            let demoStore = try MailStore()
+            try await DemoData.seed(into: demoStore)
+            let candidate = InboxModel(account: DemoData.account, store: demoStore)
+            candidate.enterDemoMode()
+            await candidate.loadCached()
+            store = demoStore
+            model = candidate
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+    #endif
 
     private func ensureStore() throws -> MailStore {
         if let store { return store }

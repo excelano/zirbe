@@ -29,7 +29,22 @@ struct RootView: View {
                         }
                 }
                 // Land in the inbox, then ask for notification permission once.
-                .task { await notifier.requestAuthorizationIfNeeded() }
+                // Demo mode never prompts, so a permission alert can't land on a
+                // screenshot.
+                .task {
+                    guard !DemoMode.isActive else { return }
+                    await notifier.requestAuthorizationIfNeeded()
+                }
+                #if DEBUG
+                // Demo screenshot capture: open the top conversation on launch so
+                // the thread screen can be grabbed without a tap. Summaries are
+                // already seeded by the time this branch renders.
+                .task {
+                    guard DemoMode.opensTopConversation, path.isEmpty,
+                          let first = model.summaries.first else { return }
+                    path = [first.id]
+                }
+                #endif
                 // A tapped notification surfaces its thread here; push it and clear.
                 .onReceive(notifier.$pendingThreadID) { threadID in
                     guard let threadID else { return }

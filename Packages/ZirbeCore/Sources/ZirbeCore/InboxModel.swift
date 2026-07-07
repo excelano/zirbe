@@ -65,6 +65,21 @@ public final class InboxModel {
     /// Whether a password is held, so refresh and conversation loads can run.
     public var isConnected: Bool { password != nil }
 
+    /// True in demo/screenshot mode, where the store is pre-seeded and every
+    /// network path is short-circuited. Always false in release. See `DemoMode`.
+    public private(set) var isDemo = false
+
+    #if DEBUG
+    /// Enter demo/screenshot mode: mark the session connected against an already
+    /// seeded in-memory store, with no password prompt and no network. `isConnected`
+    /// then reads true so the UI shows the inbox; every sync path checks `isDemo`
+    /// and no-ops. Compiled out of release builds.
+    public func enterDemoMode() {
+        isDemo = true
+        password = "demo"
+    }
+    #endif
+
     /// Whether the home (INBOX) view is on screen. The home view is the unscoped
     /// "all conversations" list; every other folder is a scoped view. INBOX stays
     /// the privileged folder synced on launch, watched over IDLE, and polled in
@@ -129,6 +144,8 @@ public final class InboxModel {
     }
 
     private func performSync(password: String) async throws {
+        // Demo mode reads from the pre-seeded store only; never touch the network.
+        if isDemo { try await reloadList(); return }
         if isViewingInbox {
             try await sync.syncInbox(password: password)
         } else {
@@ -203,7 +220,7 @@ public final class InboxModel {
     /// return. A failed or dropped watch is non-fatal: the inbox still updates on
     /// pull-to-refresh and on the next foreground, so nothing surfaces as an error.
     public func startLiveRefresh() {
-        guard let password, monitorTask == nil else { return }
+        guard !isDemo, let password, monitorTask == nil else { return }
         monitorTask = Task { [weak self] in
             guard let self else { return }
             do {
