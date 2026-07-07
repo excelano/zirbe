@@ -175,10 +175,23 @@ and the integrated inbox wait below that line.
 
 ## Above the multi-account line
 
-Clear. With junk and block-sender shipped, Zirbe meets the bar set at the top of
-this file: a full single-account Apple Mail replacement, as chat-native as the
+With junk and block-sender shipped, Zirbe meets the bar set at the top of this
+file: a full single-account Apple Mail replacement, as chat-native as the
 Messages metaphor allows. New single-account feature requests land here as they
-surface; otherwise the next work is below the line.
+surface.
+
+- **iPad split view.** 1.0 ships iPhone-only (`TARGETED_DEVICE_FAMILY = 1`) to
+  clear the first submission without the iPad screenshot set. Next up: restore
+  universal and build a proper iPad layout. The app's core navigation is a
+  single-column `NavigationStack` in `RootView`; the work is an adaptive
+  two-column `NavigationSplitView` (conversation list beside the open
+  conversation) that collapses to today's push stack on compact width, so iPhone
+  behavior is unchanged. The crux is that `InboxView`'s List already binds
+  `selection` for bulk-select mode, so single-selection navigation has to branch
+  by edit mode. Regression surface to cover: push nav, notification-tap routing,
+  demo-open capture, Drafts-opens-composer, bulk select, and back behavior. Once
+  it lands, re-enable the iPad 13" screenshot set and the "beside the
+  conversation" marketing beat.
 
 ## The multi-account line
 

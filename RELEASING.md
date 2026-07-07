@@ -6,8 +6,11 @@ CLI dev-install path (`~/bin/build-to-phone.sh zirbe`). It is modeled on Blick's
 `RELEASING.md`; where Zirbe differs from Blick the difference is called out, because
 those are the places a habit from the other project would bite.
 
-Zirbe is a universal iPhone and iPad app with **no watch app and no widgets**, so
-the archive is just the app and the screenshot matrix is small. It authenticates to
+Zirbe 1.0 ships **iPhone-only** (`TARGETED_DEVICE_FAMILY = 1`), with **no watch app
+and no widgets**, so the archive is just the app and the screenshot matrix is a
+single size. iPad returns as a fast-follow once the split-view layout is built (see
+`BACKLOG.md`); until then the target stays iPhone-only so the submission needs no
+iPad screenshot set. It authenticates to
 the **user's own IMAP and SMTP servers with an app-specific password**, not a
 Microsoft sign-in, which changes what App Review needs. And it is a **public,
 MIT-licensed** repository, so nothing sensitive (demo-account logins, reviewer notes)
@@ -82,15 +85,10 @@ First-release specifics, and the ones that differ from Blick:
   Note plainly that this is a standards-based IMAP/SMTP client and the sign-in is the
   user's own mail account, not a Zirbe account. Keep the real credentials only in App
   Store Connect; the metadata file holds a placeholder.
-- **Screenshots.** Only two sizes are required and App Store Connect scales them
-  down for smaller devices: iPhone 6.9" at 1320×2868 and iPad 13" at 2064×2752. There
-  is no watch set. Stage them in `~/Downloads/zirbe-screenshots/iphone-6.9/` and
-  `ipad-13/`.
-- **iPad orientations.** The app is universal (`TARGETED_DEVICE_FAMILY = "1,2"`), so
-  upload validation requires the iPad interface-orientations key to list all four
-  orientations for multitasking. The project already sets this
-  (`INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad` = all four); do not remove
-  it or the upload fails.
+- **Screenshots.** Only one size is required and App Store Connect scales it down for
+  smaller devices: iPhone 6.9" at 1320×2868. There is no iPad set (iPhone-only 1.0)
+  and no watch set. Stage them in `~/Downloads/zirbe-screenshots/iphone-6.9/`. When
+  iPad returns, add the iPad 13" set at 2064×2752.
 - **Transport security.** Zirbe requires TLS on both transports. Every mainstream
   provider offers it on the standard ports, so this is invisible in practice; it is
   only worth remembering if a reviewer or tester ever points the app at a plaintext-
@@ -120,4 +118,4 @@ A build cannot be hot-swapped into an in-flight review. Fix the issue, bump to t
 next build number, re-archive, re-upload, and resubmit. For a first release the two
 likeliest causes are the demo-account path (the reviewer could not sign in, so
 double-check the credentials and server settings are correct and the account is
-reachable from outside your network) and, on a universal build, an iPad-layout note.
+reachable from outside your network).
