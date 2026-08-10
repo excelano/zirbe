@@ -180,7 +180,7 @@ file: a full single-account Apple Mail replacement, as chat-native as the
 Messages metaphor allows. New single-account feature requests land here as they
 surface.
 
-- **iPad split view.** 1.0 ships iPhone-only (`TARGETED_DEVICE_FAMILY = 1`) to
+- **iPad split view.** 1.0 shipped iPhone-only (`TARGETED_DEVICE_FAMILY = 1`) to
   clear the first submission without the iPad screenshot set. Next up: restore
   universal and build a proper iPad layout. The app's core navigation is a
   single-column `NavigationStack` in `RootView`; the work is an adaptive

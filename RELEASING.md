@@ -18,23 +18,19 @@ may be committed; that material lives in the gitignored `app-store-connect-metad
 
 ## Versioning
 
-`MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` currently live directly in the
-Xcode project, declared in both the Debug and Release build configurations of the
-app target (`Zirbe/Zirbe.xcodeproj/project.pbxproj`). A version bump therefore means
-editing the value in **both** configurations so they do not drift.
-
-Recommended hardening before or during the first release: centralize both keys in a
-`Config/Version.xcconfig` set as the project-level base configuration, the way Blick
-does, so a bump becomes a two-line edit in one file and no target can shadow it. This
-is optional and not a blocker for 1.0, but it removes the "edited Debug, forgot
-Release" failure mode permanently. If you add it, do not also re-declare either key
-in any target's build settings, or the target value silently wins over the xcconfig.
+`MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` live in
+`Zirbe/Config/Version.xcconfig`, wired as the project-level base configuration for
+both the Debug and Release configurations, the way Blick does it. A version bump is
+therefore a two-line edit in one file, with no way to update Debug and forget
+Release. Do not re-declare either key in any target's build settings: a target-level
+value silently wins over the xcconfig and the two surfaces drift apart without
+warning.
 
 Build numbers are global and monotonic across the whole app record, independent of
-the marketing version. 1.0 is build 1; the next upload is build 2 regardless of
-whether it is a patch or a feature release. App Store Connect rejects a build number
-it has already accepted, even for a rejected submission, so a re-upload after a
-rejection always takes the next number.
+the marketing version. 1.0 shipped as build 1; the next upload is build 2 regardless
+of whether it is a patch or a feature release. App Store Connect rejects a build
+number it has already accepted, even for a rejected submission, so a re-upload after
+a rejection always takes the next number.
 
 ## Create the app record (first release only)
 

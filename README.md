@@ -1,8 +1,8 @@
 # Zirbe
 
-An open-source email client for iPhone and iPad that looks and feels like a
-texting app, while keeping real email underneath. Standards-only, no backend,
-free.
+An open-source email client for iPhone that looks and feels like a texting app,
+while keeping real email underneath. Standards-only, no backend, free. iPad is
+next.
 
 ## The name
 
@@ -34,14 +34,24 @@ providers.
 
 ## Status
 
-Early. The mail engine is [Cocoanetics/SwiftMail](https://github.com/Cocoanetics/SwiftMail),
-a mature actor-based async IMAP and SMTP client, consumed through a thin
-adapter in `Packages/ZirbeMail` (a `MailEngine` actor returning Zirbe-owned
-value types, so the engine stays swappable). It compiles and links for iOS
-(device and simulator) and is proven end to end: connecting, authenticating,
-selecting a mailbox, and fetching message envelopes with their threading
-headers against a live account. Next up is `ZirbeCore` (domain models, JWZ
-threading, the GRDB store) and the read-only conversation UI.
+Zirbe 1.0 is [on the App Store](https://apps.apple.com/app/id6778170645),
+iPhone-only for now, and connects to any IMAP/SMTP account with a password or
+app-specific password. It reads and sends mail, threads it into conversations,
+handles attachments and inline images, and covers the surrounding surface a
+daily mail app needs: folders, archive and move, drafts, junk and block-sender,
+search, pinning, reactions, voice messages, and local new-mail notifications.
+The full picture of what is built and what is next is in
+[BACKLOG.md](BACKLOG.md).
+
+The mail engine is [Cocoanetics/SwiftMail](https://github.com/Cocoanetics/SwiftMail),
+a mature actor-based async IMAP and SMTP client, consumed through a thin adapter
+in `Packages/ZirbeMail` (a `MailEngine` actor returning Zirbe-owned value types,
+so the engine stays swappable). Email content parsing — HTML to text, quote
+folding, signatures, inline images — comes from the shared
+[Klartext](https://github.com/excelano/klartext) package.
+
+Next up is an iPad split-view layout, then multiple accounts and an integrated
+inbox, then OAuth for the providers that are retiring app passwords.
 
 ## License
 
