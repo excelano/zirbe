@@ -83,6 +83,20 @@ struct MessageRow: Codable, FetchableRecord, PersistableRecord {
         return glance.isEmpty ? nil : glance
     }
 
+    /// The columns a fetched body owns. A synced envelope carries none of them, so
+    /// a re-save of an already-cached message must leave them alone.
+    static let bodyColumns: Set<String> = ["bodyText", "hasHTML", "attachments", "snippet"]
+
+    /// Every other column: what a sync refreshes on a row it already has. Read off
+    /// the table itself rather than listed by hand, so a column added in a later
+    /// migration can't quietly go un-updated. The primary key is excluded — it's the
+    /// row being addressed, not a value to write.
+    static func headerColumns(in db: Database) throws -> [String] {
+        try db.columns(in: databaseTableName)
+            .map(\.name)
+            .filter { $0 != "id" && !bodyColumns.contains($0) }
+    }
+
     var message: Message {
         Message(
             messageID: messageID,
@@ -255,29 +269,44 @@ extension Account: FetchableRecord, PersistableRecord {
 
 /// The mail store. Thread-safe; wraps a GRDB database and exposes an async API.
 public final class MailStore: @unchecked Sendable {
-    private let dbQueue: DatabaseQueue
+    /// The database. A `DatabasePool` on disk and a `DatabaseQueue` in memory, so
+    /// the type is the protocol both satisfy.
+    private let database: any DatabaseWriter
 
     /// Open (or create) a store. Pass a file path for the app's persistent
     /// database, or omit it for an in-memory store (tests, previews).
+    ///
+    /// The on-disk store is a pool, which means WAL: readers no longer queue behind
+    /// the writer. A `DatabaseQueue` serializes everything through one connection,
+    /// so opening a conversation or typing a search while a sync was writing waited
+    /// on that whole write — a rethread and a prune — before it could read a row.
+    /// It also matters that two connections exist: the background refresh opens its
+    /// own store against the same file, and WAL is what lets those two coexist
+    /// rather than collide. The busy timeout covers the moment they overlap, at
+    /// backgrounding, when both could want the writer.
     public init(path: String? = nil) throws {
         if let path {
-            dbQueue = try DatabaseQueue(path: path)
+            var configuration = Configuration()
+            configuration.busyMode = .timeout(5)
+            database = try DatabasePool(path: path, configuration: configuration)
         } else {
-            dbQueue = try DatabaseQueue()
+            // An in-memory database has no file for a second connection to open, so
+            // there is nothing for a pool to do; a queue is the only option.
+            database = try DatabaseQueue()
         }
-        try Self.migrator.migrate(dbQueue)
+        try Self.migrator.migrate(database)
     }
 
     // MARK: Writes
 
     public func upsert(_ account: Account) async throws {
-        try await dbQueue.write { db in try account.save(db) }
+        try await database.write { db in try account.save(db) }
     }
 
     /// Every persisted account, for restoring a session on launch. Today there
     /// is at most one; returning a list keeps the door open for multiple.
     public func accounts() async throws -> [Account] {
-        try await dbQueue.read { db in try Account.fetchAll(db) }
+        try await database.read { db in try Account.fetchAll(db) }
     }
 
     /// Every folder discovered for an account, for the mailbox switcher. Returns
@@ -285,7 +314,7 @@ public final class MailStore: @unchecked Sendable {
     /// upserts every name) even before its messages are synced. Names sort
     /// alphabetically here; role-based ordering ("Inbox" first) is the UI's job.
     public func mailboxes(accountID: String) async throws -> [Mailbox] {
-        try await dbQueue.read { db in
+        try await database.read { db in
             try MailboxRow
                 .filter(Column("accountID") == accountID)
                 .order(Column("name"))
@@ -297,12 +326,12 @@ public final class MailStore: @unchecked Sendable {
     /// Wipe the whole store back to an empty, migrated state. Used on sign-out,
     /// where the privacy posture calls for leaving no cached mail behind.
     public func eraseAll() async throws {
-        try await dbQueue.erase()
-        try Self.migrator.migrate(dbQueue)
+        try await database.erase()
+        try Self.migrator.migrate(database)
     }
 
     public func upsert(_ mailbox: Mailbox) async throws {
-        try await dbQueue.write { db in try MailboxRow(mailbox).save(db) }
+        try await database.write { db in try MailboxRow(mailbox).save(db) }
     }
 
     /// Insert or update the given messages. Existing rows (matched by id) are
@@ -311,16 +340,20 @@ public final class MailStore: @unchecked Sendable {
     /// `hasHTML` flag, and its attachments, all set together when the body was
     /// fetched) is preserved rather than reset.
     public func save(_ messages: [Message], accountID: String, mailboxName: String) async throws {
-        try await dbQueue.write { db in
+        try await database.write { db in
             for message in messages {
-                var row = MessageRow(message, accountID: accountID, mailboxName: mailboxName)
-                if row.bodyText == nil, let existing = try MessageRow.fetchOne(db, key: row.id) {
-                    row.bodyText = existing.bodyText
-                    row.hasHTML = existing.hasHTML
-                    row.attachments = existing.attachments
-                    row.snippet = existing.snippet
+                let row = MessageRow(message, accountID: accountID, mailboxName: mailboxName)
+                // A synced envelope carries headers and no body. When the row is
+                // already cached, write just the header columns: the body, its
+                // derived preview, and its attachments stay as they are, untouched
+                // rather than read out and written straight back. That read was a
+                // whole row per message per sync, decoding the KB-scale bodyText of
+                // every conversation already opened only to hand it back unchanged.
+                if row.bodyText == nil, try MessageRow.exists(db, key: row.id) {
+                    try row.update(db, columns: MessageRow.headerColumns(in: db))
+                } else {
+                    try row.save(db)
                 }
-                try row.save(db)
             }
         }
     }
@@ -334,7 +367,7 @@ public final class MailStore: @unchecked Sendable {
     /// drop out of the inbox.
     @discardableResult
     public func pruneMessages(accountID: String, mailboxName: String, keepingUIDs: Set<Int64>) async throws -> Int {
-        try await dbQueue.write { db in
+        try await database.write { db in
             // Read only id + uid to decide what's stale, so a prune (every sync)
             // never decodes bodyText or the JSON blobs of rows it's just testing.
             // The keep-set can be large, so the membership test stays in Swift;
@@ -357,7 +390,7 @@ public final class MailStore: @unchecked Sendable {
     /// UIDVALIDITY changes, which invalidates every UID we hold for it, so the
     /// cache must be rebuilt from scratch rather than reconciled.
     public func clearMessages(accountID: String, mailboxName: String) async throws {
-        try await dbQueue.write { db in
+        try await database.write { db in
             _ = try MessageRow
                 .filter(Column("accountID") == accountID && Column("mailboxName") == mailboxName)
                 .deleteAll(db)
@@ -368,7 +401,7 @@ public final class MailStore: @unchecked Sendable {
     /// UID, so the sync can mark or move them on the server. A locally-composed
     /// copy with no UID is omitted; it has nothing to act on server-side.
     public func messageRefs(threadID: String) async throws -> [(uid: UInt32, mailbox: String)] {
-        try await dbQueue.read { db in
+        try await database.read { db in
             try MessageRow
                 .filter(Column("threadID") == threadID && Column("uid") != nil)
                 .fetchAll(db)
@@ -380,7 +413,7 @@ public final class MailStore: @unchecked Sendable {
     /// caller rethreads after, so the thread's unread state (derived from its
     /// messages) updates. The server is told separately by the sync.
     public func setSeen(_ seen: Bool, threadID: String) async throws {
-        try await dbQueue.write { db in
+        try await database.write { db in
             let rows = try MessageRow.filter(Column("threadID") == threadID).fetchAll(db)
             for var row in rows {
                 var flags = Set(row.flags)
@@ -395,7 +428,7 @@ public final class MailStore: @unchecked Sendable {
     /// The caller rethreads after, so the thread's flagged state (derived from
     /// its messages) updates. The server is told separately by the sync.
     public func setFlagged(_ flagged: Bool, threadID: String) async throws {
-        try await dbQueue.write { db in
+        try await database.write { db in
             let rows = try MessageRow.filter(Column("threadID") == threadID).fetchAll(db)
             for var row in rows {
                 var flags = Set(row.flags)
@@ -411,7 +444,7 @@ public final class MailStore: @unchecked Sendable {
     /// top. Survives a rethread (which the thread rows don't), since this table is
     /// keyed by the stable thread id rather than rebuilt from messages.
     public func setPinned(_ pinned: Bool, threadID: String, accountID: String) async throws {
-        try await dbQueue.write { db in
+        try await database.write { db in
             if pinned {
                 try db.execute(
                     sql: "INSERT OR IGNORE INTO pinnedThread (accountID, threadID) VALUES (?, ?)",
@@ -430,7 +463,7 @@ public final class MailStore: @unchecked Sendable {
     /// trashed: after the server move, the local copies go too. The caller
     /// rethreads after, which drops the now-empty thread from the inbox.
     public func deleteThread(threadID: String) async throws {
-        try await dbQueue.write { db in
+        try await database.write { db in
             _ = try MessageRow.filter(Column("threadID") == threadID).deleteAll(db)
         }
     }
@@ -440,7 +473,7 @@ public final class MailStore: @unchecked Sendable {
     /// too, so blocked mail leaves the inbox. The caller rethreads after.
     public func deleteMessages(ids: [String]) async throws {
         guard !ids.isEmpty else { return }
-        try await dbQueue.write { db in
+        try await database.write { db in
             _ = try MessageRow.filter(ids.contains(Column("id"))).deleteAll(db)
         }
     }
@@ -452,7 +485,7 @@ public final class MailStore: @unchecked Sendable {
     /// rather than a message or thread row.
     public func setBlocked(_ blocked: Bool, address: String, accountID: String) async throws {
         let normalized = address.lowercased()
-        try await dbQueue.write { db in
+        try await database.write { db in
             if blocked {
                 try db.execute(
                     sql: "INSERT OR IGNORE INTO blockedSender (accountID, address) VALUES (?, ?)",
@@ -470,7 +503,7 @@ public final class MailStore: @unchecked Sendable {
     /// The blocked sender addresses for an account, normalized and sorted, for
     /// the management list. Empty when nothing is blocked.
     public func blockedSenders(accountID: String) async throws -> [String] {
-        try await dbQueue.read { db in
+        try await database.read { db in
             try String.fetchAll(
                 db,
                 sql: "SELECT address FROM blockedSender WHERE accountID = ? ORDER BY address",
@@ -485,7 +518,7 @@ public final class MailStore: @unchecked Sendable {
     /// blocklist is stored normalized. A locally-composed copy with no UID is
     /// omitted; it has nothing to act on server-side.
     public func blockedInboxRefs(accountID: String) async throws -> [(id: String, uid: UInt32)] {
-        try await dbQueue.read { db in
+        try await database.read { db in
             let blocked = try String.fetchAll(
                 db,
                 sql: "SELECT address FROM blockedSender WHERE accountID = ?",
@@ -511,7 +544,7 @@ public final class MailStore: @unchecked Sendable {
     /// (a mailbox never synced). Compared against the server's current value to
     /// decide whether the cache can be reconciled or must be rebuilt.
     public func uidValidity(accountID: String, mailboxName: String) async throws -> Int64? {
-        try await dbQueue.read { db in
+        try await database.read { db in
             try Int64.fetchOne(
                 db,
                 sql: "SELECT uidValidity FROM mailbox WHERE accountID = ? AND name = ?",
@@ -525,7 +558,7 @@ public final class MailStore: @unchecked Sendable {
     /// rather than going through `upsert(Mailbox)`, because the domain `Mailbox`
     /// type intentionally carries no IMAP bookkeeping.
     public func setUIDValidity(_ validity: Int64, accountID: String, mailboxName: String) async throws {
-        try await dbQueue.write { db in
+        try await database.write { db in
             try db.execute(
                 sql: "UPDATE mailbox SET uidValidity = ? WHERE accountID = ? AND name = ?",
                 arguments: [validity, accountID, mailboxName]
@@ -540,7 +573,7 @@ public final class MailStore: @unchecked Sendable {
     /// only notifies for UIDs above this. Seeds to the current top on the first
     /// sync, so a freshly connected account doesn't notify for its whole inbox.
     public func markNotificationWatermark(accountID: String) async throws {
-        try await dbQueue.write { db in
+        try await database.write { db in
             let maxUID = try Int64.fetchOne(
                 db,
                 sql: "SELECT MAX(uid) FROM message WHERE accountID = ? AND mailboxName = ?",
@@ -562,7 +595,7 @@ public final class MailStore: @unchecked Sendable {
     public func storeBodies(_ bodiesByMessageID: [String: (text: String, hasHTML: Bool, attachments: [MessageAttachment])]) async throws {
         guard !bodiesByMessageID.isEmpty else { return }
         let encoder = JSONEncoder()
-        try await dbQueue.write { db in
+        try await database.write { db in
             for (id, body) in bodiesByMessageID {
                 let attachmentsJSON = String(decoding: try encoder.encode(body.attachments), as: UTF8.self)
                 try db.execute(
@@ -577,7 +610,7 @@ public final class MailStore: @unchecked Sendable {
     /// View fetch. Nil when the message is unknown or has no UID (a purely local
     /// copy, which has no server-side HTML to open).
     public func messageRef(id: String) async throws -> (uid: UInt32, mailbox: String)? {
-        try await dbQueue.read { db in
+        try await database.read { db in
             guard let row = try MessageRow.fetchOne(db, key: id), let uid = row.uid else { return nil }
             return (uid: UInt32(truncatingIfNeeded: uid), mailbox: row.mailboxName)
         }
@@ -588,7 +621,7 @@ public final class MailStore: @unchecked Sendable {
     /// message with its thread id. A full recompute is correct (a new message
     /// can bridge two previously separate threads) and fast at this scale.
     public func rethread(accountID: String) async throws {
-        try await dbQueue.write { db in
+        try await database.write { db in
             // Headers and stored previews only. A rethread never needs a body: the
             // threading pass reads the RFC 5322 headers, a thread row reads flags,
             // participants, and dates, and the preview was already derived when the
@@ -659,7 +692,7 @@ public final class MailStore: @unchecked Sendable {
     /// The inbox: thread summaries for an account, pinned conversations first and
     /// the rest by most recent activity.
     public func threadSummaries(accountID: String) async throws -> [ThreadSummary] {
-        try await dbQueue.read { db in
+        try await database.read { db in
             let rows = try ThreadRow.filter(Column("accountID") == accountID).fetchAll(db)
             return try Self.ordered(rows, pinnedIn: db, accountID: accountID)
         }
@@ -672,7 +705,7 @@ public final class MailStore: @unchecked Sendable {
     /// inbox home view passes `INBOX` here, so it shows every INBOX conversation
     /// (the Messages-style list) without pulling in junk-only or sent-only threads.
     public func threadSummaries(accountID: String, mailboxName: String) async throws -> [ThreadSummary] {
-        try await dbQueue.read { db in
+        try await database.read { db in
             let threadIDs = try String.fetchSet(db, sql: """
                 SELECT DISTINCT threadID FROM message
                 WHERE accountID = ? AND mailboxName = ? AND threadID IS NOT NULL
@@ -715,7 +748,7 @@ public final class MailStore: @unchecked Sendable {
     /// deliberate stand-in for a per-folder STATUS round trip, which the lazy-sync
     /// model avoids; a folder's count becomes exact once it has been opened once.
     public func unreadCounts(accountID: String) async throws -> [String: Int] {
-        try await dbQueue.read { db in
+        try await database.read { db in
             // Only the two columns the count needs, so the full row — the KB-scale
             // `bodyText` and the JSON participant/attachment blobs — is never
             // decoded. This runs after every sync, every IDLE tick, and every
@@ -742,7 +775,7 @@ public final class MailStore: @unchecked Sendable {
     /// message already read elsewhere, or one re-fetched below the mark, never
     /// re-notifies. Empty when nothing new has landed since the last sync.
     public func unnotifiedInboxArrivals(accountID: String) async throws -> [NewMailItem] {
-        try await dbQueue.read { db in
+        try await database.read { db in
             let watermark = try Int64.fetchOne(
                 db,
                 sql: "SELECT lastNotifiedUID FROM syncState WHERE accountID = ?",
@@ -781,7 +814,7 @@ public final class MailStore: @unchecked Sendable {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return [] }
         let pattern = "%\(Self.escapedForLike(trimmed))%"
-        return try await dbQueue.read { db in
+        return try await database.read { db in
             // Find the threads of any matching message, then load those rows. The
             // `\` escape lets a literal % or _ in the query match itself rather
             // than act as a wildcard.
@@ -819,7 +852,7 @@ public final class MailStore: @unchecked Sendable {
     /// text under), the UID to fetch, and the mailbox to select. An empty result
     /// means the conversation is fully cached and can be shown offline.
     public func messagesNeedingBodies(threadID: String) async throws -> [(id: String, uid: UInt32, mailbox: String)] {
-        try await dbQueue.read { db in
+        try await database.read { db in
             try MessageRow
                 .filter(Column("threadID") == threadID && Column("bodyText") == nil && Column("uid") != nil)
                 .fetchAll(db)
@@ -835,7 +868,7 @@ public final class MailStore: @unchecked Sendable {
     /// fetch proportional to the thread count rather than the message count, and
     /// skipping threads whose newest message is already cached.
     public func latestMessagesNeedingBodies(accountID: String) async throws -> [(id: String, uid: UInt32, mailbox: String)] {
-        try await dbQueue.read { db in
+        try await database.read { db in
             // Only the columns needed to pick each thread's newest chat message and
             // see whether its body is cached, so this per-sync scan never decodes
             // the bodyText or JSON blobs of every message. `bodyText IS NULL` comes
@@ -859,7 +892,7 @@ public final class MailStore: @unchecked Sendable {
 
     /// A full conversation: the thread and its messages, oldest first.
     public func thread(id: String) async throws -> Thread? {
-        try await dbQueue.read { db in
+        try await database.read { db in
             guard let row = try ThreadRow.fetchOne(db, key: id) else { return nil }
             let messages = try MessageRow
                 .filter(Column("threadID") == id)
