@@ -44,6 +44,14 @@ struct MessageRow: Codable, FetchableRecord, PersistableRecord {
     /// re-reading the header, and so the unread and notification queries can filter
     /// reactions out at the database.
     var reaction: String?
+    /// The one-line preview derived from `bodyText`, computed once when the body is
+    /// stored rather than on each rethread. Deriving it means folding quotes and
+    /// stripping signatures through Klartext, which is far and away the most
+    /// expensive thing a rethread used to do — and it recomputed an identical answer
+    /// every time, three times per sync, because a stored body never changes. Nil
+    /// while the body is (a header-only row), and whenever the body yields nothing
+    /// worth showing.
+    var snippet: String?
 
     init(_ message: Message, accountID: String, mailboxName: String) {
         self.id = message.id
@@ -66,6 +74,13 @@ struct MessageRow: Codable, FetchableRecord, PersistableRecord {
         self.threadID = nil
         self.sendState = message.sendState.rawValue
         self.reaction = message.reaction
+        self.snippet = message.bodyText.flatMap(Self.preview(of:))
+    }
+
+    /// The stored preview for a body, or nil when it reduces to nothing.
+    static func preview(of body: String) -> String? {
+        let glance = QuotedText.snippet(body)
+        return glance.isEmpty ? nil : glance
     }
 
     var message: Message {
@@ -98,6 +113,58 @@ private struct UnreadProbe: Decodable, FetchableRecord {
     var flags: [Flag]
 }
 
+/// A body-free projection of `message` for the rethread. Threading needs the
+/// headers, and a thread row needs the flags, participants, and dates; neither
+/// needs `bodyText`, which is the one KB-scale column and by far the most
+/// expensive to read — reading it for every message is most of what a rethread
+/// costs. Only the newest message of each thread has its body read after, for the
+/// preview snippet. `attachments` is dropped for the same reason (nothing a
+/// thread row shows comes from it) and rebuilt empty.
+private struct ThreadingProbe: Decodable, FetchableRecord {
+    var id: String
+    var uid: Int64?
+    var messageID: String?
+    var inReplyTo: String?
+    var referenceIDs: [String]
+    var subject: String?
+    var fromAddress: String?
+    var fromName: String?
+    var toParticipants: [Participant]
+    var ccParticipants: [Participant]
+    var date: Date?
+    var flags: [Flag]
+    var hasHTML: Bool
+    var threadID: String?
+    var sendState: String
+    var reaction: String?
+    var snippet: String?
+
+    /// The columns to select, in one place so the SQL and the decoder can't drift.
+    static let columns = "id, uid, messageID, inReplyTo, referenceIDs, subject, fromAddress, fromName, toParticipants, ccParticipants, date, flags, hasHTML, threadID, sendState, reaction, snippet"
+
+    /// The domain message, with an empty body and no attachments. Enough to thread
+    /// and to build a thread row, and never written back.
+    var message: Message {
+        Message(
+            messageID: messageID,
+            uid: uid.map { UInt32(truncatingIfNeeded: $0) },
+            inReplyTo: inReplyTo,
+            references: referenceIDs,
+            subject: subject,
+            from: fromAddress.map { Participant(address: $0, displayName: fromName) },
+            to: toParticipants,
+            cc: ccParticipants,
+            date: date,
+            flags: Set(flags),
+            bodyText: nil,
+            hasHTML: hasHTML,
+            attachments: [],
+            sendState: SendState(rawValue: sendState) ?? .sent,
+            reaction: reaction
+        )
+    }
+}
+
 /// One persisted thread row, carrying everything the inbox list shows so the
 /// list never has to load messages.
 struct ThreadRow: Codable, FetchableRecord, PersistableRecord {
@@ -116,7 +183,7 @@ struct ThreadRow: Codable, FetchableRecord, PersistableRecord {
     /// Recomputed on every rethread; nil until that body is fetched.
     var snippet: String?
 
-    init(_ thread: Thread, accountID: String) {
+    init(_ thread: Thread, accountID: String, snippet: String?) {
         self.id = thread.id
         self.accountID = accountID
         self.subject = thread.subject
@@ -125,13 +192,17 @@ struct ThreadRow: Codable, FetchableRecord, PersistableRecord {
         self.isFlagged = thread.isFlagged
         self.messageCount = thread.messageCount
         self.participants = thread.participants
-        // The preview is the newest chat message, never a reaction: a tapback
-        // shouldn't become the inbox row's glance.
-        let latest = thread.conversationMessages.max {
+        self.snippet = snippet
+    }
+
+    /// The id of the message the row's preview is drawn from: the newest chat
+    /// message, never a reaction, since a tapback shouldn't become the inbox row's
+    /// glance. Nil for a thread of nothing but reactions. The rethread asks this so
+    /// it can read one body per thread instead of every body in the account.
+    static func snippetSource(of thread: Thread) -> String? {
+        thread.conversationMessages.max {
             ($0.date ?? .distantPast) < ($1.date ?? .distantPast)
-        }
-        let glance = latest?.bodyText.map { QuotedText.snippet($0) } ?? ""
-        self.snippet = glance.isEmpty ? nil : glance
+        }?.id
     }
 
     var summary: ThreadSummary {
@@ -247,6 +318,7 @@ public final class MailStore: @unchecked Sendable {
                     row.bodyText = existing.bodyText
                     row.hasHTML = existing.hasHTML
                     row.attachments = existing.attachments
+                    row.snippet = existing.snippet
                 }
                 try row.save(db)
             }
@@ -494,8 +566,8 @@ public final class MailStore: @unchecked Sendable {
             for (id, body) in bodiesByMessageID {
                 let attachmentsJSON = String(decoding: try encoder.encode(body.attachments), as: UTF8.self)
                 try db.execute(
-                    sql: "UPDATE message SET bodyText = ?, hasHTML = ?, attachments = ? WHERE id = ?",
-                    arguments: [body.text, body.hasHTML, attachmentsJSON, id]
+                    sql: "UPDATE message SET bodyText = ?, hasHTML = ?, attachments = ?, snippet = ? WHERE id = ?",
+                    arguments: [body.text, body.hasHTML, attachmentsJSON, MessageRow.preview(of: body.text), id]
                 )
             }
         }
@@ -517,16 +589,27 @@ public final class MailStore: @unchecked Sendable {
     /// can bridge two previously separate threads) and fast at this scale.
     public func rethread(accountID: String) async throws {
         try await dbQueue.write { db in
-            let rows = try MessageRow
-                .filter(Column("accountID") == accountID)
-                .fetchAll(db)
+            // Headers and stored previews only. A rethread never needs a body: the
+            // threading pass reads the RFC 5322 headers, a thread row reads flags,
+            // participants, and dates, and the preview was already derived when the
+            // body was stored. Reading and re-parsing every body here is what a
+            // rethread used to spend most of its time on, three times per sync, for
+            // an answer that hadn't changed.
+            let rows = try ThreadingProbe.fetchAll(
+                db,
+                sql: "SELECT \(ThreadingProbe.columns) FROM message WHERE accountID = ?",
+                arguments: [accountID]
+            )
             let threads = Threader.thread(rows.map(\.message))
+            var snippetByMessage: [String: String] = [:]
+            for row in rows where row.snippet != nil { snippetByMessage[row.id] = row.snippet }
 
             try ThreadRow.filter(Column("accountID") == accountID).deleteAll(db)
 
             var threadByMessage: [String: String] = [:]
             for thread in threads {
-                try ThreadRow(thread, accountID: accountID).insert(db)
+                let snippet = ThreadRow.snippetSource(of: thread).flatMap { snippetByMessage[$0] }
+                try ThreadRow(thread, accountID: accountID, snippet: snippet).insert(db)
                 for message in thread.messages { threadByMessage[message.id] = thread.id }
             }
             // A thread's id is its root Message-ID, which changes when a late-
@@ -795,7 +878,10 @@ public final class MailStore: @unchecked Sendable {
 
     // MARK: Schema
 
-    private static let migrator: DatabaseMigrator = {
+    /// The schema. Internal rather than private so a test can migrate a database
+    /// to an older version, seed it, and then migrate the rest of the way, which is
+    /// the only way to exercise a backfill against rows that predate it.
+    static let migrator: DatabaseMigrator = {
         var migrator = DatabaseMigrator()
         migrator.registerMigration("v1") { db in
             try db.create(table: "account") { t in
@@ -989,6 +1075,27 @@ public final class MailStore: @unchecked Sendable {
                 on: "message",
                 columns: ["accountID", "mailboxName", "uid"]
             )
+        }
+        // The inbox row's one-line preview, derived from the body once here rather
+        // than re-derived on every rethread. Backfilled for the bodies already
+        // cached, so upgrading doesn't blank the previews of conversations that have
+        // been read; header-only rows have no body to derive from and stay nil until
+        // one is fetched.
+        migrator.registerMigration("v17-message-snippet") { db in
+            try db.alter(table: "message") { t in
+                t.add(column: "snippet", .text)
+            }
+            let cached = try Row.fetchAll(
+                db,
+                sql: "SELECT id, bodyText FROM message WHERE bodyText IS NOT NULL"
+            )
+            for row in cached {
+                guard let body: String = row["bodyText"] else { continue }
+                try db.execute(
+                    sql: "UPDATE message SET snippet = ? WHERE id = ?",
+                    arguments: [MessageRow.preview(of: body), row["id"] as String]
+                )
+            }
         }
         return migrator
     }()
