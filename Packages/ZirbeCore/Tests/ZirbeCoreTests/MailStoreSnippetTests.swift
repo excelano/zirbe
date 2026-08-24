@@ -11,9 +11,12 @@ final class MailStoreSnippetTests: XCTestCase {
         Account(emailAddress: "me@x.com", imapHost: "imap.x.com", smtpHost: "smtp.x.com")
     }
 
+    /// A synced message. It carries a UID because everything the server hands back
+    /// does, and the backfill scan skips rows without one.
     private func msg(id: String, references: [String] = [], from: String, minutes: Int, reaction: String? = nil) -> Message {
         Message(
             messageID: id,
+            uid: UInt32(minutes),
             inReplyTo: references.last,
             references: references,
             subject: "Lunch",
@@ -130,6 +133,60 @@ final class MailStoreSnippetTests: XCTestCase {
         summaries = try await store.threadSummaries(accountID: acct.id)
         XCTAssertFalse(summaries.first?.isUnread ?? true, "a flag change on the server reaches the cache")
         XCTAssertEqual(summaries.first?.preview, "Shall we say one o'clock?", "and the body it doesn't carry is left alone")
+    }
+
+    /// The sync's body backfill moves the row's preview into place on its own, so
+    /// the second full rethread it used to need is gone. Deliberately never
+    /// rethreads after storing the body: if the preview shows up here, it got there
+    /// by the targeted update and nothing else.
+    func testBackfilledBodyUpdatesThePreviewWithoutARethread() async throws {
+        let store = try MailStore()
+        let acct = account()
+        try await store.upsert(acct)
+
+        let first = msg(id: "<a@x>", from: "p@x.com", minutes: 1)
+        let latest = msg(id: "<b@x>", references: ["<a@x>"], from: "p@x.com", minutes: 5)
+        try await store.save([first, latest], accountID: acct.id, mailboxName: "INBOX")
+        try await store.rethread(accountID: acct.id)
+
+        var summaries = try await store.threadSummaries(accountID: acct.id)
+        XCTAssertNil(summaries.first?.preview, "no body yet, so no preview")
+
+        // What the sync does: fetch the one message per thread the row previews.
+        let needing = try await store.latestMessagesNeedingBodies(accountID: acct.id)
+        XCTAssertEqual(needing.map(\.id), [latest.id], "the backfill targets the newest message")
+
+        try await store.storeBodies([latest.id: (text: "One works.", hasHTML: false, attachments: [])])
+        try await store.refreshThreadSnippets(fromLatestMessages: [latest.id])
+
+        summaries = try await store.threadSummaries(accountID: acct.id)
+        XCTAssertEqual(summaries.first?.preview, "One works.")
+    }
+
+    /// The targeted update touches the thread the message belongs to and no other.
+    func testTheRefreshLeavesOtherThreadsAlone() async throws {
+        let store = try MailStore()
+        let acct = account()
+        try await store.upsert(acct)
+
+        let mine = msg(id: "<a@x>", from: "p@x.com", minutes: 1)
+        let other = msg(id: "<z@x>", from: "r@x.com", minutes: 5)
+        try await store.save([mine, other], accountID: acct.id, mailboxName: "INBOX")
+        try await store.storeBodies([
+            mine.id: (text: "One works.", hasHTML: false, attachments: []),
+            other.id: (text: "Different conversation.", hasHTML: false, attachments: []),
+        ])
+        try await store.rethread(accountID: acct.id)
+        try await store.refreshThreadSnippets(fromLatestMessages: [mine.id])
+
+        let summaries = try await store.threadSummaries(accountID: acct.id)
+        XCTAssertEqual(summaries.count, 2)
+        XCTAssertEqual(summaries.first { $0.id.contains("a@x") }?.preview, "One works.")
+        XCTAssertEqual(
+            summaries.first { $0.id.contains("z@x") }?.preview,
+            "Different conversation.",
+            "the other thread keeps the preview the rethread gave it"
+        )
     }
 
     /// The preview shows the sender's own words, not the quoted history under them.

@@ -15,6 +15,25 @@ and the integrated inbox wait below that line.
 
 ## Shipped
 
+- **Performance pass on delete and the sync path.** Deleting a conversation used
+  to make it vanish, return, and vanish again, worst on a bulk selection: a sync
+  and a mutation could interleave, so a sync that had already read the server's
+  message list wrote that stale list back over rows the delete had just removed,
+  and our own expunges were firing that sync through the IDLE watch. Whole
+  operations now serialize, live-refresh ticks arriving mid-mutation coalesce into
+  one catch-up sync instead of one per conversation, and rows for trash, archive,
+  junk, and move leave the list immediately rather than waiting on the round trip.
+  Alongside it, the work each sync repeated for an answer nothing had changed:
+  inbox previews are derived once when a body is stored rather than re-parsed on
+  every rethread (135 ms to 41.5 ms), a header-only re-save no longer reads and
+  rewrites the body it isn't carrying, the backfill moves one thread's snippet
+  instead of rebuilding every thread in the account, and the on-disk store runs in
+  WAL so a read no longer waits on the writer (worst-case read during a sync, 49.2
+  ms to 7.2 ms). In the view layer, each bubble's place in the stack is worked out
+  once per thread rather than every frame of a timestamp-peek drag, and a contact
+  photo is decoded once per sender rather than on every row that shows it.
+  Verified on device.
+
 - **M5 — offline and IDLE.** Done in two parts. Part 1: foreground live refresh
   while the inbox is open, a dedicated IMAP IDLE connection acting as a doorbell
   into the existing sync. Part 2: a best-effort background poll via BGTaskScheduler
@@ -248,15 +267,14 @@ per-sync store reads (`pruneMessages`, `blockedInboxRefs`,
 `latestMessagesNeedingBodies`) were narrowed to the columns they use, with
 `blockedInboxRefs` also filtering in SQL.
 
-One review item was intentionally left: `reconcile` still runs a second full
-rethread after backfilling bodies, purely to recompute inbox snippets. It's
-conditional on new mail arriving, and collapsing it to a targeted snippet update
-would duplicate the snippet logic that lives in `ThreadRow`, so it waits until
-that cost shows up in practice.
+The one review item left open is now closed too. `reconcile` no longer runs a
+second full rethread after backfilling bodies: the reason it waited was that a
+targeted snippet update would have duplicated the snippet logic living in
+`ThreadRow`, and that logic has since moved to the message row, so the backfill
+now moves each thread's snippet into place directly.
 
-Parked as polish: FTS5 for local search (the 6-column leading-wildcard LIKE),
-caching decoded avatar images, a selection-lookup dictionary, and redacting the
-account email from debug logs.
+Parked as polish: FTS5 for local search (the 6-column leading-wildcard LIKE), a
+selection-lookup dictionary, and redacting the account email from debug logs.
 
 ## Out of scope (privacy posture)
 

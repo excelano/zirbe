@@ -606,6 +606,31 @@ public final class MailStore: @unchecked Sendable {
         }
     }
 
+    /// Point each named message's thread row at the preview now stored on it.
+    ///
+    /// The sync's body backfill fetches exactly one message per thread — that
+    /// thread's newest chat message, the one the inbox row previews — so once its
+    /// body and preview are stored, the snippet is the only thing on the thread row
+    /// that has gone stale. Setting it directly saves the second full rethread the
+    /// sync used to run: a rebuild of every thread in the account to move one
+    /// column on a handful of rows. Nothing else the backfill writes reaches a
+    /// thread row, so nothing else needs recomputing.
+    public func refreshThreadSnippets(fromLatestMessages ids: [String]) async throws {
+        guard !ids.isEmpty else { return }
+        try await database.write { db in
+            for id in ids {
+                try db.execute(
+                    sql: """
+                        UPDATE thread
+                        SET snippet = (SELECT snippet FROM message WHERE id = :id)
+                        WHERE id = (SELECT threadID FROM message WHERE id = :id)
+                        """,
+                    arguments: ["id": id]
+                )
+            }
+        }
+    }
+
     /// The server reference (UID and mailbox) of one message, for the lazy Web
     /// View fetch. Nil when the message is unknown or has no UID (a purely local
     /// copy, which has no server-side HTML to open).
