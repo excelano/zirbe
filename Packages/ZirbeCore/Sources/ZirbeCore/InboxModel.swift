@@ -55,6 +55,50 @@ public final class InboxModel {
     /// Delivered" without a retry, and the user composes again.
     private var pendingReplies: [String: OutgoingDraft] = [:]
 
+    /// Whether a gated operation — a sync or a mutation — currently holds the
+    /// gate, and the operations queued behind it. Both are `@MainActor`-isolated
+    /// along with the rest of this class, so they need no further synchronization.
+    private var inOperation = false
+    private var operationWaiters: [CheckedContinuation<Void, Never>] = []
+
+    /// Set when a live-refresh tick arrives while an operation holds the gate, so
+    /// the tick can be dropped now and made up once with a single catch-up sync.
+    private var missedLiveTick = false
+
+    /// Run `body` with no other gated operation in flight, waiting for one that is.
+    ///
+    /// Syncing and mutating must never interleave. Both are async and both run on
+    /// the MainActor, so without this gate they suspend into each other: a sync
+    /// reads the server's message list, a trash running in the gap deletes those
+    /// rows locally, and then the sync writes its now-stale snapshot back —
+    /// resurrecting the conversation until some later sync prunes it again. That
+    /// is the "deleted mail flashes back" behavior, and it is worst on a bulk
+    /// delete because the loop leaves a much wider gap for a sync to land in.
+    /// Serializing whole operations removes the gap.
+    ///
+    /// A waiter re-checks the flag on resume rather than assuming the gate is its
+    /// own, so a barging caller can't hand two operations the gate at once.
+    private func exclusively<T>(_ body: () async throws -> T) async rethrows -> T {
+        while inOperation {
+            await withCheckedContinuation { operationWaiters.append($0) }
+        }
+        inOperation = true
+        defer {
+            inOperation = false
+            if !operationWaiters.isEmpty { operationWaiters.removeFirst().resume() }
+        }
+        return try await body()
+    }
+
+    /// Run the one catch-up sync owed to live-refresh ticks that were dropped
+    /// while an operation held the gate. Called after a gated mutation, outside the
+    /// gate. A no-op when no tick was missed or the watch isn't running.
+    private func drainMissedLiveTick() {
+        guard missedLiveTick, monitorTask != nil else { return }
+        missedLiveTick = false
+        Task { await self.refresh() }
+    }
+
     public init(account: Account, store: MailStore) {
         self.account = account
         self.store = store
@@ -86,6 +130,15 @@ public final class InboxModel {
     /// the background regardless of which folder is showing.
     public var isViewingInbox: Bool {
         currentMailbox.role == .inbox || currentMailbox.name == "INBOX"
+    }
+
+    /// Whether the folder on screen is the one a `role` names. Trash, archive, and
+    /// junk each drop a conversation out of the list they were run from — except
+    /// when that list is the destination, where the conversation stays put. The
+    /// optimistic row removal asks this so it never guesses wrong and produces the
+    /// very flash it exists to prevent.
+    private func isViewing(_ role: MailboxRole) -> Bool {
+        currentMailbox.role == role
     }
 
     /// Show whatever is already in the store, with no network. Safe on launch to
@@ -146,12 +199,16 @@ public final class InboxModel {
     private func performSync(password: String) async throws {
         // Demo mode reads from the pre-seeded store only; never touch the network.
         if isDemo { try await reloadList(); return }
-        if isViewingInbox {
-            try await sync.syncInbox(password: password)
-        } else {
-            try await sync.syncFolder(mailbox: currentMailbox.name, role: currentMailbox.role, password: password)
+        // Gated: a sync writes back the message list it read at the top, so it must
+        // not straddle a mutation that deletes rows in between. See `exclusively`.
+        try await exclusively {
+            if isViewingInbox {
+                try await sync.syncInbox(password: password)
+            } else {
+                try await sync.syncFolder(mailbox: currentMailbox.name, role: currentMailbox.role, password: password)
+            }
+            try await reloadList()
         }
-        try await reloadList()
         // The user is present for a foreground sync (a refresh, or the IDLE watch
         // firing), so anything now in the inbox counts as already seen: advance the
         // notification mark past it, leaving the background poll to notify only for
@@ -227,6 +284,14 @@ public final class InboxModel {
                 let changes = try await self.sync.watchInbox(password: password)
                 for await _ in changes {
                     if Task.isCancelled { break }
+                    // Our own trash, archive, junk, and move expunge mail from the
+                    // inbox, and the server reports that back down this watch, so a
+                    // mutation ticks it once per conversation it touches. Syncing on
+                    // each of those re-reads the whole window to learn what the
+                    // mutation already knows. Drop the tick while an operation is in
+                    // flight and make it up with a single catch-up sync afterwards,
+                    // so genuinely new mail that landed mid-mutation still surfaces.
+                    if self.inOperation { self.missedLiveTick = true; continue }
                     await self.refresh()
                 }
             } catch {
@@ -554,16 +619,35 @@ public final class InboxModel {
     /// so partial progress isn't lost. The shared shape of the bulk read/flag/
     /// trash/archive/junk/move actions; each passes `rethread: false` to the
     /// per-thread sync call. Errors surface in `errorMessage`.
-    private func bulkMutate(_ threadIDs: [String], _ mutate: @escaping (String) async throws -> Void) async {
+    private func bulkMutate(
+        _ threadIDs: [String],
+        removingRows: Bool = false,
+        _ mutate: @escaping (String) async throws -> Void
+    ) async {
+        // Gated for the whole loop, so a live-refresh or pull sync can't land in a
+        // gap between two threads and write its pre-delete snapshot back over them.
         await attempt {
-            var caught: Error?
-            for id in threadIDs {
-                do { try await mutate(id) } catch { caught = error; break }
+            try await self.exclusively {
+                // Drop the rows now for the actions that remove a conversation from
+                // this list. The server round trip is seconds on a slow connection
+                // and a whole multiple of that for a bulk selection, and leaving the
+                // rows up for it reads as a dead tap. The reload below is still the
+                // truth: anything the server refused comes straight back, with the
+                // reason in `errorMessage`.
+                if removingRows {
+                    let removed = Set(threadIDs)
+                    self.summaries.removeAll { removed.contains($0.id) }
+                }
+                var caught: Error?
+                for id in threadIDs {
+                    do { try await mutate(id) } catch { caught = error; break }
+                }
+                try await self.sync.rethread()
+                try await self.reloadList()
+                if let caught { throw caught }
             }
-            try await self.sync.rethread()
-            try await self.reloadList()
-            if let caught { throw caught }
         }
+        drainMissedLiveTick()
     }
 
     /// Mark one or more conversations read or unread, reflecting each on the
@@ -741,7 +825,7 @@ public final class InboxModel {
             errorMessage = "Connect an account first."
             return
         }
-        await bulkMutate(threadIDs) { id in
+        await bulkMutate(threadIDs, removingRows: !isViewing(.trash)) { id in
             try await self.sync.trash(threadID: id, password: password, rethread: false)
         }
     }
@@ -760,7 +844,7 @@ public final class InboxModel {
             errorMessage = "Connect an account first."
             return
         }
-        await bulkMutate(threadIDs) { id in
+        await bulkMutate(threadIDs, removingRows: !isViewing(.archive)) { id in
             try await self.sync.archive(threadID: id, password: password, rethread: false)
         }
     }
@@ -778,7 +862,7 @@ public final class InboxModel {
             errorMessage = "Connect an account first."
             return
         }
-        await bulkMutate(threadIDs) { id in
+        await bulkMutate(threadIDs, removingRows: !isViewing(.junk)) { id in
             try await self.sync.junk(threadID: id, password: password, rethread: false)
         }
     }
@@ -801,11 +885,14 @@ public final class InboxModel {
         let normalized = address.lowercased()
         guard !normalized.isEmpty, normalized != account.emailAddress.lowercased() else { return }
         await attempt {
-            try await self.store.setBlocked(true, address: normalized, accountID: self.account.id)
-            try await self.sync.syncInbox(password: password)
-            self.blockedSenders = try await self.store.blockedSenders(accountID: self.account.id)
-            try await self.reloadList()
+            try await self.exclusively {
+                try await self.store.setBlocked(true, address: normalized, accountID: self.account.id)
+                try await self.sync.syncInbox(password: password)
+                self.blockedSenders = try await self.store.blockedSenders(accountID: self.account.id)
+                try await self.reloadList()
+            }
         }
+        drainMissedLiveTick()
     }
 
     /// Unblock a sender: remove the address so their future mail stays in the
@@ -833,7 +920,7 @@ public final class InboxModel {
             errorMessage = "Connect an account first."
             return
         }
-        await bulkMutate(threadIDs) { id in
+        await bulkMutate(threadIDs, removingRows: destination != currentMailbox.name) { id in
             try await self.sync.move(threadID: id, to: destination, password: password, rethread: false)
         }
     }
