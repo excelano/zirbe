@@ -103,6 +103,35 @@ final class MailStoreSnippetTests: XCTestCase {
         XCTAssertEqual(summaries.first?.preview, "Shall we say one o'clock?")
     }
 
+    /// A re-save refreshes the headers, so read state changed in another client
+    /// lands here — while the cached body and its preview stay put. The two halves
+    /// pull against each other: the columns a sync must overwrite and the columns it
+    /// must not are the same statement, so they're worth asserting together.
+    func testResyncRefreshesFlagsAndKeepsTheBody() async throws {
+        let store = try MailStore()
+        let acct = account()
+        try await store.upsert(acct)
+
+        var one = msg(id: "<a@x>", from: "p@x.com", minutes: 1)
+        one.flags = []
+        try await store.save([one], accountID: acct.id, mailboxName: "INBOX")
+        try await store.storeBodies([one.id: (text: "Shall we say one o'clock?", hasHTML: false, attachments: [])])
+        try await store.rethread(accountID: acct.id)
+
+        var summaries = try await store.threadSummaries(accountID: acct.id)
+        XCTAssertTrue(summaries.first?.isUnread ?? false)
+        XCTAssertEqual(summaries.first?.preview, "Shall we say one o'clock?")
+
+        // The same message again, now read on the server, still header-only.
+        one.flags = [.seen]
+        try await store.save([one], accountID: acct.id, mailboxName: "INBOX")
+        try await store.rethread(accountID: acct.id)
+
+        summaries = try await store.threadSummaries(accountID: acct.id)
+        XCTAssertFalse(summaries.first?.isUnread ?? true, "a flag change on the server reaches the cache")
+        XCTAssertEqual(summaries.first?.preview, "Shall we say one o'clock?", "and the body it doesn't carry is left alone")
+    }
+
     /// The preview shows the sender's own words, not the quoted history under them.
     func testPreviewFoldsTheQuoteTrailer() async throws {
         let store = try MailStore()
