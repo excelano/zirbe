@@ -10,13 +10,25 @@ import SwiftUI
 import Contacts
 import ZirbeCore
 
-/// A round avatar for a sender. Shows the monogram immediately and swaps in the
-/// contact photo once the local lookup resolves, with no layout shift either way.
+/// A round avatar for a sender. Shows the contact photo when one is already
+/// known, and otherwise the monogram, swapping the photo in once the local
+/// lookup resolves — with no layout shift either way.
+@MainActor
 struct SenderAvatar: View {
     let participant: Participant
     var size: CGFloat = 30
 
     @State private var photo: UIImage?
+
+    init(participant: Participant, size: CGFloat = 30) {
+        self.participant = participant
+        self.size = size
+        // A face already resolved — a row scrolling back into view, or another
+        // bubble from the same sender — is taken here rather than in `.task`, which
+        // runs a frame later. Otherwise every recycled row shows a monogram for a
+        // frame before the photo it already had lands again.
+        _photo = State(initialValue: ContactAvatarCache.shared.resolved(participant.address) ?? nil)
+    }
 
     var body: some View {
         ZStack {
@@ -32,10 +44,8 @@ struct SenderAvatar: View {
         .frame(width: size, height: size)
         .clipShape(Circle())
         .task(id: participant.address) {
-            let found = await ContactAvatarService.shared.avatar(for: participant.address)
-            if let data = found.imageData, let image = UIImage(data: data) {
-                photo = image
-            }
+            guard ContactAvatarCache.shared.resolved(participant.address) == nil else { return }
+            photo = await ContactAvatarCache.shared.avatar(for: participant.address)
         }
     }
 
@@ -75,42 +85,65 @@ enum AvatarPalette {
     }
 }
 
-/// Looks a sender up in the local Contacts store by email and returns their
-/// photo and name. Lookups are cached in memory by address, the store query
-/// runs off the main thread (this is an actor), and authorization is requested
-/// lazily on the first lookup. A denied or restricted store returns an empty
-/// result, so callers fall back to the monogram.
-actor ContactAvatarService {
-    static let shared = ContactAvatarService()
+/// The resolved contact photos, by address.
+///
+/// The cache sits on the main actor so a row can read it while it is being built,
+/// and the lookup behind it runs off the main actor because a Contacts query is
+/// disk I/O. Concurrent askers for the same address share one lookup rather than
+/// each starting their own, which matters on first scroll when a run of bubbles
+/// from one sender all appear at once.
+///
+/// A miss is cached as firmly as a hit: most senders have no contact photo, and
+/// without that a sender who isn't in Contacts would be looked up again for every
+/// message they have ever sent.
+@MainActor
+final class ContactAvatarCache {
+    static let shared = ContactAvatarCache()
 
-    struct Avatar: Sendable {
-        let imageData: Data?
-        let fullName: String?
+    /// Resolved faces. A `.some(nil)` means looked up and no photo, which is a
+    /// different thing from an address not yet looked up at all.
+    private var faces: [String: UIImage?] = [:]
+    private var inFlight: [String: Task<UIImage?, Never>] = [:]
+    private let lookup = ContactPhotoLookup()
+
+    /// The face for an address if it has been resolved: nil while still unknown,
+    /// `.some(nil)` once resolved to no photo.
+    func resolved(_ address: String) -> UIImage?? {
+        faces[address.lowercased()]
     }
 
-    private let store = CNContactStore()
-    private var cache: [String: Avatar] = [:]
-
-    func avatar(for address: String) async -> Avatar {
+    /// The face for an address, looking it up if this is the first ask.
+    func avatar(for address: String) async -> UIImage? {
         let key = address.lowercased()
-        if let cached = cache[key] { return cached }
-        let result = await lookup(key)
-        cache[key] = result
-        return result
-    }
+        if let known = faces[key] { return known }
+        if let running = inFlight[key] { return await running.value }
 
-    private func lookup(_ address: String) async -> Avatar {
-        guard await ContactsAuthorization.granted(store) else { return Avatar(imageData: nil, fullName: nil) }
-        let keys: [CNKeyDescriptor] = [
-            CNContactThumbnailImageDataKey as CNKeyDescriptor,
-            CNContactFormatter.descriptorForRequiredKeys(for: .fullName),
-        ]
+        let task = Task { await lookup.photo(for: key) }
+        inFlight[key] = task
+        let image = await task.value
+        inFlight[key] = nil
+        faces[key] = image
+        return image
+    }
+}
+
+/// The Contacts query itself, off the main actor. Returns a decoded, draw-ready
+/// image: `UIImage(data:)` defers the bitmap decode to the first draw, so handing
+/// back an undecoded image would pay that cost again on every row that shows the
+/// face instead of once here. Authorization is requested lazily on the first
+/// lookup, and a denied or restricted store simply yields no photo, so callers
+/// fall back to the monogram.
+private actor ContactPhotoLookup {
+    private let store = CNContactStore()
+
+    func photo(for address: String) async -> UIImage? {
+        guard await ContactsAuthorization.granted(store) else { return nil }
+        let keys = [CNContactThumbnailImageDataKey as CNKeyDescriptor]
         let predicate = CNContact.predicateForContacts(matchingEmailAddress: address)
         let matches = (try? store.unifiedContacts(matching: predicate, keysToFetch: keys)) ?? []
-        guard let contact = matches.first else { return Avatar(imageData: nil, fullName: nil) }
-        return Avatar(
-            imageData: contact.thumbnailImageData,
-            fullName: CNContactFormatter.string(from: contact, style: .fullName)
-        )
+        guard let data = matches.first?.thumbnailImageData, let image = UIImage(data: data) else {
+            return nil
+        }
+        return await image.byPreparingForDisplay() ?? image
     }
 }

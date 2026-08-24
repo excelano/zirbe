@@ -64,7 +64,7 @@ struct ConversationView: View {
     // re-runs on every peek-drag frame as `peekOffset` animates — doesn't rebuild
     // them each frame. Without this the reactions map was rebuilt twice per row
     // (O(N²)) and the message/delta scans re-ran per frame.
-    @State private var conversationMessages: [Message] = []
+    @State private var stack: [StackedMessage] = []
     @State private var participantDeltas: [String: ParticipantChange.Delta] = [:]
     @State private var reactionsByTarget: [String: [Reaction]] = [:]
     @State private var isSending = false
@@ -317,14 +317,15 @@ struct ConversationView: View {
     private func setThread(_ newValue: ZirbeCore.Thread?) {
         thread = newValue
         guard let newValue else {
-            conversationMessages = []
+            stack = []
             participantDeltas = [:]
             reactionsByTarget = [:]
             return
         }
-        conversationMessages = newValue.conversationMessages
+        let messages = newValue.conversationMessages
+        stack = MessageStack.rows(messages, ownedBy: model.account.emailAddress)
         participantDeltas = Dictionary(
-            ParticipantChange.deltas(across: conversationMessages, excluding: model.account.emailAddress)
+            ParticipantChange.deltas(across: messages, excluding: model.account.emailAddress)
                 .map { ($0.messageID, $0) },
             uniquingKeysWith: { first, _ in first }
         )
@@ -334,47 +335,46 @@ struct ConversationView: View {
     private func conversation(_ thread: ZirbeCore.Thread) -> some View {
         // Reactions are shown as badges on their target, not as bubbles, so the
         // stack, the run grouping, and the join/leave lines are all over the chat
-        // messages alone. These come from `conversationMessages` / `participantDeltas`
-        // / `reactionsByTarget`, cached off `thread` (see `rebuildDerived`), so this
-        // render stays cheap while the peek offset animates.
-        let messages = conversationMessages
-        return ScrollViewReader { proxy in
+        // messages alone. The whole layout comes from `stack` / `participantDeltas`
+        // / `reactionsByTarget`, worked out once in `setThread`, so this render
+        // stays cheap while the peek offset animates it every frame.
+        ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 2) {
-                    ForEach(Array(messages.enumerated()), id: \.element.id) { index, message in
-                        if let dayDate = daySeparatorDate(at: index, in: messages) {
+                    ForEach(stack) { row in
+                        if let dayDate = row.daySeparator {
                             DaySeparatorView(date: dayDate)
                                 .padding(.vertical, 4)
                                 .offset(x: peekOffset)
                         }
-                        if let delta = participantDeltas[message.id] {
+                        if let delta = participantDeltas[row.id] {
                             ParticipantChangeLine(delta: delta)
                                 .padding(.vertical, 8)
                                 .offset(x: peekOffset)
                         }
-                        let rowReactions = reactionsByTarget[message.messageID ?? ""] ?? []
+                        let rowReactions = reactionsByTarget[row.message.messageID ?? ""] ?? []
                         MessageBubble(
                             model: model,
-                            message: message,
-                            isOwn: isOwn(message),
-                            hasTail: isLastInRun(at: index, in: messages),
-                            showSender: !isOwn(message) && isFirstOfRun(at: index, in: messages),
+                            message: row.message,
+                            isOwn: row.isOwn,
+                            hasTail: row.hasTail,
+                            showSender: row.showSender,
                             reactions: rowReactions,
-                            pendingEmoji: pendingReactions[message.messageID ?? ""]?.emoji,
+                            pendingEmoji: pendingReactions[row.message.messageID ?? ""]?.emoji,
                             lockedEmoji: myCommittedEmoji(in: rowReactions),
                             selfAddress: model.account.emailAddress,
-                            isFlashed: flashedMessage == message.id,
+                            isFlashed: flashedMessage == row.id,
                             peekOffset: peekOffset,
-                            onReact: { emoji in react(emoji, to: message, in: thread) },
-                            onUndoReaction: { undoReaction(on: message) },
-                            onReply: { beginReply(to: message) },
+                            onReact: { emoji in react(emoji, to: row.message, in: thread) },
+                            onUndoReaction: { undoReaction(on: row.message) },
+                            onReply: { beginReply(to: row.message) },
                             onShowWeb: { body, showImages in
-                                activeWeb = ActiveWeb(messageID: message.id, body: body, showImages: showImages)
+                                activeWeb = ActiveWeb(messageID: row.id, body: body, showImages: showImages)
                             },
-                            onForward: { forwardingMessage = message },
-                            onRetry: { await retry(message, into: thread) }
+                            onForward: { forwardingMessage = row.message },
+                            onRetry: { await retry(row.message, into: thread) }
                         )
-                        .padding(.top, index > 0 && isFirstOfRun(at: index, in: messages) ? 8 : 0)
+                        .padding(.top, row.needsRunSpacing ? 8 : 0)
                     }
                 }
                 .padding()
@@ -518,34 +518,9 @@ struct ConversationView: View {
         }
     }
 
-    private func isOwn(_ message: Message) -> Bool {
-        message.from?.address == model.account.emailAddress
-    }
 
-    /// Whether this message ends a run of consecutive messages from one sender,
-    /// so it carries the tail and the timestamp. True for the last message
-    /// overall and whenever the next message is from someone else.
-    private func isLastInRun(at index: Int, in messages: [Message]) -> Bool {
-        guard index < messages.count - 1 else { return true }
-        return messages[index].from?.address != messages[index + 1].from?.address
-    }
 
-    /// Whether this message begins a run from a new sender, so the sender name
-    /// shows once atop the run and a little space separates it from the one
-    /// before. True for the very first message.
-    private func isFirstOfRun(at index: Int, in messages: [Message]) -> Bool {
-        guard index > 0 else { return true }
-        return messages[index].from?.address != messages[index - 1].from?.address
-    }
 
-    /// The date to caption a day separator above this message, or nil when it
-    /// shares a calendar day with the message before it. The first dated message
-    /// always gets one. Messages without a date never carry a separator.
-    private func daySeparatorDate(at index: Int, in messages: [Message]) -> Date? {
-        guard let date = messages[index].date else { return nil }
-        guard index > 0, let previous = messages[index - 1].date else { return date }
-        return Calendar.current.isDate(date, inSameDayAs: previous) ? nil : date
-    }
 
     /// The reply-all recipients with the user's removals applied, for the header.
     private func activeTo(in thread: ZirbeCore.Thread) -> [Participant] {
