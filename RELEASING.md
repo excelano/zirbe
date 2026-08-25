@@ -6,11 +6,11 @@ CLI dev-install path (`~/bin/build-to-phone.sh zirbe`). It is modeled on Blick's
 `RELEASING.md`; where Zirbe differs from Blick the difference is called out, because
 those are the places a habit from the other project would bite.
 
-Zirbe 1.0 ships **iPhone-only** (`TARGETED_DEVICE_FAMILY = 1`), with **no watch app
-and no widgets**, so the archive is just the app and the screenshot matrix is a
-single size. iPad returns as a fast-follow once the split-view layout is built (see
-`BACKLOG.md`); until then the target stays iPhone-only so the submission needs no
-iPad screenshot set. It authenticates to
+Zirbe ships **iPhone-only** (`TARGETED_DEVICE_FAMILY = 1`), with **no watch app and
+no widgets**, so the archive is just the app and the screenshot matrix is a single
+size. iPad returns once the split-view layout is built (see `BACKLOG.md`); until
+then the target stays iPhone-only so a submission needs no iPad screenshot set. It
+authenticates to
 the **user's own IMAP and SMTP servers with an app-specific password**, not a
 Microsoft sign-in, which changes what App Review needs. And it is a **public,
 MIT-licensed** repository, so nothing sensitive (demo-account logins, reviewer notes)
@@ -27,10 +27,12 @@ value silently wins over the xcconfig and the two surfaces drift apart without
 warning.
 
 Build numbers are global and monotonic across the whole app record, independent of
-the marketing version. 1.0 shipped as build 1; the next upload is build 2 regardless
-of whether it is a patch or a feature release. App Store Connect rejects a build
-number it has already accepted, even for a rejected submission, so a re-upload after
-a rejection always takes the next number.
+the marketing version: each upload takes the next one, whether the release is a
+patch or a feature. App Store Connect rejects a build number it has already
+accepted, even for a submission that was later rejected, so a re-upload after a
+rejection also moves to the next number. For what the last upload used, read the
+git tags and `Config/Version.xcconfig` rather than trusting a number written down
+here — it would be wrong within a release or two.
 
 ## Create the app record (first release only)
 
@@ -41,21 +43,69 @@ Identifiers, and match the project's `PRODUCT_BUNDLE_IDENTIFIER`), and an SKU (a
 stable internal string, e.g. `zirbe-ios`). The name reserved here is the store name;
 see `app-store-connect-metadata.md` for the exact text to use.
 
-## Archive and upload (Xcode, on the Mac)
+## Archive and upload
 
-1. Set the run destination to **Any iOS Device (arm64)**. Archive is greyed out
-   while a simulator or a specific device is selected.
-2. **Product → Archive.** This builds the Release configuration and opens the
-   Organizer when it finishes. There is no watch app or widget extension to embed,
-   so the archive is the app alone.
-3. In the Organizer, select the new archive, then **Distribute App → App Store
-   Connect → Upload**, taking the defaults on signing (the team distribution cert).
-4. Zirbe's dependencies (SwiftMail, GRDB, swift-nio, Klartext) are Swift packages
-   built from source, so their dSYMs are present and there is no third-party binary
-   framework to throw an "Upload Symbols Failed" warning. If one appears, read it
-   rather than reflexively ignoring it.
-5. After "Upload Successful," give App Store Connect roughly ten to fifteen minutes
-   to finish processing before the build becomes attachable.
+What has to be true at the end, however you get there: a Release-configuration
+archive of the intended commit, exported and signed for App Store distribution,
+uploaded to App Store Connect under the right version and a build number that
+record has never accepted before. The routes below all produce that; pick whichever
+suits the session. Zirbe has no watch app or widget extension, so the archive is
+the app alone either way.
+
+**Archiving in Xcode.** Set the run destination to **Any iOS Device (arm64)** —
+Archive is greyed out while a simulator or a specific device is selected — then
+**Product → Archive**. The Organizer opens when it finishes.
+
+**Archiving from the command line**, which works over SSH with no GUI:
+
+```bash
+xcodebuild -project Zirbe/Zirbe.xcodeproj -scheme Zirbe \
+  -configuration Release -destination 'generic/platform=iOS' \
+  -archivePath ~/Library/Developer/Xcode/Archives/$(date +%F)/Zirbe-<version>-b<build>.xcarchive \
+  -allowProvisioningUpdates archive
+```
+
+The path matters only if the Organizer is going to be the next step: it lists
+archives under `~/Library/Developer/Xcode/Archives/<date>/` and nowhere else, so an
+archive written to a scratch directory simply won't appear and can look like the
+upload is blocked when nothing is wrong.
+
+**Uploading from the Organizer.** Select the archive, then **Distribute App → App
+Store Connect → Upload**, taking the defaults on signing. This needs the GUI, at
+the machine or over VNC.
+
+**Uploading from the command line** needs an App Store Connect API key, since
+there is no interactive sign-in. Generate one under App Store Connect → Users and
+Access → Integrations, put the `.p8` in `~/.appstoreconnect/private_keys/`, then
+export and upload:
+
+```bash
+xcodebuild -exportArchive -archivePath <archive> -exportPath <dir> \
+  -exportOptionsPlist <plist> -allowProvisioningUpdates      # method: app-store-connect
+xcrun altool --upload-app -f <dir>/Zirbe.ipa -t ios --apiKey <id> --apiIssuer <issuer>
+```
+
+Two things look wrong on this Mac and are not:
+
+- **There is no Apple Distribution certificate in the keychain, and there should
+  not be.** Distribution signing is cloud-managed: Apple holds the certificate and
+  key and signs on request. `security find-identity -v -p codesigning` showing only
+  an Apple Development identity is the expected state, and every release has shipped
+  this way. Don't try to create one.
+- **A finished archive records `SigningIdentity = Apple Development`.** Distribution
+  signing happens at export, not at archive, so this is true of archives that have
+  already shipped. Verify the exported build instead: `codesign -dvvv` on the `.app`
+  inside the `.ipa` should name `Apple Distribution: Excelano LLC (9K6W5PMFYP)`, and
+  the export's `DistributionSummary.plist` should read
+  `type = Cloud Managed Apple Distribution`.
+
+Zirbe's dependencies (SwiftMail, GRDB, swift-nio, Klartext) are Swift packages built
+from source, so their dSYMs are present and there is no third-party binary framework
+to throw an "Upload Symbols Failed" warning. If one appears, read it rather than
+reflexively ignoring it.
+
+After "Upload Successful," give App Store Connect roughly ten to fifteen minutes to
+finish processing before the build becomes attachable.
 
 ## App Store Connect (web)
 
@@ -65,7 +115,7 @@ somewhere to attach. Fill the App Information and Version fields from
 release option (Automatic releases the moment it is approved; Manual waits for you
 to click Release), and Submit for Review.
 
-First-release specifics, and the ones that differ from Blick:
+Things worth re-checking each time, and the ones that differ from Blick:
 
 - **App Privacy** is "Data Not Collected." Zirbe's only network destinations are the
   user's own IMAP and SMTP servers; the on-device SQLite cache is local storage, not
@@ -82,8 +132,8 @@ First-release specifics, and the ones that differ from Blick:
   user's own mail account, not a Zirbe account. Keep the real credentials only in App
   Store Connect; the metadata file holds a placeholder.
 - **Screenshots.** Only one size is required and App Store Connect scales it down for
-  smaller devices: iPhone 6.9" at 1320×2868. There is no iPad set (iPhone-only 1.0)
-  and no watch set. Stage them in `~/Downloads/zirbe-screenshots/iphone-6.9/`. When
+  smaller devices: iPhone 6.9" at 1320×2868. There is no iPad set (iPhone-only) and
+  no watch set. Stage them in `~/Downloads/zirbe-screenshots/iphone-6.9/`. When
   iPad returns, add the iPad 13" set at 2064×2752.
 - **Transport security.** Zirbe requires TLS on both transports. Every mainstream
   provider offers it on the standard ports, so this is invisible in practice; it is
