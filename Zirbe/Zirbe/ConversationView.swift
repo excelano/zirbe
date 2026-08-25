@@ -499,6 +499,11 @@ struct ConversationView: View {
             .padding(.horizontal)
             .padding(.vertical, 8)
             Divider()
+            let attached = attachments(of: active.messageID)
+            if !attached.isEmpty {
+                webAttachmentRow(attached, messageID: active.messageID)
+                Divider()
+            }
             EmailHTMLView(
                 content: EmailContent(
                     html: active.body.html,
@@ -516,6 +521,42 @@ struct ConversationView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .id(active.messageID)
         }
+    }
+
+    /// A message's real attachments, for the web view's row.
+    ///
+    /// Only the ones the rendered page doesn't already show: a part the markup
+    /// references with `cid:` is joined into the body upstream and never reaches
+    /// `attachments`, so nothing in the row duplicates the page under it.
+    private func attachments(of messageID: String) -> [MessageAttachment] {
+        stack.first { $0.id == messageID }?.message.attachments ?? []
+    }
+
+    /// The attachment row above the rendered page.
+    ///
+    /// Chat view hangs attachments off the bubble, and the web view replaces the
+    /// whole message stack, so without this an HTML message's attachments can't be
+    /// reached without switching back to chat view first — which reads as the
+    /// attachments not being there at all. They're chips here rather than the
+    /// bubble's inline thumbnails and players: the page is what the reader came
+    /// for, and the row shouldn't take the height from it. Tapping opens the same
+    /// QuickLook as everywhere else.
+    private func webAttachmentRow(_ attachments: [MessageAttachment], messageID: String) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(Array(attachments.enumerated()), id: \.offset) { _, attachment in
+                    AttachmentChip(
+                        model: model,
+                        messageID: messageID,
+                        attachment: attachment,
+                        isOwn: false
+                    )
+                }
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 8)
+        }
+        .background(Color.zirbeCanvas)
     }
 
 
