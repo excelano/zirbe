@@ -289,8 +289,10 @@ targeted snippet update would have duplicated the snippet logic living in
 `ThreadRow`, and that logic has since moved to the message row, so the backfill
 now moves each thread's snippet into place directly.
 
-FTS5 for local search has since landed. Parked as polish: a selection-lookup
-dictionary, and redacting the account email from debug logs.
+Everything the review parked has since landed: FTS5 for local search, caching
+decoded avatar images, the selection lookup (now one pass over the list rather
+than a scan per selected row), and redacting the account address out of debug
+logs. Nothing from this review is outstanding.
 
 ## Out of scope (privacy posture)
 

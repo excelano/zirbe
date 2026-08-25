@@ -539,7 +539,7 @@ public actor MailEngine {
         }
         try await server.login(username: credentials.username, password: credentials.password)
         isLoggedIn = true
-        logger.debug("session ready for \(credentials.username)")
+        logger.debug("session ready for \(LogRedaction.address(credentials.username))")
     }
 
     /// Run an operation against the warm session. If the connection has died by
