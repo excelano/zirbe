@@ -141,8 +141,10 @@ Things worth re-checking each time, and the ones that differ from Blick:
   only test server, which will (correctly) fail to connect.
 
 The listing text and reviewer notes live in `app-store-connect-metadata.md`, which is
-gitignored precisely because this repository is public. Per-submission paste sheets
-can be staged on the Desktop and discarded after use.
+gitignored precisely because this repository is public. Per-submission paste sheets are
+staged in the repo root as `Zirbe-<version>-ASC-paste.md`, gitignored the way
+Blick's are, so the release copy sits beside the code rather than on the Desktop.
+Discard one once its submission has gone through.
 
 ## Tag the release
 
