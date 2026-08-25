@@ -15,6 +15,22 @@ and the integrated inbox wait below that line.
 
 ## Shipped
 
+- **Full-text local search.** Search was six `LIKE '%query%'` comparisons per
+  message, and a leading wildcard means no index can help, so every search read
+  every message in the account — bodies included — and compared each six ways. It
+  now runs against an FTS5 index. The cost stops tracking the size of the cache:
+  over 15,000 messages a search is 1.6 ms where the scan was 58 ms, and it barely
+  moves between 300 messages and 15,000. At today's synced window the difference
+  is small; the point is that it stays small as the window grows, which is what
+  server-side search and a larger cache would both have made worse. The index is
+  its own table rather than an overlay on `message`, so recipients are indexed as
+  names and addresses instead of the JSON they're stored as. Removal rides a
+  database trigger, since mail leaves the cache from four places and three of them
+  delete by predicate without knowing which ids went. One deliberate behavior
+  change: matching is now by word and word-prefix rather than substring, so
+  "budge" still finds "budget" and "udget" no longer does — and matching gained
+  diacritic insensitivity, so "dejeuner" finds "Déjeuner". Verified on device.
+
 - **Performance pass on delete and the sync path.** Deleting a conversation used
   to make it vanish, return, and vanish again, worst on a bulk selection: a sync
   and a mutation could interleave, so a sync that had already read the server's
@@ -273,8 +289,8 @@ targeted snippet update would have duplicated the snippet logic living in
 `ThreadRow`, and that logic has since moved to the message row, so the backfill
 now moves each thread's snippet into place directly.
 
-Parked as polish: FTS5 for local search (the 6-column leading-wildcard LIKE), a
-selection-lookup dictionary, and redacting the account email from debug logs.
+FTS5 for local search has since landed. Parked as polish: a selection-lookup
+dictionary, and redacting the account email from debug logs.
 
 ## Out of scope (privacy posture)
 

@@ -265,6 +265,125 @@ extension Account: FetchableRecord, PersistableRecord {
     public static var databaseTableName: String { "account" }
 }
 
+// MARK: - Search index
+
+/// The full-text index over cached messages.
+///
+/// Search used to be six `LIKE '%query%'` comparisons per message row. A leading
+/// wildcard means no index can be used, so every search read every message in the
+/// account — including the KB-scale `bodyText` of each — and compared it six ways.
+/// FTS5 inverts that: the words are indexed, so a search looks up the term rather
+/// than scanning the mail.
+///
+/// The index is a standalone table rather than an external-content one over
+/// `message`, because what it should hold isn't what `message` stores. Recipients
+/// live there as JSON, and indexing that verbatim would make the keys searchable
+/// too — "display" would match every message ever received. Here they are
+/// flattened to names and addresses, so the tokens are only ever things a person
+/// would search for.
+///
+/// Deletions are handled by a trigger rather than by hand. Messages leave the
+/// cache from four places (a trashed thread, a blocked sender, a prune, a
+/// UIDVALIDITY rebuild), three of which delete by predicate and never know which
+/// ids they removed; a trigger can't be forgotten by a fifth. Writes stay in Swift,
+/// where the flattening lives.
+enum SearchIndex {
+    static let tableName = "messageSearch"
+
+    /// Everyone on the message as plain text: names and addresses, never the JSON
+    /// keys they are stored under.
+    static func participantText(to: [Participant], cc: [Participant]) -> String {
+        (to + cc)
+            .flatMap { [$0.displayName, $0.address].compactMap { $0 } }
+            .joined(separator: " ")
+    }
+
+    /// The sender as plain text: display name and address together, so either finds
+    /// the message.
+    static func senderText(name: String?, address: String?) -> String {
+        [name, address].compactMap { $0 }.joined(separator: " ")
+    }
+
+    /// Index a message, replacing whatever was held for it.
+    static func index(
+        messageID: String,
+        subject: String?,
+        sender: String,
+        participants: String,
+        body: String?,
+        in db: Database
+    ) throws {
+        try db.execute(sql: "DELETE FROM \(tableName) WHERE messageID = ?", arguments: [messageID])
+        try db.execute(
+            sql: """
+                INSERT INTO \(tableName) (messageID, subject, sender, participants, body)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+            arguments: [messageID, subject, sender, participants, body]
+        )
+    }
+
+    /// Index a row whole, body included.
+    static func index(_ row: MessageRow, in db: Database) throws {
+        try index(
+            messageID: row.id,
+            subject: row.subject,
+            sender: senderText(name: row.fromName, address: row.fromAddress),
+            participants: participantText(to: row.toParticipants, cc: row.ccParticipants),
+            body: row.bodyText,
+            in: db
+        )
+    }
+
+    /// Refresh a message's header text and leave its body text alone — the mirror
+    /// of a header-only re-save, which carries no body to index. Falls back to a
+    /// whole write if the message somehow isn't indexed yet, so a gap can't persist.
+    static func indexHeaders(_ row: MessageRow, in db: Database) throws {
+        try db.execute(
+            sql: """
+                UPDATE \(tableName) SET subject = ?, sender = ?, participants = ?
+                WHERE messageID = ?
+                """,
+            arguments: [
+                row.subject,
+                senderText(name: row.fromName, address: row.fromAddress),
+                participantText(to: row.toParticipants, cc: row.ccParticipants),
+                row.id,
+            ]
+        )
+        if db.changesCount == 0 { try index(row, in: db) }
+    }
+
+    /// Update the body text of an already-indexed message.
+    static func indexBody(_ body: String, messageID: String, in db: Database) throws {
+        try db.execute(
+            sql: "UPDATE \(tableName) SET body = ? WHERE messageID = ?",
+            arguments: [body, messageID]
+        )
+    }
+
+    /// Turn what someone typed into an FTS5 MATCH expression.
+    ///
+    /// Each word is quoted, so punctuation in an address or a subject can't be read
+    /// as query syntax, and prefix-matched, so results narrow as they keep typing
+    /// rather than appearing only once a word is finished. Words are ANDed: more
+    /// typing means fewer hits, which is what a search box should do.
+    ///
+    /// This is where search stops being a substring match. `LIKE '%udge%'` found
+    /// "budget"; a term index matches whole words and the starts of words, so
+    /// "budge" finds it and "udget" no longer does. Terms with nothing alphanumeric
+    /// in them are dropped, since they tokenize to nothing and FTS5 rejects an
+    /// empty prefix. Returns nil when nothing searchable is left.
+    static func matchExpression(for query: String) -> String? {
+        let terms = query
+            .split(whereSeparator: \.isWhitespace)
+            .filter { $0.contains(where: { $0.isLetter || $0.isNumber }) }
+            .map { $0.replacingOccurrences(of: "\"", with: "\"\"") }
+        guard !terms.isEmpty else { return nil }
+        return terms.map { "\"\($0)\"*" }.joined(separator: " AND ")
+    }
+}
+
 // MARK: - Store
 
 /// The mail store. Thread-safe; wraps a GRDB database and exposes an async API.
@@ -341,6 +460,8 @@ public final class MailStore: @unchecked Sendable {
     /// fetched) is preserved rather than reset.
     public func save(_ messages: [Message], accountID: String, mailboxName: String) async throws {
         try await database.write { db in
+            // Read the schema once, not once per message.
+            let headerColumns = try MessageRow.headerColumns(in: db)
             for message in messages {
                 let row = MessageRow(message, accountID: accountID, mailboxName: mailboxName)
                 // A synced envelope carries headers and no body. When the row is
@@ -350,9 +471,11 @@ public final class MailStore: @unchecked Sendable {
                 // whole row per message per sync, decoding the KB-scale bodyText of
                 // every conversation already opened only to hand it back unchanged.
                 if row.bodyText == nil, try MessageRow.exists(db, key: row.id) {
-                    try row.update(db, columns: MessageRow.headerColumns(in: db))
+                    try row.update(db, columns: headerColumns)
+                    try SearchIndex.indexHeaders(row, in: db)
                 } else {
                     try row.save(db)
+                    try SearchIndex.index(row, in: db)
                 }
             }
         }
@@ -602,6 +725,7 @@ public final class MailStore: @unchecked Sendable {
                     sql: "UPDATE message SET bodyText = ?, hasHTML = ?, attachments = ?, snippet = ? WHERE id = ?",
                     arguments: [body.text, body.hasHTML, attachmentsJSON, MessageRow.preview(of: body.text), id]
                 )
+                try SearchIndex.indexBody(body.text, messageID: id, in: db)
             }
         }
     }
@@ -827,33 +951,31 @@ public final class MailStore: @unchecked Sendable {
     }
 
     /// Conversations matching a free-text query, most recent activity first.
-    /// Local-only over the store, so it is instant and works offline. A thread
-    /// matches when any of its messages matches `query` (case-insensitive
-    /// substring) in its subject, its sender (name or address), its recipients,
-    /// or its cached body text. Subject and participants are always searchable;
-    /// body text only once it has been fetched (it caches when a conversation is
-    /// opened, and each thread's newest message is backfilled for the inbox
-    /// preview), so body matches are best-effort over what has been downloaded.
-    /// An empty query returns nothing.
+    /// Local-only over the store, so it is instant and works offline.
+    ///
+    /// A thread matches when any of its messages matches every word of `query` —
+    /// in its subject, its sender (name or address), its recipients, or its cached
+    /// body text. Matching is case- and diacritic-insensitive, and each word
+    /// matches from the start, so "budge" finds "budget" while a search resumed
+    /// mid-word does not. Subject and participants are always searchable; body text
+    /// only once it has been fetched (it caches when a conversation is opened, and
+    /// each thread's newest message is backfilled for the inbox preview), so body
+    /// matches are best-effort over what has been downloaded. A query with no
+    /// letters or digits in it returns nothing.
     public func searchThreads(accountID: String, query: String) async throws -> [ThreadSummary] {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return [] }
-        let pattern = "%\(Self.escapedForLike(trimmed))%"
+        guard let match = SearchIndex.matchExpression(for: query) else { return [] }
         return try await database.read { db in
-            // Find the threads of any matching message, then load those rows. The
-            // `\` escape lets a literal % or _ in the query match itself rather
-            // than act as a wildcard.
+            // The index finds the matching messages; the join carries them to their
+            // threads and scopes the result to this account. Results stay ordered by
+            // recency rather than by relevance, the way the inbox is.
             let threadIDs = try String.fetchSet(db, sql: """
-                SELECT DISTINCT threadID FROM message
-                WHERE accountID = :acct AND threadID IS NOT NULL AND (
-                    subject LIKE :p ESCAPE '\\' OR
-                    fromName LIKE :p ESCAPE '\\' OR
-                    fromAddress LIKE :p ESCAPE '\\' OR
-                    bodyText LIKE :p ESCAPE '\\' OR
-                    toParticipants LIKE :p ESCAPE '\\' OR
-                    ccParticipants LIKE :p ESCAPE '\\'
-                )
-                """, arguments: ["acct": accountID, "p": pattern])
+                SELECT DISTINCT m.threadID
+                FROM \(SearchIndex.tableName) s
+                JOIN message m ON m.id = s.messageID
+                WHERE \(SearchIndex.tableName) MATCH :match
+                  AND m.accountID = :acct
+                  AND m.threadID IS NOT NULL
+                """, arguments: ["match": match, "acct": accountID])
             guard !threadIDs.isEmpty else { return [] }
             return try ThreadRow
                 .filter(Column("accountID") == accountID && threadIDs.contains(Column("id")))
@@ -863,14 +985,6 @@ public final class MailStore: @unchecked Sendable {
         }
     }
 
-    /// Escape a user's search text so its `%` and `_` match literally under a
-    /// `LIKE … ESCAPE '\'`. The backslash itself is escaped first so it can't
-    /// swallow a following character.
-    private static func escapedForLike(_ text: String) -> String {
-        text.replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "%", with: "\\%")
-            .replacingOccurrences(of: "_", with: "\\_")
-    }
 
     /// Messages in a thread that still need a body fetched: those with no cached
     /// body and a known server UID. Returns the row id (to cache the fetched
@@ -1152,6 +1266,51 @@ public final class MailStore: @unchecked Sendable {
                 try db.execute(
                     sql: "UPDATE message SET snippet = ? WHERE id = ?",
                     arguments: [MessageRow.preview(of: body), row["id"] as String]
+                )
+            }
+        }
+        // The full-text search index. See `SearchIndex` for why it holds its own
+        // flattened copy rather than indexing `message` in place. Backfilled from
+        // what's already cached so search works immediately after the upgrade
+        // rather than only for mail synced afterwards.
+        migrator.registerMigration("v18-message-search") { db in
+            try db.execute(sql: """
+                CREATE VIRTUAL TABLE \(SearchIndex.tableName) USING fts5(
+                    messageID UNINDEXED,
+                    subject,
+                    sender,
+                    participants,
+                    body,
+                    tokenize = 'unicode61 remove_diacritics 2'
+                )
+                """)
+            // Removal rides a trigger: messages leave the cache from several places
+            // that delete by predicate and never learn which ids went with it.
+            try db.execute(sql: """
+                CREATE TRIGGER message_search_delete AFTER DELETE ON message BEGIN
+                    DELETE FROM \(SearchIndex.tableName) WHERE messageID = old.id;
+                END
+                """)
+
+            let decoder = JSONDecoder()
+            let rows = try Row.fetchAll(db, sql: """
+                SELECT id, subject, fromName, fromAddress, toParticipants, ccParticipants, bodyText
+                FROM message
+                """)
+            for row in rows {
+                // Decoded here rather than through `MessageRow` so this migration
+                // keeps working when that record's shape moves on.
+                func people(_ column: String) -> [Participant] {
+                    guard let json: String = row[column], let data = json.data(using: .utf8) else { return [] }
+                    return (try? decoder.decode([Participant].self, from: data)) ?? []
+                }
+                try SearchIndex.index(
+                    messageID: row["id"],
+                    subject: row["subject"],
+                    sender: SearchIndex.senderText(name: row["fromName"], address: row["fromAddress"]),
+                    participants: SearchIndex.participantText(to: people("toParticipants"), cc: people("ccParticipants")),
+                    body: row["bodyText"],
+                    in: db
                 )
             }
         }
