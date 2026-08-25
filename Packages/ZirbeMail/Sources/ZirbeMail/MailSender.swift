@@ -12,15 +12,12 @@
 // so the Sent-folder copy deduplicates rather than doubling.
 
 import Foundation
-import Logging
 import SwiftMail
 
 public actor MailSender {
     private let server: SMTPServer
-    private let logger: Logger
 
-    public init(config: MailServerConfig, logger: Logger = Logger(label: "zirbe.smtp")) {
-        self.logger = logger
+    public init(config: MailServerConfig) {
         self.server = SMTPServer(
             host: config.host,
             port: config.port,

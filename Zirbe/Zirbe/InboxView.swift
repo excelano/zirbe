@@ -46,10 +46,16 @@ struct InboxView: View {
 
     /// Whether every selected conversation is already flagged, so the bulk Flag
     /// button reads as Unflag and clears them rather than re-flagging.
+    ///
+    /// Gathering the flagged ids once and testing the selection against them costs
+    /// one pass over the list. Asking the list for each selected row in turn cost a
+    /// scan per row, and the toolbar this feeds re-evaluates on every tap of a
+    /// selection circle — so selecting the fiftieth of three hundred conversations
+    /// was walking the list for the fiftieth time.
     private var allSelectedFlagged: Bool {
-        !selection.isEmpty && selection.allSatisfy { id in
-            model.summaries.first { $0.id == id }?.isFlagged ?? false
-        }
+        guard !selection.isEmpty else { return false }
+        let flagged = Set(model.summaries.lazy.filter(\.isFlagged).map(\.id))
+        return selection.isSubset(of: flagged)
     }
 
     /// Whether a search is active (the query has non-whitespace content).
