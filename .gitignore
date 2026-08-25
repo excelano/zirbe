@@ -26,3 +26,6 @@ secrets/
 # Release prep — internal, kept out of the public repo.
 # app-store-connect-metadata.md holds the App Review demo-account login.
 app-store-connect-metadata.md
+
+# Per-release App Store Connect paste sheets, staged in the repo root
+Zirbe-*-ASC-paste.md
