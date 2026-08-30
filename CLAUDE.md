@@ -1,8 +1,8 @@
 # CLAUDE.md — Zirbe (excelano/zirbe)
 
 Project guidance for Zirbe. This repo is public and MIT-licensed; keep this file
-to project facts. (On the maintainer's machine a home-root `~/CLAUDE.md` adds
-personal working style and writing standards; it is not part of this repo.)
+to project facts. (On the maintainer's machine, higher-level CLAUDE.md files add
+personal working style and writing standards; they are not part of this repo.)
 
 ## What Zirbe is
 

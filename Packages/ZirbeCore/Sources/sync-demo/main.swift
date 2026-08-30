@@ -6,7 +6,7 @@
 // conversations the store produces. macOS only; not part of any app.
 //
 // Run with credentials in the environment, never on the command line:
-//   cd ~/zirbe/Packages/ZirbeCore
+//   cd Packages/ZirbeCore   # from the repo root
 //   IMAP_HOST=imap.mail.me.com IMAP_USER=you@icloud.com IMAP_PASS='app-pw' swift run sync-demo
 // Optional: IMAP_MAILBOX (default INBOX), IMAP_LIMIT (default 50), SMTP_HOST.
 
