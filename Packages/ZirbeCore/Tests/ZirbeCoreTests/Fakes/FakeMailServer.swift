@@ -33,7 +33,7 @@ actor FakeMailServer: IMAPTransport {
     }
 
     /// A call as the server saw it, for order and argument assertions.
-    enum Call: Equatable {
+    enum Call: Hashable {
         case connect(username: String)
         case fetchRecentEnvelopes(mailbox: String, limit: Int)
         case mailboxState(mailbox: String)
@@ -110,6 +110,12 @@ actor FakeMailServer: IMAPTransport {
         if let html { folder.htmlBodies[uid] = html }
         folders[mailbox] = folder
         return uid
+    }
+
+    /// Add a folder with explicit attributes (a role, a container-only flag, a
+    /// delimiter), for the discovery cases the default set doesn't cover.
+    func addFolder(_ info: MailboxInfo) {
+        folders[info.name] = Folder(info: info, uidValidity: UInt32(2000 + folders.count))
     }
 
     /// Store attachment bytes a later `fetchAttachment` returns.
