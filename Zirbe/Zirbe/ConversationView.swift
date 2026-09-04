@@ -595,19 +595,38 @@ struct ConversationView: View {
         return cc.isEmpty && to.count == 1 && to.first?.address == model.account.emailAddress.lowercased()
     }
 
+    /// Send the reply bar's draft. The bar clears the moment Send is tapped, the
+    /// way Messages does, rather than after the round trip: clearing the focused
+    /// field from the async continuation proved unreliable (the typed text stayed
+    /// on screen after a send from the Web View). The outcome, a sent or an
+    /// undelivered bubble, lands in the chat, so an open Web View steps aside to
+    /// show it; otherwise the send would look like nothing happened. Only a nil
+    /// return (not connected, or the model rejected the draft with a message)
+    /// puts the draft back so nothing typed is lost.
     private func send(into thread: ZirbeCore.Thread) {
         let text = replyText
-        let files = replyAttachments.map(\.attachment)
-        let targetID = replyTarget?.messageID
+        let staged = replyAttachments
+        let target = replyTarget
+        replyText = ""
+        replyAttachments = []
+        replyTarget = nil
         isSending = true
         Task {
-            let updated = await model.sendReply(to: thread, removing: removedAddresses, body: text, attachments: files, replyingToMessageID: targetID)
+            let updated = await model.sendReply(
+                to: thread,
+                removing: removedAddresses,
+                body: text,
+                attachments: staged.map(\.attachment),
+                replyingToMessageID: target?.messageID
+            )
             isSending = false
             if let updated {
                 setThread(updated)
-                replyText = ""
-                replyAttachments = []
-                replyTarget = nil
+                activeWeb = nil
+            } else if replyText.isEmpty && replyAttachments.isEmpty {
+                replyText = text
+                replyAttachments = staged
+                replyTarget = target
             }
         }
     }
