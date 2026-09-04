@@ -14,14 +14,27 @@ import ZirbeMail
 public actor SyncService {
     private let account: Account
     private let store: MailStore
-    private let engine: MailEngine
-    private let sender: MailSender
+    private let engine: any IMAPTransport
+    private let sender: any SMTPTransport
 
+    /// The production wiring: a real IMAP engine and SMTP sender for the
+    /// account's servers.
     public init(account: Account, store: MailStore) {
+        self.init(
+            account: account,
+            store: store,
+            engine: MailEngine(config: MailServerConfig(host: account.imapHost, port: account.imapPort)),
+            sender: MailSender(config: MailServerConfig(host: account.smtpHost, port: account.smtpPort))
+        )
+    }
+
+    /// The seam: any transports, so tests can run the whole sync and send path
+    /// against in-memory fakes with no server.
+    public init(account: Account, store: MailStore, engine: any IMAPTransport, sender: any SMTPTransport) {
         self.account = account
         self.store = store
-        self.engine = MailEngine(config: MailServerConfig(host: account.imapHost, port: account.imapPort))
-        self.sender = MailSender(config: MailServerConfig(host: account.smtpHost, port: account.smtpPort))
+        self.engine = engine
+        self.sender = sender
     }
 
     /// Fetch the most recent `limit` messages from `mailbox`, reconcile the cache

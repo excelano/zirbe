@@ -39,7 +39,11 @@ let package = Package(
         ),
         .testTarget(
             name: "ZirbeCoreTests",
-            dependencies: ["ZirbeCore"]
+            dependencies: [
+                "ZirbeCore",
+                // The fake transports conform to ZirbeMail's protocols directly.
+                .product(name: "ZirbeMail", package: "ZirbeMail"),
+            ]
         ),
     ],
     swiftLanguageModes: [.v5]

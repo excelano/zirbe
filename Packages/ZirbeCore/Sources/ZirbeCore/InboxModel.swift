@@ -99,10 +99,17 @@ public final class InboxModel {
         Task { await self.refresh() }
     }
 
-    public init(account: Account, store: MailStore) {
+    /// The production wiring: a sync service over the account's real servers.
+    public convenience init(account: Account, store: MailStore) {
+        self.init(account: account, store: store, sync: SyncService(account: account, store: store))
+    }
+
+    /// The seam: a sync service the caller built, so tests can hand in one wired
+    /// to fake transports.
+    public init(account: Account, store: MailStore, sync: SyncService) {
         self.account = account
         self.store = store
-        self.sync = SyncService(account: account, store: store)
+        self.sync = sync
         self.currentMailbox = Mailbox(accountID: account.id, name: "INBOX", role: .inbox)
     }
 
