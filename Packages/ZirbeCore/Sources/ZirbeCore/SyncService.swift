@@ -387,69 +387,75 @@ public actor SyncService {
         if rethread { try await store.rethread(accountID: account.id) }
     }
 
-    /// Trash a thread: move its server-backed messages to the server's Trash
-    /// (grouped by mailbox), then delete the local copies and rethread so the
-    /// conversation leaves the inbox. The server move is the gate for messages
-    /// that have it; local-only messages are simply dropped.
+    /// Trash a thread: its server-backed messages go to the server's Trash, one
+    /// call per folder they sit in, then the local copies are dropped. See
+    /// `relocate` for the partial-failure rule.
     public func trash(threadID: String, password: String, rethread: Bool = true) async throws {
-        let refs = try await store.messageRefs(threadID: threadID)
-        if !refs.isEmpty {
-            try await engine.connect(username: account.username, password: password)
-            for (mailbox, group) in Dictionary(grouping: refs, by: \.mailbox) {
-                try await engine.trash(in: mailbox, uids: group.map(\.uid))
-            }
+        try await relocate(threadID: threadID, password: password, rethread: rethread) { mailbox, uids in
+            try await self.engine.trash(in: mailbox, uids: uids)
         }
-        try await store.deleteThread(threadID: threadID)
-        if rethread { try await store.rethread(accountID: account.id) }
     }
 
-    /// Move a thread's server-backed messages to `destination` (grouped by their
-    /// current mailbox), then drop the local copies and rethread so the
-    /// conversation leaves the current folder. The server move is the gate for
-    /// messages that have a UID; local-only messages are simply dropped. The
-    /// destination folder shows them on its next sync (a moved message gets a new
-    /// UID there, so it is re-fetched rather than carried over with a stale one).
+    /// Move a thread's server-backed messages to `destination`. The destination
+    /// folder shows them on its next sync (a moved message gets a new UID there,
+    /// so it is re-fetched rather than carried over with a stale one).
     public func move(threadID: String, to destination: String, password: String, rethread: Bool = true) async throws {
-        let refs = try await store.messageRefs(threadID: threadID)
-        if !refs.isEmpty {
-            try await engine.connect(username: account.username, password: password)
-            for (mailbox, group) in Dictionary(grouping: refs, by: \.mailbox) {
-                try await engine.move(in: mailbox, uids: group.map(\.uid), to: destination)
-            }
+        try await relocate(threadID: threadID, password: password, rethread: rethread) { mailbox, uids in
+            try await self.engine.move(in: mailbox, uids: uids, to: destination)
         }
-        try await store.deleteThread(threadID: threadID)
-        if rethread { try await store.rethread(accountID: account.id) }
     }
 
-    /// Archive a thread: move its server-backed messages to the server's Archive
-    /// folder (resolved by the engine), preserving their read state, then drop the
-    /// local copies and rethread. Same shape as `move`, with the destination the
-    /// engine's archive folder rather than a caller-named one.
+    /// Archive a thread: the server's Archive folder (resolved by the engine),
+    /// read state preserved.
     public func archive(threadID: String, password: String, rethread: Bool = true) async throws {
-        let refs = try await store.messageRefs(threadID: threadID)
-        if !refs.isEmpty {
-            try await engine.connect(username: account.username, password: password)
-            for (mailbox, group) in Dictionary(grouping: refs, by: \.mailbox) {
-                try await engine.archive(in: mailbox, uids: group.map(\.uid))
-            }
+        try await relocate(threadID: threadID, password: password, rethread: rethread) { mailbox, uids in
+            try await self.engine.archive(in: mailbox, uids: uids)
         }
-        try await store.deleteThread(threadID: threadID)
-        if rethread { try await store.rethread(accountID: account.id) }
     }
 
-    /// Mark a thread as junk: move its server-backed messages to the server's Junk
-    /// folder (resolved by the engine, with a name fallback), then drop the local
-    /// copies and rethread. Same shape as `archive`.
+    /// Mark a thread as junk: the server's Junk folder (resolved by the engine,
+    /// with a name fallback).
     public func junk(threadID: String, password: String, rethread: Bool = true) async throws {
+        try await relocate(threadID: threadID, password: password, rethread: rethread) { mailbox, uids in
+            try await self.engine.markJunk(in: mailbox, uids: uids)
+        }
+    }
+
+    /// The shared shape of trash, move, archive, and junk: `move` is applied to
+    /// each folder the thread spans, and the local copies dropped afterwards are
+    /// exactly the messages the server accepted, so the list never disagrees with
+    /// the server. A folder's refusal doesn't stop the others; the first refusal
+    /// is rethrown once the store reflects what did move. A thread with no
+    /// server-backed messages (a never-delivered bubble) is simply dropped. A
+    /// true rollback would need the destination UIDs, which the engine doesn't
+    /// return, so a half-applied move is reported rather than reversed.
+    private func relocate(
+        threadID: String,
+        password: String,
+        rethread: Bool,
+        _ move: (_ mailbox: String, _ uids: [UInt32]) async throws -> Void
+    ) async throws {
         let refs = try await store.messageRefs(threadID: threadID)
+        var accepted: [String] = []
+        var refusal: Error?
         if !refs.isEmpty {
             try await engine.connect(username: account.username, password: password)
             for (mailbox, group) in Dictionary(grouping: refs, by: \.mailbox) {
-                try await engine.markJunk(in: mailbox, uids: group.map(\.uid))
+                do {
+                    try await move(mailbox, group.map(\.uid))
+                    accepted += group.map(\.id)
+                } catch {
+                    refusal = refusal ?? error
+                }
             }
         }
-        try await store.deleteThread(threadID: threadID)
+        if refusal == nil {
+            try await store.deleteThread(threadID: threadID)
+        } else {
+            try await store.deleteMessages(ids: accepted)
+        }
         if rethread { try await store.rethread(accountID: account.id) }
+        if let refusal { throw refusal }
     }
 
     /// Recompute threads for the account once. Bulk callers pass `rethread: false`

@@ -70,6 +70,8 @@ actor FakeMailServer: IMAPTransport {
 
     private var failOnce: Set<Operation> = []
     private var failAlways: Set<Operation> = []
+    /// Standing failures scoped to one folder, for a thread that spans several.
+    private var failInFolder: [Operation: Set<String>] = [:]
     private var idle: AsyncStream<Void>.Continuation?
 
     /// A server with the standard special-use folders present and empty. The
@@ -91,8 +93,14 @@ actor FakeMailServer: IMAPTransport {
     /// Make every call to `operation` throw until `succeed` is called.
     func fail(_ operation: Operation) { failAlways.insert(operation) }
 
+    /// Make `operation` throw only when aimed at `mailbox`, until cleared.
+    func fail(_ operation: Operation, in mailbox: String) { failInFolder[operation, default: []].insert(mailbox) }
+
     /// Clear a standing failure.
-    func succeed(_ operation: Operation) { failAlways.remove(operation) }
+    func succeed(_ operation: Operation) {
+        failAlways.remove(operation)
+        failInFolder[operation] = nil
+    }
 
     /// Add a message to a folder and return its UID. A folder unknown to the
     /// server is created as a plain user folder.
@@ -237,13 +245,13 @@ actor FakeMailServer: IMAPTransport {
 
     func setSeen(_ seen: Bool, in mailbox: String, uids: [UInt32]) async throws {
         calls.append(.setSeen(seen, mailbox: mailbox, uids: uids))
-        try check(.setSeen)
+        try check(.setSeen, in: mailbox)
         try setFlag("\\Seen", seen, in: mailbox, uids: uids)
     }
 
     func setFlagged(_ flagged: Bool, in mailbox: String, uids: [UInt32]) async throws {
         calls.append(.setFlagged(flagged, mailbox: mailbox, uids: uids))
-        try check(.setFlagged)
+        try check(.setFlagged, in: mailbox)
         try setFlag("\\Flagged", flagged, in: mailbox, uids: uids)
     }
 
@@ -264,25 +272,25 @@ actor FakeMailServer: IMAPTransport {
 
     func trash(in mailbox: String, uids: [UInt32]) async throws {
         calls.append(.trash(mailbox: mailbox, uids: uids))
-        try check(.trash)
+        try check(.trash, in: mailbox)
         try relocate(uids, from: mailbox, to: folderName(for: .trash))
     }
 
     func move(in mailbox: String, uids: [UInt32], to destination: String) async throws {
         calls.append(.move(mailbox: mailbox, uids: uids, to: destination))
-        try check(.move)
+        try check(.move, in: mailbox)
         try relocate(uids, from: mailbox, to: destination)
     }
 
     func archive(in mailbox: String, uids: [UInt32]) async throws {
         calls.append(.archive(mailbox: mailbox, uids: uids))
-        try check(.archive)
+        try check(.archive, in: mailbox)
         try relocate(uids, from: mailbox, to: folderName(for: .archive))
     }
 
     func markJunk(in mailbox: String, uids: [UInt32]) async throws {
         calls.append(.markJunk(mailbox: mailbox, uids: uids))
-        try check(.markJunk)
+        try check(.markJunk, in: mailbox)
         try relocate(uids, from: mailbox, to: folderName(for: .junk))
     }
 
@@ -295,8 +303,11 @@ actor FakeMailServer: IMAPTransport {
 
     // MARK: Internals
 
-    private func check(_ operation: Operation) throws {
+    private func check(_ operation: Operation, in mailbox: String? = nil) throws {
         if failOnce.remove(operation) != nil || failAlways.contains(operation) {
+            throw ScriptedFailure(operation: operation)
+        }
+        if let mailbox, failInFolder[operation]?.contains(mailbox) == true {
             throw ScriptedFailure(operation: operation)
         }
         guard operation == .connect || session != nil else { throw MailEngineError.notConnected }

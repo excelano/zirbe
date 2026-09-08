@@ -521,14 +521,18 @@ public final class MailStore: @unchecked Sendable {
     }
 
     /// The server references (UID and mailbox) of a thread's messages that have a
-    /// UID, so the sync can mark or move them on the server. A locally-composed
-    /// copy with no UID is omitted; it has nothing to act on server-side.
-    public func messageRefs(threadID: String) async throws -> [(uid: UInt32, mailbox: String)] {
+    /// UID, so the sync can mark or move them on the server, each with its local
+    /// id so the sync can drop exactly the rows the server acted on. A
+    /// locally-composed copy with no UID is omitted; it has nothing to act on
+    /// server-side.
+    public func messageRefs(threadID: String) async throws -> [(id: String, uid: UInt32, mailbox: String)] {
         try await database.read { db in
             try MessageRow
                 .filter(Column("threadID") == threadID && Column("uid") != nil)
                 .fetchAll(db)
-                .compactMap { row in row.uid.map { (uid: UInt32(truncatingIfNeeded: $0), mailbox: row.mailboxName) } }
+                .compactMap { row in
+                    row.uid.map { (id: row.id, uid: UInt32(truncatingIfNeeded: $0), mailbox: row.mailboxName) }
+                }
         }
     }
 

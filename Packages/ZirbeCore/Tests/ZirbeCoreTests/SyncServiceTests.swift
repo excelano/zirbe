@@ -521,6 +521,46 @@ final class SyncServiceTests: XCTestCase {
         XCTAssertEqual(inbox, [1])
     }
 
+    func testASplitThreadDropsLocallyOnlyWhatTheServerAccepted() async throws {
+        let thread = try await seedThreadAcrossTwoFolders()
+        await server.fail(.trash, in: "Archive")
+
+        do {
+            try await sync.trash(threadID: thread.id, password: password)
+            XCTFail("expected the Archive refusal to propagate")
+        } catch is FakeMailServer.ScriptedFailure {}
+
+        // INBOX's message went to Trash and left the store; Archive's stayed on
+        // both sides, so the list agrees with the server.
+        let inbox = await server.uids(in: "INBOX")
+        XCTAssertTrue(inbox.isEmpty)
+        let trash = await server.messages(in: "Trash").map(\.subject)
+        XCTAssertEqual(trash, ["Plan"])
+        let archive = await server.messages(in: "Archive").map(\.subject)
+        XCTAssertEqual(archive, ["Re: Plan"])
+        let remaining = try await onlyThread()
+        XCTAssertEqual(remaining.messages.map(\.subject), ["Re: Plan"])
+        let attempts = await server.calls(.trash)
+        XCTAssertEqual(attempts.count, 2, "a refusal in one folder doesn't stop the other")
+    }
+
+    func testASplitMoveContinuesPastARefusedFolder() async throws {
+        let thread = try await seedThreadAcrossTwoFolders()
+        await server.fail(.move, in: "INBOX")
+
+        do {
+            try await sync.move(threadID: thread.id, to: "Projects", password: password)
+            XCTFail("expected the INBOX refusal to propagate")
+        } catch is FakeMailServer.ScriptedFailure {}
+
+        let projects = await server.messages(in: "Projects").map(\.subject)
+        XCTAssertEqual(projects, ["Re: Plan"], "the Archive half moved despite INBOX refusing")
+        let inbox = await server.messages(in: "INBOX").map(\.subject)
+        XCTAssertEqual(inbox, ["Plan"])
+        let remaining = try await onlyThread()
+        XCTAssertEqual(remaining.messages.map(\.subject), ["Plan"])
+    }
+
     func testLocalOnlyThreadIsDroppedWithoutAServerCall() async throws {
         try await sync.recordLocal(newDraft(), state: .failed)
         let id = try await onlyThread().id

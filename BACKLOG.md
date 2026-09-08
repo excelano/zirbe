@@ -15,6 +15,15 @@ and the integrated inbox wait below that line.
 
 ## Shipped
 
+- **A split thread's trash or move no longer half-applies.** Trash, move,
+  archive, and junk now share one `relocate` helper in `SyncService`: the move is
+  applied to every folder the thread spans, a refusal in one folder no longer
+  stops the others, and the local copies dropped afterwards are exactly the
+  messages the server accepted, so the list agrees with the server before the
+  failure surfaces. A true rollback would need the destination UIDs, which the
+  engine doesn't return. The fake server can now refuse an operation in one
+  folder, and two tests pin the split case in each direction.
+
 - **The 2026-07-06 three-lens code review, closed out.** Correctness,
   performance, and security in one pass after block-sender shipped. Batch 1 the
   same day: bulk-action rethreading, the narrowed unread-count read plus a
@@ -263,17 +272,6 @@ surface.
   visible part), not the quoted history under it, and nothing for a bubble with
   no text (photo or voice message), where the item should not appear. The Web
   View already allows native text selection, so it needs nothing.
-
-- **A two-folder trash or move can half-apply.** A thread that spans folders
-  (the opener in INBOX, a reply the user filed to Archive) is trashed, moved,
-  archived, or junked one folder at a time, and `SyncService` stops at the first
-  server refusal. When the second folder's move fails the first has already gone,
-  yet the local copies of both are kept, so the list disagrees with the server
-  until each folder syncs again. Apply the move to every folder, then drop
-  locally exactly the messages the server accepted, and surface the failure
-  after; a true rollback would need the destination UIDs, which the engine does
-  not return. The four mutations share one shape and should share one helper.
-  The seam tests cover the single-folder refusal; this adds the split case.
 
 - **iPad split view.** 1.0 shipped iPhone-only (`TARGETED_DEVICE_FAMILY = 1`) to
   clear the first submission without the iPad screenshot set. Next up: restore
