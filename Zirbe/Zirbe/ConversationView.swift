@@ -28,12 +28,10 @@ struct ConversationView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @State private var thread: ZirbeCore.Thread?
-    /// The user's just-added reactions still inside their undo window, keyed by
-    /// the reacted-to message's Message-ID. Each holds the emoji and the timer
-    /// that will send it; the badge shows it at once, and a remove or change
-    /// before the timer fires means no email was ever sent. Emptied as each one
-    /// commits (or is undone), and flushed early when the view leaves.
-    @State private var pendingReactions: [String: PendingReaction] = [:]
+    /// The user's just-added reactions still inside their undo window. The badge
+    /// shows at once; the queue sends each one after the window unless it is
+    /// undone, and flushes them all when the view leaves. See `ReactionQueue`.
+    @State private var reactions = ReactionQueue(undoWindow: ReactionPalette.undoWindow)
     /// The flagged state shown in the top bar. Seeded from the inbox summary for
     /// an instant read, refined once the thread loads, and toggled optimistically.
     @State private var isFlagged = false
@@ -50,12 +48,10 @@ struct ConversationView: View {
     /// A message to briefly emphasize after a jump, so the eye finds where it
     /// landed; cleared on its own after a moment.
     @State private var flashedMessage: String?
-    @State private var replyText = ""
-    @State private var replyAttachments: [StagedAttachment] = []
-    /// The earlier message a swipe-to-reply is answering, shown as a chip above the
-    /// reply bar; nil for a normal reply into the thread (which answers the latest).
-    @State private var replyTarget: Message?
-    /// A one-shot flag that asks the reply bar to take focus after a swipe.
+    /// The reply bar's draft: text, staged files, and the message a swipe aimed
+    /// it at. Send takes it out in one step; see `ReplyComposer`.
+    @State private var composer = ReplyComposer<StagedAttachment>()
+    /// A one-shot request to focus the reply bar, consumed by the bar.
     @State private var focusReply = false
     /// The live timestamp-peek offset: 0 at rest, negative while the message stack
     /// is dragged left to reveal send times, springing back on release.
@@ -99,15 +95,6 @@ struct ConversationView: View {
         var showImages: Bool
     }
 
-    /// A reaction the user added that hasn't been sent yet: its emoji and the
-    /// timer that will send it once the undo window passes. Cancelling the task
-    /// (a remove, a change, or a re-tap of the same emoji) means the reaction
-    /// never leaves the device.
-    private struct PendingReaction {
-        var emoji: String
-        var task: Task<Void, Never>
-    }
-
     var body: some View {
         VStack(spacing: 0) {
             // A custom top bar in place of the system navigation bar, so the
@@ -148,7 +135,7 @@ struct ConversationView: View {
                     RecipientHeader(
                         to: activeTo(in: thread),
                         cc: activeCc(in: thread),
-                        isNoteToSelf: isNoteToSelf(in: thread)
+                        isNoteToSelf: thread.isNoteToSelf(as: model.account)
                     ) { showRecipients = true }
                     Divider()
                 }
@@ -171,15 +158,15 @@ struct ConversationView: View {
                 }
                 if !isSearching {
                     Divider()
-                    if let target = replyTarget {
+                    if let target = composer.target {
                         ReplyTargetChip(message: target) {
-                            replyTarget = nil
+                            composer.target = nil
                             dismissKeyboard()
                         }
                     }
                     ReplyBar(
-                        text: $replyText,
-                        attachments: $replyAttachments,
+                        text: $composer.text,
+                        attachments: $composer.attachments,
                         isSending: isSending,
                         focusRequest: $focusReply,
                         onSend: { send(into: thread) }
@@ -230,6 +217,12 @@ struct ConversationView: View {
             Text("Their mail moves to Junk and future mail is kept out. Unblock anytime in Settings.")
         }
         .task {
+            // The queue owns the undo timing; the view owns the send, so a
+            // committed reaction refreshes the thread and its badge goes from
+            // tentative to sent.
+            reactions.onCommit = { emoji, messageID in
+                await commitReaction(emoji, to: messageID)
+            }
             isFlagged = summary.isFlagged
             let loaded = await model.conversation(id: summary.id)
             // Decide the starting view before revealing anything: with the HTML-in-
@@ -248,9 +241,9 @@ struct ConversationView: View {
         // drop it: leaving the conversation or backgrounding the app sends any
         // that are still waiting, so the only way to cancel one is an explicit
         // undo while it's on screen.
-        .onDisappear { flushPendingReactions() }
+        .onDisappear { reactions.flush() }
         .onChange(of: scenePhase) { _, phase in
-            if phase != .active { flushPendingReactions() }
+            if phase != .active { reactions.flush() }
         }
         // Recompute the find results as the query changes, debounced so a burst of
         // keystrokes issues one pass. Mirrors the inbox search.
@@ -301,8 +294,7 @@ struct ConversationView: View {
     /// returns to the bubbles, so this is only the starting view, not a one-way
     /// door. Images load per the image preference.
     private func prepareInitialWebView(_ thread: ZirbeCore.Thread) async {
-        guard openHTMLInWebView,
-              let latest = thread.messages.last, latest.hasHTML else { return }
+        guard openHTMLInWebView, let latest = thread.latestHTMLMessage else { return }
         if let body = await model.htmlBody(for: latest.id) {
             activeWeb = ActiveWeb(messageID: latest.id, body: body, showImages: loadRemoteImages)
         }
@@ -360,13 +352,13 @@ struct ConversationView: View {
                             hasTail: row.hasTail,
                             showSender: row.showSender,
                             reactions: rowReactions,
-                            pendingEmoji: pendingReactions[row.message.messageID ?? ""]?.emoji,
-                            lockedEmoji: myCommittedEmoji(in: rowReactions),
+                            pendingEmoji: reactions.pendingEmoji(for: row.message.messageID),
+                            lockedEmoji: thread.myReaction(on: row.message.messageID, as: model.account),
                             selfAddress: model.account.emailAddress,
                             isFlashed: flashedMessage == row.id,
                             peekOffset: peekOffset,
                             onReact: { emoji in react(emoji, to: row.message, in: thread) },
-                            onUndoReaction: { undoReaction(on: row.message) },
+                            onUndoReaction: { row.message.messageID.map { reactions.undo($0) } },
                             onReply: { beginReply(to: row.message) },
                             onShowWeb: { body, showImages in
                                 activeWeb = ActiveWeb(messageID: row.id, body: body, showImages: showImages)
@@ -419,61 +411,22 @@ struct ConversationView: View {
             }
     }
 
-    /// The emoji the user has already sent among a message's reactions, if any. A
-    /// sent reaction is final, so this is what locks the picker for that message.
-    private func myCommittedEmoji(in reactions: [Reaction]) -> String? {
-        let me = model.account.emailAddress.lowercased()
-        return reactions.first { $0.reactor.address.lowercased() == me }?.emoji
-    }
-
     /// Add, change, or undo the user's reaction to a message. The badge updates at
-    /// once; the email is scheduled for after the undo window. Tapping the emoji
-    /// already pending removes it; a different emoji replaces it and restarts the
-    /// window. A reaction already sent is locked and ignored here.
+    /// once; the queue emails it after the undo window. A reaction already sent
+    /// is locked and ignored here.
     private func react(_ emoji: String, to message: Message, in thread: ZirbeCore.Thread) {
         guard let mid = message.messageID, !mid.isEmpty else { return }
-        guard myCommittedEmoji(in: reactionsByTarget[mid] ?? []) == nil else { return }
-
-        pendingReactions[mid]?.task.cancel()
-        if pendingReactions[mid]?.emoji == emoji {
-            pendingReactions[mid] = nil
-            return
-        }
-        let task = Task {
-            try? await Task.sleep(for: ReactionPalette.undoWindow)
-            if Task.isCancelled { return }
-            await commitReaction(emoji, to: mid, in: thread)
-        }
-        pendingReactions[mid] = PendingReaction(emoji: emoji, task: task)
+        guard thread.myReaction(on: mid, as: model.account) == nil else { return }
+        reactions.react(emoji, to: mid)
     }
 
-    /// Remove a reaction still inside its undo window. Nothing was sent, so this
-    /// just cancels the pending send and clears the badge.
-    private func undoReaction(on message: Message) {
-        guard let mid = message.messageID else { return }
-        pendingReactions[mid]?.task.cancel()
-        pendingReactions[mid] = nil
-    }
-
-    /// Send a pending reaction once its window has passed, then swap in the
-    /// refreshed thread so the badge carries over from tentative to sent.
-    private func commitReaction(_ emoji: String, to messageID: String, in thread: ZirbeCore.Thread) async {
-        let refreshed = await model.sendReaction(emoji, to: messageID, in: thread)
-        pendingReactions[messageID] = nil
-        if let refreshed { setThread(refreshed) }
-    }
-
-    /// Send every reaction still waiting, now, cancelling their timers. Called
-    /// when the conversation leaves the screen or the app backgrounds, so a
-    /// pending reaction is never silently dropped.
-    private func flushPendingReactions() {
-        guard !pendingReactions.isEmpty, let thread else { return }
-        for (mid, pending) in pendingReactions {
-            pending.task.cancel()
-            let emoji = pending.emoji
-            Task { await model.sendReaction(emoji, to: mid, in: thread) }
+    /// Send a reaction whose window has passed, then swap in the refreshed
+    /// thread so the badge carries over from tentative to sent.
+    private func commitReaction(_ emoji: String, to messageID: String) async {
+        guard let thread else { return }
+        if let refreshed = await model.sendReaction(emoji, to: messageID, in: thread) {
+            setThread(refreshed)
         }
-        pendingReactions = [:]
     }
 
     /// The web view taking over the whole tray: a toggle bar across the top
@@ -574,25 +527,11 @@ struct ConversationView: View {
         return cc.filter { !removedAddresses.contains($0.address) }
     }
 
-    /// The sender this conversation would block: the most recent incoming
-    /// message's sender, falling back to the first non-self participant. Nil for
-    /// a note-to-self thread, which has no one to block, so the menu hides the
-    /// item.
+    /// The sender this conversation would block, from the loaded thread or, before
+    /// it loads, the summary. Nil for a note-to-self thread, so the menu hides
+    /// the item.
     private var blockableSender: Participant? {
-        let me = model.account.emailAddress.lowercased()
-        if let thread,
-           let incoming = thread.messages.last(where: { ($0.from?.address.lowercased() ?? me) != me }) {
-            return incoming.from
-        }
-        return summary.participants.first { $0.address.lowercased() != me }
-    }
-
-    /// Whether this conversation is just the user talking to themselves, so the
-    /// header reads "Note to self" and isn't editable. True when reply-all lands
-    /// on the account alone.
-    private func isNoteToSelf(in thread: ZirbeCore.Thread) -> Bool {
-        let (to, cc) = ReplyBuilder.replyAllRecipients(to: thread, as: model.account)
-        return cc.isEmpty && to.count == 1 && to.first?.address == model.account.emailAddress.lowercased()
+        thread?.blockableSender(as: model.account) ?? summary.blockableSender(as: model.account)
     }
 
     /// Send the reply bar's draft. The bar clears the moment Send is tapped, the
@@ -604,29 +543,22 @@ struct ConversationView: View {
     /// return (not connected, or the model rejected the draft with a message)
     /// puts the draft back so nothing typed is lost.
     private func send(into thread: ZirbeCore.Thread) {
-        let text = replyText
-        let staged = replyAttachments
-        let target = replyTarget
-        replyText = ""
-        replyAttachments = []
-        replyTarget = nil
+        let draft = composer.take()
         isSending = true
         Task {
             let updated = await model.sendReply(
                 to: thread,
                 removing: removedAddresses,
-                body: text,
-                attachments: staged.map(\.attachment),
-                replyingToMessageID: target?.messageID
+                body: draft.text,
+                attachments: draft.attachments.map(\.attachment),
+                replyingToMessageID: draft.target?.messageID
             )
             isSending = false
             if let updated {
                 setThread(updated)
                 activeWeb = nil
-            } else if replyText.isEmpty && replyAttachments.isEmpty {
-                replyText = text
-                replyAttachments = staged
-                replyTarget = target
+            } else {
+                composer.restore(draft)
             }
         }
     }
@@ -634,7 +566,7 @@ struct ConversationView: View {
     /// Begin a reply aimed at a specific message (a swipe on its bubble, or its
     /// long-press Reply): remember it as the target and focus the reply bar.
     private func beginReply(to message: Message) {
-        replyTarget = message
+        composer.target = message
         focusReply = true
     }
 
