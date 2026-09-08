@@ -15,6 +15,18 @@ and the integrated inbox wait below that line.
 
 ## Shipped
 
+- **The 2026-07-06 three-lens code review, closed out.** Correctness,
+  performance, and security in one pass after block-sender shipped. Batch 1 the
+  same day: bulk-action rethreading, the narrowed unread-count read plus a
+  mailbox index, TLS required on the transports, header-injection sanitizing, and
+  a type-ahead race. Batch 2: the pin follows a thread across a re-root, the
+  conversation view caches its derived render inputs, and the per-sync store
+  reads were narrowed to the columns they use. The last open item, a second
+  full rethread after the body backfill, went when the snippet logic moved to
+  the message row. Everything it parked has since landed too: FTS5 search,
+  cached avatars, the one-pass selection lookup, and redacting the account
+  address from debug logs.
+
 - **Test coverage: a transport seam, then tests for sync and send.** The pure
   domain code was well covered, but the two files that carry every user action
   and every server interaction, `InboxModel` and `SyncService`, sat at zero
@@ -252,6 +264,17 @@ surface.
   no text (photo or voice message), where the item should not appear. The Web
   View already allows native text selection, so it needs nothing.
 
+- **A two-folder trash or move can half-apply.** A thread that spans folders
+  (the opener in INBOX, a reply the user filed to Archive) is trashed, moved,
+  archived, or junked one folder at a time, and `SyncService` stops at the first
+  server refusal. When the second folder's move fails the first has already gone,
+  yet the local copies of both are kept, so the list disagrees with the server
+  until each folder syncs again. Apply the move to every folder, then drop
+  locally exactly the messages the server accepted, and surface the failure
+  after; a true rollback would need the destination UIDs, which the engine does
+  not return. The four mutations share one shape and should share one helper.
+  The seam tests cover the single-folder refusal; this adds the split case.
+
 - **iPad split view.** 1.0 shipped iPhone-only (`TARGETED_DEVICE_FAMILY = 1`) to
   clear the first submission without the iPad screenshot set. Next up: restore
   universal and build a proper iPad layout. The app's core navigation is a
@@ -305,31 +328,6 @@ Below the line: more than one account, and the auth tracks that widen reach.
   Assemble all the inline body text parts in order so text written after an inline
   attachment isn't hidden. Today the trailing segment is usually empty, so this is
   a correctness edge, not a common loss.
-
-### From the 2026-07-06 code review
-
-A three-lens review (correctness, performance, security) ran after block-sender
-shipped. Batch 1 landed the safe, high-value fixes the same day: bulk-action
-rethreading, the narrowed unread-count read plus a mailbox index, TLS required on
-the transports, header-injection sanitizing, and a type-ahead race. Batch 2
-followed with the three that wanted more care: the pin now follows a thread
-across a re-root (it was keyed by the thread id, which changes when an earlier
-ancestor re-roots the tree); the conversation view caches its derived render
-inputs off the thread so the timestamp peek stays smooth on long threads; and the
-per-sync store reads (`pruneMessages`, `blockedInboxRefs`,
-`latestMessagesNeedingBodies`) were narrowed to the columns they use, with
-`blockedInboxRefs` also filtering in SQL.
-
-The one review item left open is now closed too. `reconcile` no longer runs a
-second full rethread after backfilling bodies: the reason it waited was that a
-targeted snippet update would have duplicated the snippet logic living in
-`ThreadRow`, and that logic has since moved to the message row, so the backfill
-now moves each thread's snippet into place directly.
-
-Everything the review parked has since landed: FTS5 for local search, caching
-decoded avatar images, the selection lookup (now one pass over the list rather
-than a scan per selected row), and redacting the account address out of debug
-logs. Nothing from this review is outstanding.
 
 ## Out of scope (privacy posture)
 
