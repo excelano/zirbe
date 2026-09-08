@@ -242,6 +242,16 @@ file: a full single-account Apple Mail replacement, as chat-native as the
 Messages metaphor allows. New single-account feature requests land here as they
 surface.
 
+- **Copy a message's text.** There is no way to get a bubble's words onto the
+  clipboard today: the text is a SwiftUI `Text`, not selectable, and the
+  long-press menu carries only reactions, Reply, and Forward. Add a Copy item to
+  `ReactionMenu` (below Reply and Forward, the way Messages stacks Copy in its
+  tapback menu) that puts the bubble's visible body on `UIPasteboard.general` as
+  plain text. Copy what the reader sees: the folded body (`QuotedText.fold`'s
+  visible part), not the quoted history under it, and nothing for a bubble with
+  no text (photo or voice message), where the item should not appear. The Web
+  View already allows native text selection, so it needs nothing.
+
 - **iPad split view.** 1.0 shipped iPhone-only (`TARGETED_DEVICE_FAMILY = 1`) to
   clear the first submission without the iPad screenshot set. Next up: restore
   universal and build a proper iPad layout. The app's core navigation is a
