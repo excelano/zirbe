@@ -31,7 +31,7 @@ public actor MailSender {
     /// and capture the login. This matters most here because SwiftMail's automatic
     /// inference sends in the clear on a non-standard SMTP port; requiring STARTTLS
     /// instead fails closed if the server can't secure the connection.
-    private static func transportSecurity(port: Int) -> MailTransportSecurity {
+    static func transportSecurity(port: Int) -> MailTransportSecurity {
         port == 465 ? .implicitTLS : .startTLS
     }
 

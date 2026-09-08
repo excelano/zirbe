@@ -59,7 +59,7 @@ public actor MailEngine {
     /// "if available", which a network attacker can strip to plaintext and capture
     /// the app password. This never falls through to a plaintext connection: a
     /// server that can't do TLS fails to connect, which is the safe direction.
-    private static func transportSecurity(port: Int) -> MailTransportSecurity {
+    static func transportSecurity(port: Int) -> MailTransportSecurity {
         port == 993 ? .implicitTLS : .startTLS
     }
 
@@ -281,7 +281,7 @@ public actor MailEngine {
     /// The normalized Content-IDs an HTML body references via `cid:` URLs (in an
     /// `<img src>`, a CSS `url()`, anywhere), so only inline parts the page
     /// actually paints are shipped to the renderer.
-    private static func referencedCIDs(in html: String) -> Set<String> {
+    static func referencedCIDs(in html: String) -> Set<String> {
         guard let regex = try? NSRegularExpression(
             pattern: "cid:([^\"'\\s)>]+)", options: .caseInsensitive
         ) else { return [] }
@@ -296,7 +296,7 @@ public actor MailEngine {
 
     /// Strip angle brackets and whitespace and lowercase, so a part's `<id@host>`
     /// matches the HTML's bare `cid:id@host`. Mirrors KlartextUI's normalization.
-    private static func normalizeCID(_ contentID: String) -> String {
+    static func normalizeCID(_ contentID: String) -> String {
         contentID.trimmingCharacters(in: CharacterSet(charactersIn: "<> \t")).lowercased()
     }
 

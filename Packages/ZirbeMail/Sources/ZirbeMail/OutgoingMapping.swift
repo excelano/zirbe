@@ -56,7 +56,7 @@ extension Email {
 private func sanitizedHeaderValue(_ value: String) -> String {
     value
         .components(separatedBy: .controlCharacters)
+        .map { $0.trimmingCharacters(in: .whitespaces) }
         .filter { !$0.isEmpty }
         .joined(separator: " ")
-        .trimmingCharacters(in: .whitespaces)
 }
