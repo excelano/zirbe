@@ -106,6 +106,27 @@ final class ConversationRulesTests: XCTestCase {
         XCTAssertNil(theirs.myReaction(on: "<a@x>", as: account), "someone else's reaction doesn't lock mine")
     }
 
+    // MARK: Copyable text
+
+    func testCopyableTextIsTheVisibleBodyWithoutTheQuote() {
+        var m = message("<a@x>", from: pat, to: [me], minutes: 0)
+        m.bodyText = "Yes, noon works.\n\nOn Mon, Pat wrote:\n> Lunch?\n> Noon?"
+        XCTAssertEqual(m.copyableText, "Yes, noon works.")
+
+        m.bodyText = "  Plain reply  "
+        XCTAssertEqual(m.copyableText, "Plain reply")
+    }
+
+    func testBubblesWithNothingToCopyOfferNothing() {
+        var m = message("<a@x>", from: pat, to: [me], minutes: 0)
+        m.bodyText = nil
+        XCTAssertNil(m.copyableText, "a photo or voice message with no words")
+        m.bodyText = " \n "
+        XCTAssertNil(m.copyableText)
+        m.bodyText = "On Mon, Pat wrote:\n> Lunch?"
+        XCTAssertNil(m.copyableText, "nothing but a quote")
+    }
+
     // MARK: Web View opener
 
     func testTheNewestMessageOpensInTheWebViewOnlyWhenItHasHTML() {

@@ -21,8 +21,9 @@ enum ReactionPalette {
 }
 
 /// The long-press menu on a bubble: a row of reaction emoji across the top and
-/// the bubble's actions (Forward) below, the way Messages stacks a tapback bar
-/// over its context menu. Presented as a popover anchored to the bubble.
+/// the bubble's actions (Reply, Forward, Copy) below, the way Messages stacks a
+/// tapback bar over its context menu. Presented as a popover anchored to the
+/// bubble.
 struct ReactionMenu: View {
     /// The emoji the user has already chosen on this message (pending or sent),
     /// highlighted so the menu shows their current reaction.
@@ -33,6 +34,9 @@ struct ReactionMenu: View {
     let onReact: (String) -> Void
     let onReply: () -> Void
     let onForward: () -> Void
+    /// Copies the bubble's visible text; nil for a bubble with no text (a photo
+    /// or voice message), where the item doesn't appear.
+    var onCopy: (() -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -79,6 +83,16 @@ struct ReactionMenu: View {
                     .padding(.vertical, 11)
             }
             .buttonStyle(.plain)
+            if let onCopy {
+                Divider()
+                Button { onCopy() } label: {
+                    Label("Copy", systemImage: "doc.on.doc")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 11)
+                }
+                .buttonStyle(.plain)
+            }
         }
         .frame(minWidth: 264)
     }

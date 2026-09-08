@@ -1250,6 +1250,14 @@ private struct MessageBubble: View {
                 onForward: {
                     showingReactionPicker = false
                     onForward()
+                },
+                // Copy what the reader sees: the folded body, not the quoted
+                // history under it. A bubble with no text offers no item.
+                onCopy: message.copyableText.map { text in
+                    {
+                        showingReactionPicker = false
+                        UIPasteboard.general.string = text
+                    }
                 }
             )
             .presentationCompactAdaptation(.popover)

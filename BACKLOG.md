@@ -15,6 +15,14 @@ and the integrated inbox wait below that line.
 
 ## Shipped
 
+- **Copy a message's text.** The long-press menu gains a Copy item below Reply
+  and Forward, the way Messages stacks Copy in its tapback menu. It puts the
+  bubble's visible body on the pasteboard as plain text: the folded body, not
+  the quoted history under it. A bubble with no text (a photo or voice message,
+  or a body that folds to nothing but a quote) shows no item. The rule lives in
+  ZirbeCore as `Message.copyableText`, with tests; the Web View already allowed
+  native selection.
+
 - **A split thread's trash or move no longer half-applies.** Trash, move,
   archive, and junk now share one `relocate` helper in `SyncService`: the move is
   applied to every folder the thread spans, a refusal in one folder no longer
@@ -262,16 +270,6 @@ With junk and block-sender shipped, Zirbe meets the bar set at the top of this
 file: a full single-account Apple Mail replacement, as chat-native as the
 Messages metaphor allows. New single-account feature requests land here as they
 surface.
-
-- **Copy a message's text.** There is no way to get a bubble's words onto the
-  clipboard today: the text is a SwiftUI `Text`, not selectable, and the
-  long-press menu carries only reactions, Reply, and Forward. Add a Copy item to
-  `ReactionMenu` (below Reply and Forward, the way Messages stacks Copy in its
-  tapback menu) that puts the bubble's visible body on `UIPasteboard.general` as
-  plain text. Copy what the reader sees: the folded body (`QuotedText.fold`'s
-  visible part), not the quoted history under it, and nothing for a bubble with
-  no text (photo or voice message), where the item should not appear. The Web
-  View already allows native text selection, so it needs nothing.
 
 - **iPad split view.** 1.0 shipped iPhone-only (`TARGETED_DEVICE_FAMILY = 1`) to
   clear the first submission without the iPad screenshot set. Next up: restore

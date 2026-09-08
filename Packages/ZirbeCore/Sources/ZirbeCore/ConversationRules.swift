@@ -42,6 +42,18 @@ extension Thread {
     }
 }
 
+extension Message {
+    /// The text Copy puts on the clipboard: what the reader sees in the bubble,
+    /// the folded body without the quoted history under it. Nil when there is
+    /// nothing to copy (a photo or voice message sent with no words, or a body
+    /// that folds to nothing but a quote), so the menu hides the item.
+    public var copyableText: String? {
+        guard let body = bodyText?.trimmingCharacters(in: .whitespacesAndNewlines), !body.isEmpty else { return nil }
+        let visible = QuotedText.fold(body).visible
+        return visible.isEmpty ? nil : visible
+    }
+}
+
 extension ThreadSummary {
     /// The sender a Block Sender action would block when only the summary is
     /// known: the first participant other than the account. Nil for a thread of
