@@ -53,6 +53,20 @@ folding, signatures, inline images — comes from the shared
 Next up is an iPad split-view layout, then multiple accounts and an integrated
 inbox, then OAuth for the providers that are retiring app passwords.
 
+## Building and testing
+
+Open `Zirbe/Zirbe.xcodeproj` in Xcode to build and run the app. The domain and
+mail layers are Swift packages under `Packages/`, each with its own test suite.
+One script runs everything: both suites with line coverage, then a simulator
+build of the app.
+
+    scripts/check.sh             # tests, coverage, and the app build
+    scripts/check.sh --skip-app  # tests and coverage only
+    scripts/check.sh --files     # also list per-file coverage
+
+ZirbeCore's tests drive the sync and send paths against an in-memory IMAP
+server and SMTP sender, so no account or network is needed.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

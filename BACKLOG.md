@@ -15,6 +15,33 @@ and the integrated inbox wait below that line.
 
 ## Shipped
 
+- **Test coverage: a transport seam, then tests for sync and send.** The pure
+  domain code was well covered, but the two files that carry every user action
+  and every server interaction, `InboxModel` and `SyncService`, sat at zero
+  because each built its own transport and nothing above `MailStore` ran without
+  a live server; the Web View reply bug shipped untested for exactly that reason.
+  ZirbeMail now declares `IMAPTransport` and `SMTPTransport`, the engine and
+  sender conform by extension, and `SyncService` and `InboxModel` take them
+  injected, with the production initializers delegating so no call site changed.
+  An in-memory `FakeMailServer` (folders as UID maps with a UIDVALIDITY each,
+  moves that reissue UIDs, a call log, scriptable failures) and a
+  `FakeMailSender` back 71 cases over the sync and model layers: reconciliation,
+  the UIDVALIDITY rebuild and watermark reseed, the blocklist, the send and draft
+  filing rules, the failed-bubble retry, the bulk mutations with their optimistic
+  rollback, and live refresh. ZirbeMail's pure rules (the SwiftMail mapping, the
+  outgoing headers, TLS per port, the cid scan) got their own suite, and the
+  conversation screen's logic moved into ZirbeCore where it can be tested: the
+  reaction undo window as `ReactionQueue`, the reply bar's send-and-restore rule
+  as `ReplyComposer`, and note-to-self, the blockable sender, the locked
+  reaction, and the Web View opener as pure `Thread` extensions.
+  `scripts/check.sh` runs both suites with coverage and the app build in one
+  command. ZirbeCore's own sources stand at 89% line coverage (`InboxModel` 0 to
+  91, `SyncService` 0 to 97); ZirbeMail's remaining gap is the engine's session
+  code, which only a server exercises. Two fixes fell out: the threading-header
+  sanitizer now collapses control-character runs the way its comment promised,
+  and a trailing reaction no longer hides an HTML message from the Web View
+  opener.
+
 - **Full-text local search.** Search was six `LIKE '%query%'` comparisons per
   message, and a leading wildcard means no index can help, so every search read
   every message in the account — bodies included — and compared each six ways. It
@@ -227,49 +254,6 @@ surface.
   demo-open capture, Drafts-opens-composer, bulk select, and back behavior. Once
   it lands, re-enable the iPad 13" screenshot set and the "beside the
   conversation" marketing beat.
-
-- **Test coverage: a transport seam, then tests for sync and send.** The pure
-  domain code in ZirbeCore (store, threading, reply building, quoting, search,
-  reactions, stacking) sits between 85% and 100% line coverage; the two files
-  that carry every user action and every server interaction, `InboxModel` and
-  `SyncService`, sit at zero, and so does the app target. The cause is
-  structural: `SyncService` builds concrete `MailEngine` and `MailSender`
-  instances in its initializer and `InboxModel` builds `SyncService` the same
-  way, so nothing above `MailStore` runs without a live IMAP and SMTP server. The
-  Web View reply bug shipped with no test for exactly that reason. The work, in
-  order:
-  1. *Transport seam.* Two protocols in ZirbeMail, `IMAPTransport` (the engine's
-     public surface: connect, envelopes, mailbox state, bodies, attachments, sent
-     and drafts filing, flags, idle, trash, move, archive, junk) and
-     `SMTPTransport` (send). `MailEngine` and `MailSender` conform by extension.
-     `SyncService` and `InboxModel` gain injecting initializers; the existing
-     ones delegate, so call sites don't change. A `FakeMailServer` actor in
-     ZirbeCoreTests holds mailboxes as UID maps with a UIDVALIDITY each, records
-     every call, and can be told which operation fails next.
-  2. *SyncService tests against the fake.* First sync populates the store; a
-     server-side deletion prunes on the next refresh; a UIDVALIDITY change clears
-     and rebuilds; the watermark advances; a failed SMTP send leaves nothing on
-     the server; a failed Sent-copy append keeps the local sent bubble; each
-     mutation groups UIDs by mailbox and leaves the store intact when the engine
-     throws; draft save replaces the prior UID.
-  3. *InboxModel tests.* The `sendReply` contract the view now relies on: nil
-     with an `errorMessage` for no password, empty draft, or no recipients; an
-     undelivered bubble with the draft held for retry on an SMTP failure; retry
-     flips the bubble and releases the draft; retry after a relaunch returns nil.
-     Then reactions, new conversations, archive/trash/junk/block, flagging,
-     mailbox switching, and missed-live-tick coalescing.
-  4. *ZirbeMail's pure functions.* `Mapping`, `HTMLBody`, `MailboxInfo`, the rest
-     of `MailEnvelope` and `OutgoingMapping`, and the engine's static MIME helpers
-     (attachment classification, cid resolution, transport security by port),
-     which are internal and testable without a connection.
-  5. *Move view logic down where it can be tested.* The reaction undo window
-     (a pending-send timer in the view) becomes a ZirbeCore type with an
-     injectable clock; the send-and-restore rule in the reply bar becomes a small
-     draft state; the open-in-Web-View decision, the blockable-sender pick, and
-     note-to-self detection become pure functions on the thread. No SwiftUI view
-     tests: the return is in shrinking what only a view can exercise.
-  6. *Guardrails.* One script that runs both packages' tests, the app build, and
-     a coverage report, so the number is checked rather than remembered.
 
 ## The multi-account line
 

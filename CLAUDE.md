@@ -26,7 +26,10 @@ Three layers, each depending only on the one below:
 - **App target** (`Zirbe/Zirbe/`) — SwiftUI views.
 - **ZirbeCore** (`Packages/ZirbeCore/`) — the domain layer: the GRDB-backed
   `MailStore`, the `@Observable @MainActor InboxModel`, and `SyncService`. No UIKit,
-  no transport. Unit-testable; run `swift test` here.
+  no transport. Unit-testable; run `swift test` here. `SyncService` and
+  `InboxModel` take injected transports (`IMAPTransport`, `SMTPTransport` from
+  ZirbeMail), and the test target's `FakeMailServer` and `FakeMailSender` run
+  the whole sync and send path with no server.
 - **ZirbeMail** (`Packages/ZirbeMail/`) — a thin adapter over Cocoanetics/SwiftMail
   for IMAP/SMTP. The only place that talks to a server.
 
@@ -56,4 +59,6 @@ written as an API spec. Transport stays here; content parsing stays there.
   `// Author: David M. Anderson` / `// Built with AI assistance (Claude, Anthropic)`.
 - Commits use the trailer `Co-Authored-By: Claude <noreply@anthropic.com>`.
 - SourceKit "No such module" warnings in the editor are reindex noise; the real
-  check is an `xcodebuild` of the app scheme and `swift test` in `ZirbeCore`.
+  check is `scripts/check.sh`, which runs both packages' tests with coverage and
+  builds the app scheme (`--skip-app` for tests only, `--files` for per-file
+  coverage).
