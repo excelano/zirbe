@@ -278,19 +278,24 @@ surface.
   candidate: no text is stored, the attachment pass never runs, and the bubble
   reads "(no text content)" while the snippet backfill retries it every sync.
   Invites that do carry a text alternative show it, with the calendar part as a
-  nameless "Attachment" chip that does nothing. Three pieces, split by the
-  Klartext boundary:
-  1. *Parse, in Klartext.* An `Invite` value from an iCalendar body: title,
+  nameless "Attachment" chip that does nothing. Three pieces:
+  1. *Parse, in ZirbeCore.* An `Invite` value from an iCalendar body: title,
      start and end with time zone, all-day, location, organizer, attendees with
      their participation status, the method (request, update by sequence,
      cancel, reply), the iCalendar UID and sequence, the recurrence rule as
      readable text, and a join link pulled from the description or the
      Microsoft and Zoom extension properties, since a tappable join button is
-     most of an invite's daily value. Requested as an API-spec issue on
-     `excelano/klartext`, then a Klartext release.
+     most of an invite's daily value. The parser is pure Swift in the domain
+     layer, not Klartext: Klartext admits a thing only with two real consumers,
+     and Blick gets meetings as typed Graph fields, so this has one. It moves to
+     Klartext if Blick ever reads an `.ics` attachment. Outlook names time zones
+     in Windows form ("Eastern Standard Time"), so the parser carries a
+     Windows-to-Olson table. Fixtures are real invites, redacted: Outlook Teams,
+     Google Calendar, an update with a higher sequence, a cancellation, an
+     attendee reply, all-day, floating time with TZID, a weekly recurrence.
   2. *Fetch and carry, here.* ZirbeMail fetches a `text/calendar` part with the
      text leaves and treats a message with only that part as a candidate.
-     ZirbeCore puts the invite on `Message` (a store column and migration) and
+     ZirbeCore parses it, puts the invite on `Message` (a store column and migration), and
      threads by the iCalendar UID as well as the mail headers, so an invite, its
      updates, its cancellation, and every attendee's reply land in one
      conversation, the way a meeting is a conversation. An update replaces the
