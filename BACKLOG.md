@@ -271,6 +271,42 @@ file: a full single-account Apple Mail replacement, as chat-native as the
 Messages metaphor allows. New single-account feature requests land here as they
 surface.
 
+- **Calendar invites: read them, and add them to the calendar.** An invite
+  from Outlook or Google Calendar renders as an empty bubble today. The engine
+  picks a body by looking for a `text/plain` or `text/html` leaf, and a bare
+  invite often carries only `text/calendar`, so the message is never a body
+  candidate: no text is stored, the attachment pass never runs, and the bubble
+  reads "(no text content)" while the snippet backfill retries it every sync.
+  Invites that do carry a text alternative show it, with the calendar part as a
+  nameless "Attachment" chip that does nothing. Three pieces, split by the
+  Klartext boundary:
+  1. *Parse, in Klartext.* An `Invite` value from an iCalendar body: title,
+     start and end with time zone, all-day, location, organizer, attendees with
+     their participation status, the method (request, update by sequence,
+     cancel, reply), the iCalendar UID and sequence, the recurrence rule as
+     readable text, and a join link pulled from the description or the
+     Microsoft and Zoom extension properties, since a tappable join button is
+     most of an invite's daily value. Requested as an API-spec issue on
+     `excelano/klartext`, then a Klartext release.
+  2. *Fetch and carry, here.* ZirbeMail fetches a `text/calendar` part with the
+     text leaves and treats a message with only that part as a candidate.
+     ZirbeCore puts the invite on `Message` (a store column and migration) and
+     threads by the iCalendar UID as well as the mail headers, so an invite, its
+     updates, its cancellation, and every attendee's reply land in one
+     conversation, the way a meeting is a conversation. An update replaces the
+     card in place by sequence; a reply from an attendee reads as a system line
+     ("Pat accepted"), the way join-and-leave lines already do, so the notices
+     that pile up after an invite in Blick never become bubbles here.
+  3. *Show and add, in the app.* The bubble becomes a card in the three-row
+     shape Blick's meeting card already uses: calendar icon with the time
+     range, the title, "with organizer", plus a location line and a Join button
+     when there is a link, and a "Cancelled" or "Updated" badge by method. An
+     "Add to Calendar" button presents the system event editor prefilled;
+     EventKit's edit sheet needs only write-only access
+     (`NSCalendarsWriteOnlyAccessUsageDescription`), the user confirms in
+     Apple's own UI, and nothing leaves the device.
+  RSVP and conflict detection are held below, each with its own reason.
+
 - **iPad split view.** 1.0 shipped iPhone-only (`TARGETED_DEVICE_FAMILY = 1`) to
   clear the first submission without the iPad screenshot set. Next up: restore
   universal and build a proper iPad layout. The app's core navigation is a
@@ -303,6 +339,23 @@ Below the line: more than one account, and the auth tracks that widen reach.
 
 ## Held (unscheduled)
 
+- **RSVP from an invite.** Accept, Maybe, and Decline on the invite card, the
+  capsule row Blick uses. Unlike Blick, where the answer is one Graph call and
+  the status comes back from the server, Zirbe's answer is an iMIP email: a
+  `text/calendar` part with method REPLY addressed to the organizer, and
+  Outlook and Google are particular about its shape, so it needs interop
+  testing against both. "You accepted" then has to be derived from Zirbe's own
+  sent reply for that UID and sequence; an answer given from another client
+  won't show. Two open questions before starting: whether SwiftMail lets the
+  part's content type carry the method parameter, and how a Zirbe reply should
+  render in a thread where the organizer is also a Zirbe user. Pull up once
+  reading invites has shipped and been used.
+- **Meeting conflicts.** Blick flags an invite that overlaps a meeting already
+  on the calendar. Here that means reading the user's calendar through
+  EventKit, which is full calendar access, a heavier permission than the
+  write-only sheet "Add to Calendar" needs. The first invite cut asks for
+  nothing; revisit if users ask, and if so make it opt-in from the invite card
+  rather than a launch prompt.
 - **Server-side search.** Local search (shipped) covers only mail already synced
   into the store. A "search everything" pass over IMAP SEARCH/ESEARCH would reach
   older mail still on the server. SwiftMail provides it; the work is merging server
