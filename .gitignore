@@ -35,3 +35,7 @@ next.txt
 
 # Calendar-part dumps from scripts/ics-dump.sh (personal, until redacted into Tests)
 /ics-dump/
+
+# The release apps' per-repo configuration and the screenshots they take
+ship.toml
+packaging/ios/screenshots/

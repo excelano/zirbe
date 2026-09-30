@@ -1,0 +1,27 @@
+# What this release tells the App Store it changed. The version is checked
+# against the release being cut, so notes left from last time stop the release
+# rather than reaching the listing.
+
+version = "1.1.0"
+
+[locales."en-us"]
+whats-new = """
+Meeting invitations finally show up as meetings. An invite from Outlook, Google \
+Calendar, or anywhere else used to arrive as an empty message. It now appears as \
+a card with the time, the title, who's organizing, and where, with a Join button \
+when there's a Teams, Meet, Zoom, or Webex link. Tap Add to Calendar to put it in \
+your calendar with Apple's own event editor; Zirbe never reads your calendar.
+
+A meeting is a conversation. The invitation, any updates to it, a cancellation, \
+and everyone's replies land in one thread. An update replaces the card in place, \
+and "Daniel accepted" reads as a line, not a message.
+
+Copy a message's text from its long-press menu.
+
+Replying from the web view now clears the field and shows your sent message, and \
+moving or trashing a conversation that spans folders no longer leaves the list \
+out of step with the server.
+
+As always, Zirbe talks only to your own mail servers. No backend, no analytics, \
+no third-party SDKs.
+"""

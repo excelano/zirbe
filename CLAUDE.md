@@ -57,8 +57,11 @@ written as an API spec. Transport stays here; content parsing stays there.
 
 - Swift files authored with AI assistance carry a two-line header:
   `// Author: David M. Anderson` / `// Built with AI assistance (Claude, Anthropic)`.
-- Commits use the trailer `Co-Authored-By: Claude <noreply@anthropic.com>`.
 - SourceKit "No such module" warnings in the editor are reindex noise; the real
   check is `scripts/check.sh`, which runs both packages' tests with coverage and
   builds the app scheme (`--skip-app` for tests only, `--files` for per-file
   coverage).
+
+## Releases
+
+The apps in `excelano/shipping`, run from this directory; `RELEASING.md` says what the repository holds for them.

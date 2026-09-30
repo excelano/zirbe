@@ -1,0 +1,64 @@
+# The copy the App Store listing is filled in from. Every line is a claim about
+# the code, so it lives here, is reviewed and committed like anything else, and
+# ship-appstore pushes it on every release. Edit here; do not edit the listing
+# in a browser.
+#
+# Limits, counted in characters: apple.name and apple.subtitle 30,
+# apple.promotional-text 170, apple.keywords 100 including the commas,
+# description 4,000, apple-review-notes 4,000.
+#
+# The reviewer's demo mailbox and its password are on the App Store Connect
+# record's sign-in fields, never here: this repository is public.
+
+apple-review-notes = """
+Zirbe is a standards-based email client for iPhone. It connects only to the mail servers of the account you sign in with, using IMAP to read and SMTP to send. There is no Zirbe account, server, or backend, and no registration step; the sign-in is an ordinary email mailbox on a private server.
+
+DEMO ACCOUNT
+The address and password are in the sign-in fields of this submission. The mailbox is on a private server, so its settings are entered by hand:
+IMAP server:    excelano.com   port 993   (TLS)
+SMTP server:    excelano.com   port 465   (TLS)
+
+There is no multi-factor step: signing in with the address and password connects directly.
+
+HOW TO SIGN IN
+1. Launch the app. The first screen asks for an email address.
+2. Type the demo address. A password field and a "Server settings" section appear; Server settings opens on its own because this domain is not a preset provider.
+3. In Server settings, set both hosts to excelano.com (with no imap. or smtp. prefix):
+     IMAP host: excelano.com   IMAP port: 993
+     SMTP host: excelano.com   SMTP port: 465
+   These replace the app's guessed defaults (imap.excelano.com / smtp.excelano.com and SMTP port 587), which will not connect.
+4. Enter the demo password, then tap Connect.
+5. The app may ask permission to send notifications and to use Contacts. Both are optional and can be declined without affecting the review. Notifications drive a local new-mail banner; Contacts is used only on the device to show sender photos and suggest recipients.
+
+WHAT YOU CAN DO
+The inbox is a list of conversations, where each conversation is an email thread shown like a group chat: the subject is the title and every message is a bubble in time order. Tap a conversation to open it, then reply, attach a photo or file, react to a message, search within the thread, or swipe a message to reply, and swipe a conversation to archive, delete, or pin. A meeting invitation shows as a card with the time, the organizer and a Join button, and Add to Calendar opens Apple's own event editor. The mailbox contains a sample conversation to open and act on. Sending delivers over the account's own SMTP server (excelano.com).
+
+PRIVACY
+Zirbe's only network destinations are the demo account's own IMAP and SMTP servers. It contains no analytics, telemetry, or third-party SDKs, which is why the App Privacy declaration is Data Not Collected. The full privacy statement is at https://excelano.com/legal/#zirbe and the complete source is public at https://github.com/excelano/zirbe.
+
+Contact for review questions: David M. Anderson, david.anderson@excelano.com.
+"""
+
+[locales."en-us"]
+website = "https://excelano.com/zirbe"
+support = "https://excelano.com/zirbe"
+privacy = "https://excelano.com/legal/#zirbe"
+description = """
+Zirbe is an email app that looks and feels like a texting app while keeping real email underneath. A conversation in Zirbe is a mail thread, not a person: the subject is the title, the people on it are the members, and every message is a bubble in time order. The same person writing you about five different things becomes five conversations, which is how email actually works. Starting a new conversation means naming it, and that name is the subject.
+
+Underneath the chat is a full email client. Read and reply with bubbles, attach photos, files, or a recorded voice message, and open what you receive in a full preview to save or share it. Reach every folder, not just the inbox: archive, move, and organize, save and resume drafts, and send blind copies that stay blind. React to a message with a tapback that rides your own mail as a real reply, so another Zirbe user sees the badge and every other mail app sees a readable line. Search within a conversation, pin the threads that matter to the top, and block a sender to sweep their mail to Junk and keep it there. New mail arrives with a local notification and a badge, and a reply that fails to send waits as a tap-to-retry bubble instead of vanishing. Sender photos come from your own contacts, and typing a recipient suggests people from your address book.
+
+A meeting invitation shows up as a meeting: a card with the time, the title, who's organizing, and where, with a Join button when there's a Teams, Meet, Zoom, or Webex link, and Add to Calendar puts it in your calendar with Apple's own event editor. The invitation, its updates, a cancellation, and everyone's replies land in one conversation.
+
+Zirbe is private by construction, not by promise. It connects only to your own IMAP and SMTP servers over an encrypted connection. There is no Zirbe server, no account to create with us, no analytics, no telemetry, and no third-party SDK. Your mail is cached on your device so the inbox opens instantly and works offline; your password lives in the device Keychain and is never synced off the device. Remote images in HTML mail are blocked until you choose to load them, so opening a message never phones home. Because the whole app is open source, every one of these claims is something you can check for yourself.
+
+Zirbe works with any email provider that supports standard IMAP and SMTP with an app-specific password. Sign in with your address and an app password, and if your provider is a common one the server settings fill in for you.
+
+Zirbe is free and MIT-licensed. It is an independent app and is not affiliated with or endorsed by Apple. iMessage and Messages are trademarks of Apple Inc.
+"""
+
+[locales."en-us".apple]
+name = "Zirbe — Email as Chat"
+subtitle = "Your inbox, like texting"
+promotional-text = "Your email as a group chat: subject is the title, each reply a bubble. Real IMAP underneath. No backend, no analytics, no third-party SDKs. Open source."
+keywords = "imap,smtp,mail,messenger,thread,conversation,attachment,folder,offline,secure,privacy,open source"
