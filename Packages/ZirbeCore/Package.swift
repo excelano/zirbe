@@ -37,13 +37,20 @@ let package = Package(
             name: "sync-demo",
             dependencies: ["ZirbeCore"]
         ),
+        // macOS-only: parse iCalendar files and print what InviteParser read.
+        .executableTarget(
+            name: "ics-check",
+            dependencies: ["ZirbeCore"]
+        ),
         .testTarget(
             name: "ZirbeCoreTests",
             dependencies: [
                 "ZirbeCore",
                 // The fake transports conform to ZirbeMail's protocols directly.
                 .product(name: "ZirbeMail", package: "ZirbeMail"),
-            ]
+            ],
+            // Real, redacted invites for the iCalendar parser.
+            resources: [.copy("Fixtures")]
         ),
     ],
     swiftLanguageModes: [.v5]

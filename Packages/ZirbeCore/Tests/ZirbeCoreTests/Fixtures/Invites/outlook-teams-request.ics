@@ -1,0 +1,86 @@
+BEGIN:VCALENDAR
+METHOD:REQUEST
+PRODID:Microsoft Exchange Server 2010
+VERSION:2.0
+BEGIN:VTIMEZONE
+TZID:Central Standard Time
+BEGIN:STANDARD
+DTSTART:16010101T020000
+TZOFFSETFROM:-0500
+TZOFFSETTO:-0600
+RRULE:FREQ=YEARLY;INTERVAL=1;BYDAY=1SU;BYMONTH=11
+END:STANDARD
+BEGIN:DAYLIGHT
+DTSTART:16010101T020000
+TZOFFSETFROM:-0600
+TZOFFSETTO:-0500
+RRULE:FREQ=YEARLY;INTERVAL=1;BYDAY=2SU;BYMONTH=3
+END:DAYLIGHT
+END:VTIMEZONE
+BEGIN:VEVENT
+ORGANIZER;CN=Person 1:mailto:user1@excelano.onmicrosoft.com
+ATTENDEE;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE;CN=Person 2:m
+ ailto:user2@anderix.com
+DESCRIPTION;LANGUAGE=en-US:\n______________________________________________
+ __________________________________\nMicrosoft Teams meeting\nJoin: https:/
+ /teams.microsoft.com/meet/226630037595441?p=8wJHI9ZjuLAjFcGNco\nMeeting ID
+ : 226 630 037 595 441\nPasscode: Dv2ae65z\n_______________________________
+ _\nNeed help?<https://aka.ms/JoinTeamsMeeting?omkt=en-US> | System referen
+ ce<https://teams.microsoft.com/l/meetup-join/19%3ameeting_NTkzMjMxNWYtZTNl
+ Yy00YzA2LWEyNTgtZTI4NWFiYTdhNTA2%40thread.v2/0?context=%7b%22Tid%22%3a%220
+ eb09813-9a2b-4c9a-985d-79d7b7fee18c%22%2c%22Oid%22%3a%2270aa5aa8-5477-4905
+ -a6e5-428c0eca9887%22%7d>\nFor organizers: Meeting options<https://teams.m
+ icrosoft.com/meetingOptions/?organizerId=70aa5aa8-5477-4905-a6e5-428c0eca9
+ 887&tenantId=0eb09813-9a2b-4c9a-985d-79d7b7fee18c&threadId=19_meeting_NTkz
+ MjMxNWYtZTNlYy00YzA2LWEyNTgtZTI4NWFiYTdhNTA2@thread.v2&messageId=0&languag
+ e=en-US>\n________________________________________________________________
+ ________________\n
+UID:040000008200E00074C5B7101A82E00800000000BA9DFB130A40DD01000000000000000
+ 0100000001ED094F26D0FF242A01318C013759163
+SUMMARY;LANGUAGE=en-US:test
+DTSTART;TZID=Central Standard Time:20260908T230000
+DTEND;TZID=Central Standard Time:20260909T000000
+CLASS:PUBLIC
+PRIORITY:5
+DTSTAMP:20260909T031954Z
+TRANSP:OPAQUE
+STATUS:CONFIRMED
+SEQUENCE:1
+LOCATION;LANGUAGE=en-US:Microsoft Teams Meeting
+X-MICROSOFT-CDO-APPT-SEQUENCE:1
+X-MICROSOFT-CDO-OWNERAPPTID:2125023124
+X-MICROSOFT-CDO-BUSYSTATUS:TENTATIVE
+X-MICROSOFT-CDO-INTENDEDSTATUS:BUSY
+X-MICROSOFT-CDO-ALLDAYEVENT:FALSE
+X-MICROSOFT-CDO-IMPORTANCE:1
+X-MICROSOFT-CDO-INSTTYPE:0
+X-MICROSOFT-ONLINEMEETINGINFORMATION:{"OnlineMeetingChannelId":null\,"Onlin
+ eMeetingProvider":3}
+X-MICROSOFT-SKYPETEAMSMEETINGURL:https://teams.microsoft.com/l/meetup-join/
+ 19%3ameeting_NTkzMjMxNWYtZTNlYy00YzA2LWEyNTgtZTI4NWFiYTdhNTA2%40thread.v2/
+ 0?context=%7b%22Tid%22%3a%220eb09813-9a2b-4c9a-985d-79d7b7fee18c%22%2c%22O
+ id%22%3a%2270aa5aa8-5477-4905-a6e5-428c0eca9887%22%7d
+X-MICROSOFT-SCHEDULINGSERVICEUPDATEURL:https://api.scheduler.teams.microsof
+ t.com/teams/0eb09813-9a2b-4c9a-985d-79d7b7fee18c/70aa5aa8-5477-4905-a6e5-4
+ 28c0eca9887/19_meeting_NTkzMjMxNWYtZTNlYy00YzA2LWEyNTgtZTI4NWFiYTdhNTA2@th
+ read.v2/0
+X-MICROSOFT-SKYPETEAMSPROPERTIES:{"cid":"19:meeting_NTkzMjMxNWYtZTNlYy00YzA
+ 2LWEyNTgtZTI4NWFiYTdhNTA2@thread.v2"\,"rid":0\,"mid":0\,"uid":null\,"priva
+ te":true\,"type":0}
+X-MICROSOFT-DONOTFORWARDMEETING:FALSE
+X-MICROSOFT-DISALLOW-COUNTER:FALSE
+X-MICROSOFT-REQUESTEDATTENDANCEMODE:DEFAULT
+X-MICROSOFT-ISRESPONSEREQUESTED:TRUE
+X-MICROSOFT-LOCATIONDISPLAYNAME:Microsoft Teams Meeting
+X-MICROSOFT-LOCATIONSOURCE:None
+X-MICROSOFT-LOCATIONS:[{"DisplayName":"Microsoft Teams Meeting"\,"LocationA
+ nnotation":""\,"LocationUri":""\,"LocationStreet":""\,"LocationCity":""\,"
+ LocationState":""\,"LocationCountry":""\,"LocationPostalCode":""\,"Locatio
+ nFullAddress":""}]
+BEGIN:VALARM
+DESCRIPTION:REMINDER
+TRIGGER;RELATED=START:-PT15M
+ACTION:DISPLAY
+END:VALARM
+END:VEVENT
+END:VCALENDAR

@@ -50,6 +50,11 @@ let package = Package(
             name: "imap-demo",
             dependencies: ["ZirbeMail"]
         ),
+        // macOS-only: dump recent messages' iCalendar parts as parser fixtures.
+        .executableTarget(
+            name: "ics-dump",
+            dependencies: [.product(name: "SwiftMail", package: "SwiftMail")]
+        ),
         .testTarget(
             name: "ZirbeMailTests",
             dependencies: [
