@@ -31,19 +31,25 @@ esac
 bundle=$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$app/Info.plist")
 mkdir -p "$outdir"
 
+# Seconds between the launch and the shutter. A conversation that opens on
+# launch is still sliding in at six seconds on a cold simulator.
+settle=8
+
 shot() {
     name=$1
     shift
     xcrun simctl launch --terminate-running-process "$device" "$bundle" \
         -AppleLanguages "$languages" -AppleLocale "$locale" --demo "$@" >/dev/null
-    sleep 6
+    sleep "$settle"
     xcrun simctl io "$device" screenshot --type=png "$outdir/$name.png" >/dev/null
     echo "$name"
 }
 
 shot 01-inbox
+settle=14
 shot 02-conversation --demo-open
 shot 03-invitation --demo-open "--demo-open-subject=planning call"
+settle=8
 shot 04-search --demo-search Priya
 
 xcrun simctl terminate "$device" "$bundle" >/dev/null 2>&1 || true
