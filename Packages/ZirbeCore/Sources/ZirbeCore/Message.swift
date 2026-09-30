@@ -60,6 +60,11 @@ public struct Message: Sendable, Hashable, Identifiable {
     /// target instead. Nil for every ordinary message. Set from the
     /// `X-Zirbe-Reaction` header inbound, and on the local copy of one Zirbe sends.
     public var reaction: String?
+    /// The calendar invitation this message carries (a meeting request, an
+    /// update, a cancellation, or an attendee's answer), parsed from its
+    /// `text/calendar` part when the body was fetched. Nil for ordinary mail
+    /// and until the body arrives.
+    public var invite: Invite?
 
     public init(
         messageID: String? = nil,
@@ -76,7 +81,8 @@ public struct Message: Sendable, Hashable, Identifiable {
         hasHTML: Bool = false,
         attachments: [MessageAttachment] = [],
         sendState: SendState = .sent,
-        reaction: String? = nil
+        reaction: String? = nil,
+        invite: Invite? = nil
     ) {
         self.messageID = messageID
         self.uid = uid
@@ -93,7 +99,12 @@ public struct Message: Sendable, Hashable, Identifiable {
         self.attachments = attachments
         self.sendState = sendState
         self.reaction = reaction
+        self.invite = invite
     }
+
+    /// Whether this message answers a meeting invitation (an attendee's accept,
+    /// tentative, or decline), shown as a line in the conversation, not a bubble.
+    public var isInviteResponse: Bool { invite?.isReply ?? false }
 
     /// Whether this message is a reaction (tapback) rather than a chat message.
     public var isReaction: Bool { reaction != nil }

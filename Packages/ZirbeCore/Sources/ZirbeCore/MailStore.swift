@@ -52,6 +52,10 @@ struct MessageRow: Codable, FetchableRecord, PersistableRecord {
     /// while the body is (a header-only row), and whenever the body yields nothing
     /// worth showing.
     var snippet: String?
+    /// The parsed calendar invitation, as JSON, when the message carries one.
+    /// Stored with the body (it comes from the same fetch) and read by the
+    /// rethread, which threads invitations by their meeting's UID.
+    var invite: Invite?
 
     init(_ message: Message, accountID: String, mailboxName: String) {
         self.id = message.id
@@ -74,7 +78,15 @@ struct MessageRow: Codable, FetchableRecord, PersistableRecord {
         self.threadID = nil
         self.sendState = message.sendState.rawValue
         self.reaction = message.reaction
-        self.snippet = message.bodyText.flatMap(Self.preview(of:))
+        self.invite = message.invite
+        self.snippet = Self.preview(text: message.bodyText, invite: message.invite)
+    }
+
+    /// The stored preview for a fetched body: the text's glance, else the
+    /// invitation's one-line summary when the message is an invite with no text.
+    static func preview(text: String?, invite: Invite?) -> String? {
+        if let text, let glance = preview(of: text) { return glance }
+        return invite?.glance
     }
 
     /// The stored preview for a body, or nil when it reduces to nothing.
@@ -85,7 +97,7 @@ struct MessageRow: Codable, FetchableRecord, PersistableRecord {
 
     /// The columns a fetched body owns. A synced envelope carries none of them, so
     /// a re-save of an already-cached message must leave them alone.
-    static let bodyColumns: Set<String> = ["bodyText", "hasHTML", "attachments", "snippet"]
+    static let bodyColumns: Set<String> = ["bodyText", "hasHTML", "attachments", "snippet", "invite"]
 
     /// Every other column: what a sync refreshes on a row it already has. Read off
     /// the table itself rather than listed by hand, so a column added in a later
@@ -113,7 +125,8 @@ struct MessageRow: Codable, FetchableRecord, PersistableRecord {
             hasHTML: hasHTML,
             attachments: attachments,
             sendState: SendState(rawValue: sendState) ?? .sent,
-            reaction: reaction
+            reaction: reaction,
+            invite: invite
         )
     }
 }
@@ -152,9 +165,11 @@ private struct ThreadingProbe: Decodable, FetchableRecord {
     var sendState: String
     var reaction: String?
     var snippet: String?
+    /// Read for the meeting UID an invitation threads by; nil on ordinary mail.
+    var invite: Invite?
 
     /// The columns to select, in one place so the SQL and the decoder can't drift.
-    static let columns = "id, uid, messageID, inReplyTo, referenceIDs, subject, fromAddress, fromName, toParticipants, ccParticipants, date, flags, hasHTML, threadID, sendState, reaction, snippet"
+    static let columns = "id, uid, messageID, inReplyTo, referenceIDs, subject, fromAddress, fromName, toParticipants, ccParticipants, date, flags, hasHTML, threadID, sendState, reaction, snippet, invite"
 
     /// The domain message, with an empty body and no attachments. Enough to thread
     /// and to build a thread row, and never written back.
@@ -174,7 +189,8 @@ private struct ThreadingProbe: Decodable, FetchableRecord {
             hasHTML: hasHTML,
             attachments: [],
             sendState: SendState(rawValue: sendState) ?? .sent,
-            reaction: reaction
+            reaction: reaction,
+            invite: invite
         )
     }
 }
@@ -720,17 +736,35 @@ public final class MailStore: @unchecked Sendable {
     /// open is offline. Attachments are stored as JSON in the same row, matching
     /// how `MessageRow` reads them back.
     public func storeBodies(_ bodiesByMessageID: [String: (text: String, hasHTML: Bool, attachments: [MessageAttachment])]) async throws {
+        try await storeBodies(bodiesByMessageID.mapValues { FetchedBody(text: $0.text, hasHTML: $0.hasHTML, attachments: $0.attachments) })
+    }
+
+    /// Persist fetched bodies, keyed by message id. The invitation, when the
+    /// message carries one, is stored beside the text as JSON; an invite with no
+    /// text takes its preview and its search text from the invitation.
+    public func storeBodies(_ bodiesByMessageID: [String: FetchedBody]) async throws {
         guard !bodiesByMessageID.isEmpty else { return }
         let encoder = JSONEncoder()
         try await database.write { db in
             for (id, body) in bodiesByMessageID {
                 let attachmentsJSON = String(decoding: try encoder.encode(body.attachments), as: UTF8.self)
+                let inviteJSON = try body.invite.map { String(decoding: try encoder.encode($0), as: UTF8.self) }
                 try db.execute(
-                    sql: "UPDATE message SET bodyText = ?, hasHTML = ?, attachments = ?, snippet = ? WHERE id = ?",
-                    arguments: [body.text, body.hasHTML, attachmentsJSON, MessageRow.preview(of: body.text), id]
+                    sql: "UPDATE message SET bodyText = ?, hasHTML = ?, attachments = ?, snippet = ?, invite = ? WHERE id = ?",
+                    arguments: [body.text, body.hasHTML, attachmentsJSON, MessageRow.preview(text: body.text, invite: body.invite), inviteJSON, id]
                 )
-                try SearchIndex.indexBody(body.text, messageID: id, in: db)
+                let searchable = body.text.isEmpty ? (body.invite?.searchText ?? "") : body.text
+                try SearchIndex.indexBody(searchable, messageID: id, in: db)
             }
+        }
+    }
+
+    /// The thread a message currently belongs to, or nil if unknown. Used after
+    /// a rethread merged invitations by UID, so a conversation opened under one
+    /// id can be found under the id it moved to.
+    public func threadID(ofMessage id: String) async throws -> String? {
+        try await database.read { db in
+            try String.fetchOne(db, sql: "SELECT threadID FROM message WHERE id = ?", arguments: [id])
         }
     }
 
@@ -1316,6 +1350,12 @@ public final class MailStore: @unchecked Sendable {
                     body: row["bodyText"],
                     in: db
                 )
+            }
+        }
+        // The parsed calendar invitation, JSON, beside the body it came with.
+        migrator.registerMigration("v19-message-invite") { db in
+            try db.alter(table: "message") { t in
+                t.add(column: "invite", .text)
             }
         }
         return migrator

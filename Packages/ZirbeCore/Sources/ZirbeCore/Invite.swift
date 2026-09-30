@@ -107,4 +107,35 @@ public struct Invite: Sendable, Hashable, Codable {
 
     /// The answering attendee of a reply: the one attendee a REPLY carries.
     public var replyingAttendee: Attendee? { isReply ? attendees.first : nil }
+
+    /// A one-line reading for the inbox row and a notification: what this
+    /// message does to the meeting, then its title.
+    public var glance: String {
+        let title = summary?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let lead: String
+        if isReply, let attendee = replyingAttendee {
+            switch attendee.status {
+            case .accepted: lead = "\(attendee.label) accepted"
+            case .tentative: lead = "\(attendee.label) might attend"
+            case .declined: lead = "\(attendee.label) declined"
+            case .needsAction, .other: lead = "\(attendee.label) replied"
+            }
+        } else if isCancelled {
+            lead = "Cancelled"
+        } else if sequence > 0 {
+            lead = "Updated"
+        } else {
+            lead = "Invitation"
+        }
+        return title.isEmpty ? lead : "\(lead): \(title)"
+    }
+
+    /// The words search should find this invitation by.
+    public var searchText: String {
+        [summary, location, organizer?.label, description].compactMap { $0 }.joined(separator: "\n")
+    }
+
+    /// The threading key every message about this meeting shares: the invite,
+    /// its updates, its cancellation, and each attendee's answer.
+    public var threadKey: String { "ical:\(uid)" }
 }

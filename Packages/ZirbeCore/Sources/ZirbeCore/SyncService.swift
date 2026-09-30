@@ -143,18 +143,24 @@ public actor SyncService {
         do {
             let needing = try await store.latestMessagesNeedingBodies(accountID: account.id)
             if !needing.isEmpty {
-                var bodies: [String: (text: String, hasHTML: Bool, attachments: [MessageAttachment])] = [:]
+                var bodies: [String: FetchedBody] = [:]
                 for (mailbox, group) in Dictionary(grouping: needing, by: \.mailbox) {
                     let fetched = try await engine.fetchTextBodies(
                         in: mailbox,
                         messages: group.map { (id: $0.id, uid: $0.uid) }
                     )
-                    for (id, body) in fetched {
-                        bodies[id] = (text: body.text, hasHTML: body.hasHTML, attachments: body.attachments.map(MessageAttachment.init))
-                    }
+                    for (id, body) in fetched { bodies[id] = FetchedBody(body) }
                 }
                 try await store.storeBodies(bodies)
-                try await store.refreshThreadSnippets(fromLatestMessages: Array(bodies.keys))
+                // An invitation threads by its meeting's UID, which is only known
+                // once its body is read, so a sync that fetched one rethreads to
+                // fold it in with the meeting's earlier messages. Ordinary bodies
+                // move only their own thread's snippet.
+                if bodies.values.contains(where: { $0.invite != nil }) {
+                    try await store.rethread(accountID: account.id)
+                } else {
+                    try await store.refreshThreadSnippets(fromLatestMessages: Array(bodies.keys))
+                }
             }
         } catch {
             // Snippets are a convenience; a failure to backfill them must not
@@ -191,21 +197,28 @@ public actor SyncService {
     /// the Keychain (M4) or the in-memory session, never on this service.
     public func loadConversation(id: String, password: String) async throws -> Thread? {
         let targets = try await store.messagesNeedingBodies(threadID: id)
+        var threadID = id
         if !targets.isEmpty {
             try await engine.connect(username: account.username, password: password)
-            var bodies: [String: (text: String, hasHTML: Bool, attachments: [MessageAttachment])] = [:]
+            var bodies: [String: FetchedBody] = [:]
             for (mailbox, group) in Dictionary(grouping: targets, by: \.mailbox) {
                 let fetched = try await engine.fetchTextBodies(
                     in: mailbox,
                     messages: group.map { (id: $0.id, uid: $0.uid) }
                 )
-                for (id, body) in fetched {
-                    bodies[id] = (text: body.text, hasHTML: body.hasHTML, attachments: body.attachments.map(MessageAttachment.init))
-                }
+                for (id, body) in fetched { bodies[id] = FetchedBody(body) }
             }
             try await store.storeBodies(bodies)
+            // A newly read invitation may fold this thread into its meeting's
+            // conversation under another id; follow one of its messages there.
+            if bodies.values.contains(where: { $0.invite != nil }) {
+                try await store.rethread(accountID: account.id)
+                if let anyMessage = targets.first?.id, let moved = try await store.threadID(ofMessage: anyMessage) {
+                    threadID = moved
+                }
+            }
         }
-        return try await store.thread(id: id)
+        return try await store.thread(id: threadID)
     }
 
     /// Fetch one message's HTML for the Web View, by message id, with its inline
@@ -510,6 +523,20 @@ public actor SyncService {
     /// `localSentMailbox`. The server's real Drafts folder is resolved by the
     /// engine on APPEND; a later Drafts sync reconciles the names by Message-ID.
     private static let localDraftsMailbox = "Drafts"
+}
+
+extension FetchedBody {
+    /// A transport body on its way into the store: the calendar part, when
+    /// present, is parsed here, at the one seam where ZirbeMail's text becomes
+    /// the domain's value.
+    init(_ body: MessageBody) {
+        self.init(
+            text: body.text,
+            hasHTML: body.hasHTML,
+            attachments: body.attachments.map(MessageAttachment.init),
+            invite: body.calendar.flatMap { InviteParser.parse(iCalendar: $0) }
+        )
+    }
 }
 
 /// Map the transport layer's special-use enum onto the domain's MailboxRole. The

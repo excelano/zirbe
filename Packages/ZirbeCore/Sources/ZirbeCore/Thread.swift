@@ -53,7 +53,34 @@ public struct Thread: Sendable, Hashable, Identifiable {
     /// The messages shown as chat bubbles: every message that isn't a reaction,
     /// in the thread's existing oldest-first order.
     public var conversationMessages: [Message] {
-        messages.filter { !$0.isReaction }
+        let current = currentInviteMessageIDs
+        return messages.filter { message in
+            if message.isReaction || message.isInviteResponse { return false }
+            if let invite = message.invite { return current[invite.uid] == message.id }
+            return true
+        }
+    }
+
+    /// For each meeting in the thread, the id of the message that currently
+    /// describes it: the highest sequence, the latest date on a tie. Earlier
+    /// invitations for the same meeting are superseded and stay out of the chat,
+    /// so an update replaces its card in place.
+    private var currentInviteMessageIDs: [String: String] {
+        var best: [String: Message] = [:]
+        for message in messages {
+            guard let invite = message.invite, !invite.isReply else { continue }
+            if let existing = best[invite.uid], let existingInvite = existing.invite,
+               (existingInvite.sequence, existing.date ?? .distantPast) >= (invite.sequence, message.date ?? .distantPast) {
+                continue
+            }
+            best[invite.uid] = message
+        }
+        return best.mapValues(\.id)
+    }
+
+    /// The attendees' answers in this thread, oldest first.
+    public var inviteResponses: [InviteResponse] {
+        InviteResponse.responses(in: messages)
     }
 
     /// The reactions on each message, keyed by the target message's `Message-ID`

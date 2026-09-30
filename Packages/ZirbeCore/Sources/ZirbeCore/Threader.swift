@@ -150,6 +150,13 @@ public enum Threader {
         if let irt = message.inReplyTo, !irt.isEmpty, chain.last != irt {
             chain.append(irt)
         }
+        // A meeting is a conversation: every message about it (the invitation,
+        // its updates, its cancellation, each attendee's answer) descends from
+        // one synthetic ancestor keyed by the meeting's UID, whatever the mail
+        // headers say. Outlook's updates carry no References at all.
+        if let invite = message.invite {
+            chain.insert(invite.threadKey, at: 0)
+        }
         return chain
     }
 
@@ -256,7 +263,10 @@ public enum Threader {
     /// references), then the earliest message's id.
     private static func threadID(for root: Container, messages: [Message]) -> String {
         if let mid = root.message?.messageID, !mid.isEmpty { return "mid:\(mid)" }
-        if root.keyed { return "mid:\(root.key)" }
+        // A meeting's synthetic root is never a message; the earliest message
+        // names the thread, so its id is what it would have been without the
+        // meeting link and stays put as updates arrive.
+        if root.keyed, !root.key.hasPrefix("ical:") { return "mid:\(root.key)" }
         return messages.first?.id ?? root.key
     }
 
