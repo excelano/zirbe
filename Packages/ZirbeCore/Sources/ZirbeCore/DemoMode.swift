@@ -37,6 +37,18 @@ public enum DemoMode {
         #endif
     }
 
+    /// With `--demo-open`, a subject fragment naming which conversation to open
+    /// instead of the top one, from `--demo-open-subject=<text>`. Nil opens the
+    /// top conversation. Release always returns nil.
+    public static var openSubject: String? {
+        #if DEBUG
+        let prefix = "--demo-open-subject="
+        return ProcessInfo.processInfo.arguments.first { $0.hasPrefix(prefix) }.map { String($0.dropFirst(prefix.count)) }
+        #else
+        return nil
+        #endif
+    }
+
     /// A search query to pre-fill on launch, for capturing the search-results
     /// screen without typing. Set by `--demo-search <query>` alongside `--demo`;
     /// defaults to a name that matches several sample conversations when no query
@@ -168,6 +180,36 @@ public enum DemoData {
         all.append(msg("hood-1", from: maya, to: [me], subject: "Welcome to the street!",
             body: "So glad you moved in — we're the blue house two doors down. Coffee this weekend once you're unpacked?",
             minutesAgo: 4 * 24 * 60, uid: 111))
+
+        // A meeting as a conversation: the invitation, an update that moved it
+        // (which replaces the card), and one attendee's answer (a line, not a
+        // bubble). No headers link them; the meeting's UID does.
+        let start = Calendar.current.date(bySettingHour: 12, minute: 30, second: 0, of: Date().addingTimeInterval(2 * 24 * 3600))!
+        let planning = "Cabin weekend planning call"
+        func invite(sequence: Int, method: Invite.Method = .request, offset: TimeInterval = 0, attendees: [Invite.Attendee] = []) -> Invite {
+            Invite(
+                uid: "cabin-call-2026@hey.com", sequence: sequence, method: method, summary: planning,
+                start: start.addingTimeInterval(offset), end: start.addingTimeInterval(offset + 30 * 60),
+                location: "Video call",
+                organizer: Invite.Attendee(name: "Priya Menon", address: priya.address, status: .accepted),
+                attendees: attendees.isEmpty ? [
+                    Invite.Attendee(name: "Daniel Okafor", address: daniel.address, status: .needsAction),
+                    Invite.Attendee(address: me.address, status: .needsAction),
+                ] : attendees,
+                joinURL: URL(string: "https://meet.google.com/abc-defg-hij")
+            )
+        }
+        var request = msg("call-1", from: priya, to: [me, daniel], subject: "Invitation: \(planning)",
+            body: "", minutesAgo: 5 * 60, uid: 112)
+        request.invite = invite(sequence: 0)
+        var update = msg("call-2", from: priya, to: [me, daniel], subject: "Updated invitation: \(planning)",
+            body: "Pushed it half an hour so Daniel can make it.", minutesAgo: 95, seen: false, uid: 113)
+        update.invite = invite(sequence: 1, offset: 30 * 60)
+        var accepted = msg("call-3", from: daniel, to: [priya], subject: "Accepted: \(planning)",
+            body: "", minutesAgo: 60, uid: 114)
+        accepted.invite = invite(sequence: 1, method: .reply, offset: 30 * 60,
+            attendees: [Invite.Attendee(name: "Daniel Okafor", address: daniel.address, status: .accepted)])
+        all += [request, update, accepted]
 
         return all
     }

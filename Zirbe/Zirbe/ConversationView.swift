@@ -63,6 +63,8 @@ struct ConversationView: View {
     @State private var stack: [StackedMessage] = []
     @State private var participantDeltas: [String: ParticipantChange.Delta] = [:]
     @State private var reactionsByTarget: [String: [Reaction]] = [:]
+    /// Attendees' answers to a meeting, grouped under the bubble each followed.
+    @State private var inviteResponses: [String: [InviteResponse]] = [:]
     @State private var isSending = false
     @State private var removedAddresses: Set<String> = []
     @State private var showRecipients = false
@@ -312,6 +314,7 @@ struct ConversationView: View {
             stack = []
             participantDeltas = [:]
             reactionsByTarget = [:]
+            inviteResponses = [:]
             return
         }
         let messages = newValue.conversationMessages
@@ -322,6 +325,7 @@ struct ConversationView: View {
             uniquingKeysWith: { first, _ in first }
         )
         reactionsByTarget = newValue.reactionsByTarget
+        inviteResponses = InviteResponse.byPrecedingMessage(newValue.inviteResponses, visible: messages)
     }
 
     private func conversation(_ thread: ZirbeCore.Thread) -> some View {
@@ -367,6 +371,13 @@ struct ConversationView: View {
                             onRetry: { await retry(row.message, into: thread) }
                         )
                         .padding(.top, row.needsRunSpacing ? 8 : 0)
+                        if let responses = inviteResponses[row.id] {
+                            ForEach(responses) { response in
+                                InviteResponseLine(response: response)
+                                    .padding(.top, 6)
+                                    .offset(x: peekOffset)
+                            }
+                        }
                     }
                 }
                 .padding()
@@ -1006,6 +1017,8 @@ private struct MessageBubble: View {
     /// True from the moment a retry is tapped until the thread refreshes, so the
     /// failed footer reads "Retrying…" and can't be tapped twice.
     @State private var isRetrying = false
+    /// The invitation being added to the calendar, presenting the system editor.
+    @State private var addingToCalendar: InviteToAdd?
     /// Whether the reaction picker popover is showing for this bubble.
     @State private var showingReactionPicker = false
     /// The live horizontal offset while swiping the bubble to reply; springs back
@@ -1159,13 +1172,17 @@ private struct MessageBubble: View {
 
     private var bubble: some View {
         VStack(alignment: .leading, spacing: 6) {
+            if let invite = message.invite {
+                InviteCard(invite: invite, isOwn: isOwn) { addingToCalendar = InviteToAdd(invite: invite) }
+            }
             if message.hasHTML { webViewControls }
-            // Let an attachment carry the bubble on its own when there's no visible
-            // text to show above it: a photo or voice message sent with no words,
-            // whether the body is truly empty or nothing but a folded reply quote.
-            // The "(no text content)" / "(quoted message)" placeholder would just
-            // clutter the bubble, and the quote stays reachable below either way.
-            if hasVisibleBody || message.attachments.isEmpty {
+            // Let an attachment or an invite card carry the bubble on its own when
+            // there's no visible text to show above it: a photo or voice message
+            // sent with no words, or a bare invitation, whether the body is truly
+            // empty or nothing but a folded reply quote. The "(no text content)" /
+            // "(quoted message)" placeholder would just clutter the bubble, and
+            // the quote stays reachable below either way.
+            if hasVisibleBody || (message.attachments.isEmpty && message.invite == nil) {
                 Text(folded.visible.isEmpty ? "(quoted message)" : folded.visible)
                     .foregroundStyle(folded.visible.isEmpty ? AnyShapeStyle(.secondary) : AnyShapeStyle(isOwn ? .white : .primary))
             }
@@ -1261,6 +1278,10 @@ private struct MessageBubble: View {
                 }
             )
             .presentationCompactAdaptation(.popover)
+        }
+        .sheet(item: $addingToCalendar) { item in
+            CalendarEventEditor(invite: item.invite)
+                .ignoresSafeArea()
         }
         // Swipe the bubble right to reply to it: it slides under the finger,
         // revealing a reply arrow, and passing the threshold on release starts a

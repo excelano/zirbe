@@ -15,6 +15,33 @@ and the integrated inbox wait below that line.
 
 ## Shipped
 
+- **Calendar invites: read them, and add them to the calendar.** An invite
+  from Outlook or Google Calendar used to render as an empty bubble: the engine
+  picked a body from `text/plain` or `text/html` only, and a bare invite carries
+  just `text/calendar`. The calendar part is now fetched with the text leaves
+  (inline first, an attached `.ics` when that is all there is), never shown as a
+  chip, and parsed in ZirbeCore by `InviteParser` into an `Invite` (UID,
+  sequence, method, times with zone, organizer, attendees and their answers,
+  recurrence as text, a join link), with Outlook's Windows zone names mapped
+  through a table. The parser lives here rather than in Klartext because
+  Klartext admits a thing only with two real consumers. A meeting is a
+  conversation: the threader gives every message about it a synthetic
+  ancestor keyed by the iCalendar UID, so the invitation, its updates, its
+  cancellation, and each attendee's answer thread together even when the
+  headers say nothing, as Outlook's updates do. An update replaces the card in
+  place (highest sequence wins) and an answer reads as a line ("Daniel
+  accepted") under the bubble it followed, never as a bubble. The card is the
+  three-row shape from Blick: time range, title, organizer, then location, a
+  Join button for a Teams, Meet, Zoom, or Webex link, and Add to Calendar,
+  which opens the system event editor prefilled; iOS asks for write-only
+  calendar access itself, and nothing is read. Cancelled and Updated show as
+  badges. An invite with no text previews and searches by the meeting. Real
+  redacted invites from Outlook and Google are fixtures (`scripts/ics-dump.sh`
+  pulls more), and the demo seed carries a meeting. Two known edges for later:
+  a recurring meeting is added to the calendar as its first occurrence only,
+  with the rule noted in the event; and the thread keeps the first message's
+  subject as its title, so it reads "Invitation: …" the way the mail did.
+
 - **Copy a message's text.** The long-press menu gains a Copy item below Reply
   and Forward, the way Messages stacks Copy in its tapback menu. It puts the
   bubble's visible body on the pasteboard as plain text: the folded body, not
@@ -270,47 +297,6 @@ With junk and block-sender shipped, Zirbe meets the bar set at the top of this
 file: a full single-account Apple Mail replacement, as chat-native as the
 Messages metaphor allows. New single-account feature requests land here as they
 surface.
-
-- **Calendar invites: read them, and add them to the calendar.** An invite
-  from Outlook or Google Calendar renders as an empty bubble today. The engine
-  picks a body by looking for a `text/plain` or `text/html` leaf, and a bare
-  invite often carries only `text/calendar`, so the message is never a body
-  candidate: no text is stored, the attachment pass never runs, and the bubble
-  reads "(no text content)" while the snippet backfill retries it every sync.
-  Invites that do carry a text alternative show it, with the calendar part as a
-  nameless "Attachment" chip that does nothing. Three pieces:
-  1. *Parse, in ZirbeCore.* An `Invite` value from an iCalendar body: title,
-     start and end with time zone, all-day, location, organizer, attendees with
-     their participation status, the method (request, update by sequence,
-     cancel, reply), the iCalendar UID and sequence, the recurrence rule as
-     readable text, and a join link pulled from the description or the
-     Microsoft and Zoom extension properties, since a tappable join button is
-     most of an invite's daily value. The parser is pure Swift in the domain
-     layer, not Klartext: Klartext admits a thing only with two real consumers,
-     and Blick gets meetings as typed Graph fields, so this has one. It moves to
-     Klartext if Blick ever reads an `.ics` attachment. Outlook names time zones
-     in Windows form ("Eastern Standard Time"), so the parser carries a
-     Windows-to-Olson table. Fixtures are real invites, redacted: Outlook Teams,
-     Google Calendar, an update with a higher sequence, a cancellation, an
-     attendee reply, all-day, floating time with TZID, a weekly recurrence.
-  2. *Fetch and carry, here.* ZirbeMail fetches a `text/calendar` part with the
-     text leaves and treats a message with only that part as a candidate.
-     ZirbeCore parses it, puts the invite on `Message` (a store column and migration), and
-     threads by the iCalendar UID as well as the mail headers, so an invite, its
-     updates, its cancellation, and every attendee's reply land in one
-     conversation, the way a meeting is a conversation. An update replaces the
-     card in place by sequence; a reply from an attendee reads as a system line
-     ("Pat accepted"), the way join-and-leave lines already do, so the notices
-     that pile up after an invite in Blick never become bubbles here.
-  3. *Show and add, in the app.* The bubble becomes a card in the three-row
-     shape Blick's meeting card already uses: calendar icon with the time
-     range, the title, "with organizer", plus a location line and a Join button
-     when there is a link, and a "Cancelled" or "Updated" badge by method. An
-     "Add to Calendar" button presents the system event editor prefilled;
-     EventKit's edit sheet needs only write-only access
-     (`NSCalendarsWriteOnlyAccessUsageDescription`), the user confirms in
-     Apple's own UI, and nothing leaves the device.
-  RSVP and conflict detection are held below, each with its own reason.
 
 - **iPad split view.** 1.0 shipped iPhone-only (`TARGETED_DEVICE_FAMILY = 1`) to
   clear the first submission without the iPad screenshot set. Next up: restore

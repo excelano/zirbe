@@ -40,9 +40,12 @@ struct RootView: View {
                 // the thread screen can be grabbed without a tap. Summaries are
                 // already seeded by the time this branch renders.
                 .task {
-                    guard DemoMode.opensTopConversation, path.isEmpty,
-                          let first = model.summaries.first else { return }
-                    path = [first.id]
+                    guard DemoMode.opensTopConversation, path.isEmpty else { return }
+                    let wanted = DemoMode.openSubject
+                    guard let target = model.summaries.first(where: { summary in
+                        wanted.map { summary.subject.localizedCaseInsensitiveContains($0) } ?? true
+                    }) else { return }
+                    path = [target.id]
                 }
                 #endif
                 // A tapped notification surfaces its thread here; push it and clear.
