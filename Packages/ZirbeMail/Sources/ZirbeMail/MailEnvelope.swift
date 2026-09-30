@@ -67,11 +67,17 @@ public struct MessageBody: Sendable, Hashable {
     public var text: String
     public var hasHTML: Bool
     public var attachments: [AttachmentInfo]
+    /// The message's `text/calendar` part, verbatim, when it carries one: a
+    /// meeting invitation, update, cancellation, or an attendee's answer. The
+    /// domain layer parses it; this layer only fetches. A message with only
+    /// this part has an empty `text`.
+    public var calendar: String?
 
-    public init(text: String, hasHTML: Bool, attachments: [AttachmentInfo] = []) {
+    public init(text: String, hasHTML: Bool, attachments: [AttachmentInfo] = [], calendar: String? = nil) {
         self.text = text
         self.hasHTML = hasHTML
         self.attachments = attachments
+        self.calendar = calendar
     }
 }
 

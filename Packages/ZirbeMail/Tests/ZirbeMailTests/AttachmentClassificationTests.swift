@@ -24,6 +24,36 @@ final class AttachmentClassificationTests: XCTestCase {
         )
     }
 
+    // MARK: - Calendar parts
+
+    func testInlineCalendarPartWinsOverTheAttachedCopy() {
+        // Google's shape: text/calendar inline beside the body, plus invite.ics.
+        let parts = [
+            part("1", "multipart/mixed"),
+            part("1.1", "text/plain"),
+            part("1.2", "text/calendar; method=REQUEST"),
+            part("2", "application/ics", disposition: "attachment", filename: "invite.ics"),
+        ]
+        XCTAssertEqual(MailEngine.calendarPart(in: parts)?.section.description, "1.2")
+    }
+
+    func testAnAttachedICSServesWhenItIsAllThereIs() {
+        let parts = [part("1", "text/plain"), part("2", "application/octet-stream", disposition: "attachment", filename: "Meeting.ICS")]
+        XCTAssertEqual(MailEngine.calendarPart(in: parts)?.section.description, "2")
+        XCTAssertNil(MailEngine.calendarPart(in: [part("1", "text/plain")]))
+    }
+
+    func testCalendarPartsAreNeverAttachmentChips() {
+        let parts = [
+            part("1", "text/plain"),
+            part("2", "text/calendar; method=REQUEST"),
+            part("3", "application/ics", disposition: "attachment", filename: "invite.ics"),
+            part("4", "application/pdf", disposition: "attachment", filename: "agenda.pdf"),
+        ]
+        let kept = MailEngine.attachmentParts(in: parts, excluding: [parts[0].section])
+        XCTAssertEqual(kept.map { $0.section.description }, ["4"], "the invite card shows the meeting; only the real file is a chip")
+    }
+
     // MARK: - Input extraction
 
     func testInputsExcludeBodyAndMultipartParts() {

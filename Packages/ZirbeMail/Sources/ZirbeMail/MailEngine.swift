@@ -128,8 +128,11 @@ public actor MailEngine {
     /// beside the real content in HTML. The non-empty plain text wins when it has
     /// real content; otherwise the HTML is reduced to readable text. Either way
     /// the body records whether an HTML alternative exists, so the UI can offer
-    /// the Web View without re-deriving it. A message that yields nothing is
-    /// simply absent, so it isn't cached as empty.
+    /// the Web View without re-deriving it. A `text/calendar` part (a meeting
+    /// invitation) is fetched in the same burst and carried verbatim; an invite
+    /// often has no other readable part, so it alone makes a message a
+    /// candidate, with an empty text. A message that yields nothing is simply
+    /// absent, so it isn't cached as empty.
     public func fetchTextBodies(
         in mailbox: String,
         messages: [(id: String, uid: UInt32)]
@@ -141,14 +144,15 @@ public actor MailEngine {
             // For each message, locate its plain and html text leaves (either may
             // be absent) from the cheap structure. The full structure is kept too,
             // so the attachment parts can be read off it without a second fetch.
-            var candidates: [(id: String, uid: UID, plain: MessagePart?, html: MessagePart?, structure: [MessagePart])] = []
+            var candidates: [(id: String, uid: UID, plain: MessagePart?, html: MessagePart?, calendar: MessagePart?, structure: [MessagePart])] = []
             for message in messages {
                 let uid = UID(message.uid)
                 let structure = try await self.server.fetchStructure(uid)
                 let plain = Self.textLeaf(in: structure, type: "text/plain")
                 let html = Self.textLeaf(in: structure, type: "text/html")
-                if plain != nil || html != nil {
-                    candidates.append((message.id, uid, plain, html, structure))
+                let calendar = Self.calendarPart(in: structure)
+                if plain != nil || html != nil || calendar != nil {
+                    candidates.append((message.id, uid, plain, html, calendar, structure))
                 }
             }
             guard !candidates.isEmpty else { return [:] }
@@ -158,6 +162,7 @@ public actor MailEngine {
             for c in candidates {
                 if let plain = c.plain { requests.append((c.uid, plain.section)) }
                 if let html = c.html { requests.append((c.uid, html.section)) }
+                if let calendar = c.calendar { requests.append((c.uid, calendar.section)) }
             }
             let fetched = try await self.server.fetchPartsPipelined(parts: requests)
 
@@ -184,14 +189,17 @@ public actor MailEngine {
                 )
 
                 let hasHTML = c.html != nil
+                let calendar = text(of: c.calendar, uid: c.uid)
+                    .flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
                 if let plain = text(of: c.plain, uid: c.uid),
                    !plain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    bodies[c.id] = MessageBody(text: plain, hasHTML: hasHTML, attachments: attachments)
-                } else if let htmlMarkup {
-                    let reduced = Klartext.plainText(fromHTML: htmlMarkup)
-                    if !reduced.isEmpty {
-                        bodies[c.id] = MessageBody(text: reduced, hasHTML: true, attachments: attachments)
-                    }
+                    bodies[c.id] = MessageBody(text: plain, hasHTML: hasHTML, attachments: attachments, calendar: calendar)
+                } else if let htmlMarkup, case let reduced = Klartext.plainText(fromHTML: htmlMarkup), !reduced.isEmpty {
+                    bodies[c.id] = MessageBody(text: reduced, hasHTML: true, attachments: attachments, calendar: calendar)
+                } else if let calendar {
+                    // An invite with no readable text: the calendar part is the
+                    // whole message.
+                    bodies[c.id] = MessageBody(text: "", hasHTML: hasHTML, attachments: attachments, calendar: calendar)
                 }
             }
             return bodies
@@ -562,10 +570,26 @@ public actor MailEngine {
 
     /// The first text leaf of `type` (e.g. `text/plain`), skipping anything
     /// marked as an attachment.
-    private static func textLeaf(in parts: [MessagePart], type: String) -> MessagePart? {
+    static func textLeaf(in parts: [MessagePart], type: String) -> MessagePart? {
         parts.first {
             $0.contentType.lowercased().hasPrefix(type) && $0.disposition?.lowercased() != "attachment"
         }
+    }
+
+    /// The message's calendar part, whatever its disposition: Outlook sends
+    /// `text/calendar` inline beside the body, Google sends it inline and again
+    /// as an `invite.ics` attachment (`application/ics`). The inline part wins;
+    /// an attached one serves when it's all there is.
+    static func calendarPart(in parts: [MessagePart]) -> MessagePart? {
+        let candidates = parts.filter(isCalendar)
+        return candidates.first { $0.disposition?.lowercased() != "attachment" } ?? candidates.first
+    }
+
+    /// Whether a part is calendar data, by type or by an `.ics` filename.
+    static func isCalendar(_ part: MessagePart) -> Bool {
+        let type = part.contentType.lowercased()
+        if type.hasPrefix("text/calendar") || type.hasPrefix("application/ics") { return true }
+        return part.filename?.lowercased().hasSuffix(".ics") == true
     }
 
     // MARK: - Attachments
@@ -598,12 +622,14 @@ public actor MailEngine {
     }
 
     /// A message's candidate attachment parts: everything but inline body content.
-    /// Excluded are the chosen body leaves, the container multiparts, and any bare
-    /// text part. Files, and the inline images the cid join will then classify, are
+    /// Excluded are the chosen body leaves, the container multiparts, any bare
+    /// text part, and calendar data, which the invite card shows and so is never
+    /// a chip. Files, and the inline images the cid join will then classify, are
     /// all candidates.
     static func attachmentParts(in parts: [MessagePart], excluding bodySections: [Section]) -> [MessagePart] {
         parts.filter { part in
             !bodySections.contains(part.section)
+                && !isCalendar(part)
                 && !part.contentType.lowercased().hasPrefix("multipart/")
                 && !isBareInlineText(part)
         }
