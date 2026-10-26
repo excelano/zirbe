@@ -1,3 +1,6 @@
+// Author: David M. Anderson
+// Built with AI assistance (Claude, Anthropic)
+
 import XCTest
 import SwiftMail
 @testable import ZirbeMail

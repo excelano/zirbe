@@ -4,8 +4,9 @@ A release runs from a clone that holds a `ship.toml` (gitignored), through the
 release apps in `excelano/shipping`: `shots-appstore` takes the screenshots on
 the simulator, `build-release` bumps the version, archives and exports the
 signed build on the Mac, tags, and attaches the `.ipa` to the GitHub release,
-and `ship-appstore` uploads that build, fills in App Store Connect, and submits
-it for review. Nothing is done in Xcode or in the App Store Connect website.
+and `ship-appstore` uploads that build, fills in the App Store Connect version
+and attaches the build. Submitting that version for review is the one step done
+by hand, in App Store Connect; nothing is done in Xcode.
 
 What the repository holds for that:
 

@@ -1,4 +1,7 @@
 // swift-tools-version:6.0
+// Author: David M. Anderson
+// Built with AI assistance (Claude, Anthropic)
+
 import PackageDescription
 
 // ZirbeCore is the offline heart of the app: Zirbe-owned domain models, the

@@ -11,6 +11,9 @@
 #   scripts/ics-dump.sh          the newest 200 messages of INBOX
 #   scripts/ics-dump.sh 500      a deeper window
 #   scripts/ics-dump.sh --reset  forget the remembered address and server
+#
+# Author: David M. Anderson
+# Built with AI assistance (Claude, Anthropic)
 
 set -euo pipefail
 

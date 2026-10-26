@@ -23,18 +23,17 @@ conversation requires naming it, and that name is the subject.
 
 ## Principles
 
-Apple Messages is the aesthetic muse, never a clone. We implement only what the
+Apple Messages is the aesthetic muse, never a clone. I implement only what the
 email RFCs define (5321 SMTP, 5322 message format, 2045/2046/2047 MIME) and
 nothing that isn't email: no video or voice calls, no shared notes, tasks, or
 team workspaces. The CheckIn privacy posture carries over wholesale: no
 backend, no third-party SDKs, no telemetry. Credentials and tokens live in the
 Keychain, device-bound, never synced off the device that obtained them. The
-only network destinations are the user's own mail servers and identity
-providers.
+only network destinations are the user's own IMAP and SMTP servers.
 
 ## Status
 
-Zirbe 1.0 is [on the App Store](https://apps.apple.com/app/id6778170645),
+Zirbe is [on the App Store](https://apps.apple.com/app/id6778170645),
 iPhone-only for now, and connects to any IMAP/SMTP account with a password or
 app-specific password. It reads and sends mail, threads it into conversations,
 handles attachments and inline images, and covers the surrounding surface a

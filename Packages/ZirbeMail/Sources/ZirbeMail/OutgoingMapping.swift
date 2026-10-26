@@ -1,3 +1,6 @@
+// Author: David M. Anderson
+// Built with AI assistance (Claude, Anthropic)
+//
 // Maps Zirbe's OutgoingMessage into SwiftMail's Email. The send-side counterpart
 // to Mapping.swift; keeping the SwiftMail Email type behind this boundary is
 // what lets the engine be replaced without touching the rest of the app.

@@ -6,6 +6,9 @@
 #   scripts/check.sh              tests, coverage, and the app build
 #   scripts/check.sh --skip-app   tests and coverage only (faster)
 #   scripts/check.sh --files      also list per-file coverage
+#
+# Author: David M. Anderson
+# Built with AI assistance (Claude, Anthropic)
 
 set -euo pipefail
 
