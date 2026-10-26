@@ -34,7 +34,7 @@ only network destinations are the user's own IMAP and SMTP servers.
 ## Status
 
 Zirbe is [on the App Store](https://apps.apple.com/app/id6778170645),
-iPhone-only for now, and connects to any IMAP/SMTP account with a password or
+iPhone-only, and connects to any IMAP/SMTP account with a password or
 app-specific password. It reads and sends mail, threads it into conversations,
 handles attachments and inline images, and covers the surrounding surface a
 daily mail app needs: folders, archive and move, drafts, junk and block-sender,
