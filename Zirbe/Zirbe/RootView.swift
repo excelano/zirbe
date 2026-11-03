@@ -46,7 +46,7 @@ struct RootView: View {
                     path = [target]
                 }
                 #endif
-                // A tapped notification surfaces its thread here; push it and clear.
+                // A tapped notification surfaces its thread here; open it and clear.
                 .onReceive(notifier.$pendingThreadID) { threadID in
                     guard let threadID else { return }
                     notifier.pendingThreadID = nil
@@ -73,7 +73,7 @@ struct RootView: View {
                 InboxView(model: model, onSignOut: signOut, openedThread: openedThread)
             } detail: {
                 if let summary = path.last {
-                    ConversationView(model: model, summary: summary, onClose: { path.removeAll() })
+                    ConversationView(model: model, summary: summary, onClose: closeConversation)
                         .id(summary.id)
                 } else {
                     Color.zirbeCanvas.ignoresSafeArea()
@@ -84,7 +84,7 @@ struct RootView: View {
             NavigationStack(path: $path) {
                 InboxView(model: model, onSignOut: signOut)
                     .navigationDestination(for: ThreadSummary.self) { summary in
-                        ConversationView(model: model, summary: summary, showsBack: true, onClose: { path.removeAll() })
+                        ConversationView(model: model, summary: summary, showsBack: true, onClose: closeConversation)
                     }
             }
         }
@@ -94,12 +94,16 @@ struct RootView: View {
         Task { await session.signOut() }
     }
 
+    private func closeConversation() {
+        path.removeAll()
+    }
+
     /// The split view's open conversation, as the inbox reads and sets it.
     private var openedThread: Binding<ThreadSummary?> {
         Binding(get: { path.last }, set: { path = $0.map { [$0] } ?? [] })
     }
 
-    /// Push a notification's conversation. A message that arrived after the last
+    /// Open a notification's conversation. A message that arrived after the last
     /// sync isn't in the list yet, so a miss syncs once and looks again.
     private func open(_ threadID: String, model: InboxModel) async {
         func summary() -> ThreadSummary? { model.summaries.first { $0.id == threadID } }

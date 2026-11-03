@@ -32,5 +32,5 @@ and ports to enter by hand. App Privacy stays "Data Not Collected": the only
 network destinations are the user's own servers, and the on-device cache is
 local storage, not collection.
 
-Development installs on a device go through `~/bin/build-to-phone.sh zirbe`
-on the Mac.
+Development installs on a device go through `xcremote install`, run from this
+directory.

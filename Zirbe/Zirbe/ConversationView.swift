@@ -137,8 +137,8 @@ struct ConversationView: View {
         VStack(spacing: 0) {
             // A custom top bar in place of the system navigation bar, so the
             // subject can read on two left-justified lines (the inline bar is
-            // fixed-height, centered, and single-line). Trash pops back
-            // optimistically and moves on the server in the background; a failed
+            // fixed-height, centered, and single-line). Trash closes the
+            // conversation optimistically and moves on the server in the background; a failed
             // move (server-first) just leaves the conversation in the inbox.
             ConversationTopBar(
                 title: subjectTitle,
