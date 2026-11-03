@@ -11,6 +11,23 @@ one you open fills the rest of the screen beside it, so you can move from \
 thread to thread without going back. In Slide Over or a narrow window it works \
 the way it does on iPhone.
 
+Zirbe opens faster. Your inbox appears straight from what's already on your \
+device and catches up with the server in the background, instead of waiting \
+for the server before showing anything.
+
+Deleting several conversations in a row keeps up. Each one leaves the list the \
+moment you swipe or tap, and a selection moves to Trash in one step on the \
+server however many you picked. Archive, Move, Junk, Read, and Flag work the \
+same way.
+
+Conversations open at once with what's already downloaded while the rest loads. \
+Scrolling, typing a reply, and swiping to see message times are smoother in long \
+threads, and photos load without holding up the thread.
+
+If your password changes, Zirbe asks for it again instead of showing an error, \
+and opening the app without a connection shows your inbox rather than the \
+sign-in screen.
+
 As always, Zirbe talks only to your own mail servers. No backend, no analytics, \
 no third-party SDKs.
 """

@@ -45,11 +45,21 @@ shot() {
     echo "$name"
 }
 
-shot 01-inbox
-settle=14
-shot 02-conversation --demo-open
-shot 03-invitation --demo-open "--demo-open-subject=planning call"
-settle=8
-shot 04-search --demo-search Priya
+# On iPad the list sits beside a conversation, so the list shots open one there
+# rather than leave half the screen empty.
+if xcrun simctl list devices | grep "$device" | grep -q iPad; then
+    settle=14
+    shot 01-inbox --demo-open "--demo-open-subject=photos from the ridge"
+    shot 02-conversation --demo-open
+    shot 03-invitation --demo-open "--demo-open-subject=planning call"
+    shot 04-search --demo-search Priya --demo-open "--demo-open-subject=book club"
+else
+    shot 01-inbox
+    settle=14
+    shot 02-conversation --demo-open
+    shot 03-invitation --demo-open "--demo-open-subject=planning call"
+    settle=8
+    shot 04-search --demo-search Priya
+fi
 
 xcrun simctl terminate "$device" "$bundle" >/dev/null 2>&1 || true
