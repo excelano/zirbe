@@ -12,9 +12,9 @@ import ZirbeCore
 
 struct RootView: View {
     @State private var session = AppSession()
-    /// The navigation stack's pushed conversations, by thread id. Empty at the
-    /// inbox; a notification tap (or a future deep link) pushes one id onto it.
-    @State private var path: [String] = []
+    /// The navigation stack's pushed conversations, each with the summary it was
+    /// opened from, so an inbox reload doesn't redraw the open conversation.
+    @State private var path: [ThreadSummary] = []
     @ObservedObject private var notifier = NewMailNotifier.shared
 
     var body: some View {
@@ -24,8 +24,8 @@ struct RootView: View {
             } else if let model = session.model, model.isConnected {
                 NavigationStack(path: $path) {
                     InboxView(model: model, onSignOut: { Task { await session.signOut() } })
-                        .navigationDestination(for: String.self) { threadID in
-                            conversation(threadID, model: model)
+                        .navigationDestination(for: ThreadSummary.self) { summary in
+                            ConversationView(model: model, summary: summary)
                         }
                 }
                 // Land in the inbox, then ask for notification permission once.
@@ -45,14 +45,14 @@ struct RootView: View {
                     guard let target = model.summaries.first(where: { summary in
                         wanted.map { summary.subject.localizedCaseInsensitiveContains($0) } ?? true
                     }) else { return }
-                    path = [target.id]
+                    path = [target]
                 }
                 #endif
                 // A tapped notification surfaces its thread here; push it and clear.
                 .onReceive(notifier.$pendingThreadID) { threadID in
                     guard let threadID else { return }
-                    path = [threadID]
                     notifier.pendingThreadID = nil
+                    Task { await open(threadID, model: model) }
                 }
             } else {
                 OnboardingView(
@@ -66,17 +66,12 @@ struct RootView: View {
         .task { await session.restore() }
     }
 
-    /// The conversation for a deep-linked thread id. Resolves the inbox summary;
-    /// on a cold launch from a tap the summaries may not be loaded yet, so it shows
-    /// a brief loader and triggers a refresh, then rebuilds once they arrive.
-    @ViewBuilder
-    private func conversation(_ threadID: String, model: InboxModel) -> some View {
-        if let summary = model.summaries.first(where: { $0.id == threadID }) {
-            ConversationView(model: model, summary: summary)
-        } else {
-            ProgressView()
-                .task { await model.refresh() }
-        }
+    /// Push a notification's conversation. A message that arrived after the last
+    /// sync isn't in the list yet, so a miss syncs once and looks again.
+    private func open(_ threadID: String, model: InboxModel) async {
+        func summary() -> ThreadSummary? { model.summaries.first { $0.id == threadID } }
+        if summary() == nil { await model.refresh() }
+        if let found = summary() { path = [found] }
     }
 
     /// Held briefly on launch while a saved session is restored, so onboarding

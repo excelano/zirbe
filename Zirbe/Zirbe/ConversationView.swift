@@ -21,6 +21,43 @@ enum TimestampPeek {
     static let width: CGFloat = 64
 }
 
+/// The live peek offset: 0 at rest, negative while the stack is dragged left.
+/// Held by reference and read only by `PeekShift` and `PeekReveal`, so a drag
+/// frame redraws those leaves and not the conversation or its bubbles.
+@Observable
+final class PeekDrag {
+    var offset: CGFloat = 0
+}
+
+private struct PeekShift: ViewModifier {
+    let peek: PeekDrag
+
+    func body(content: Content) -> some View {
+        content.offset(x: peek.offset)
+    }
+}
+
+/// A bubble row sliding under the peek, with its send time fading in behind it
+/// at the trailing edge when `time` is set.
+private struct PeekReveal<Content: View>: View {
+    let peek: PeekDrag
+    let time: Date?
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        ZStack(alignment: .trailing) {
+            if let time {
+                Text(time, format: .dateTime.hour().minute())
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .padding(.trailing, 8)
+                    .opacity(Double(min(-peek.offset, TimestampPeek.width) / TimestampPeek.width))
+            }
+            content.offset(x: peek.offset)
+        }
+    }
+}
+
 struct ConversationView: View {
     let model: InboxModel
     let summary: ThreadSummary
@@ -36,6 +73,7 @@ struct ConversationView: View {
     /// an instant read, refined once the thread loads, and toggled optimistically.
     @State private var isFlagged = false
     @State private var isLoading = true
+    @State private var isFetchingBodies = false
     /// Whether the find-in-conversation panel is up. The panel overlays the
     /// (still-mounted) chat, so closing it and scrolling to a hit is instant.
     @State private var isSearching = false
@@ -50,13 +88,9 @@ struct ConversationView: View {
     @State private var draft = ReplyDraft()
     /// A one-shot request to focus the reply bar, consumed by the bar.
     @State private var focusReply = false
-    /// The live timestamp-peek offset: 0 at rest, negative while the message stack
-    /// is dragged left to reveal send times, springing back on release.
-    @State private var peekOffset: CGFloat = 0
-    // Derived from `thread` once per change and cached, so the render — which
-    // re-runs on every peek-drag frame as `peekOffset` animates — doesn't rebuild
-    // them each frame. Without this the reactions map was rebuilt twice per row
-    // (O(N²)) and the message/delta scans re-ran per frame.
+    @State private var peek = PeekDrag()
+    // Derived from `thread` once per change and cached, so a render doesn't
+    // rebuild them.
     @State private var stack: [StackedMessage] = []
     @State private var participantDeltas: [String: ParticipantChange.Delta] = [:]
     @State private var reactionsByTarget: [String: [Reaction]] = [:]
@@ -216,13 +250,20 @@ struct ConversationView: View {
                 await commitReaction(emoji, to: messageID)
             }
             isFlagged = summary.isFlagged
-            let loaded = await model.conversation(id: summary.id)
-            // Decide the starting view before revealing anything: with the HTML-in-
-            // Web-View preference on, fetch the newest message's HTML while the
-            // loading spinner is still up, so the conversation opens straight into
-            // the web view instead of flashing the text bubbles first.
-            if let loaded { await prepareInitialWebView(loaded) }
+            let cached = await model.cachedConversation(id: summary.id)
+            // With the HTML-in-Web-View preference on, the conversation opens
+            // straight into the web view, so the bubbles wait for it rather than flash.
+            let latest = cached?.conversationMessages.last
+            let mayOpenInWebView = openHTMLInWebView && (latest?.hasHTML == true || latest?.bodyText == nil)
+            if let cached, !mayOpenInWebView {
+                isFetchingBodies = true
+                setThread(cached)
+                isLoading = false
+            }
+            let loaded = await model.conversation(id: summary.id) ?? cached
+            if mayOpenInWebView, let loaded { await prepareInitialWebView(loaded) }
             setThread(loaded)
+            isFetchingBodies = false
             isLoading = false
             if let loaded {
                 isFlagged = loaded.isFlagged
@@ -308,18 +349,19 @@ struct ConversationView: View {
                         if let dayDate = row.daySeparator {
                             DaySeparatorView(date: dayDate)
                                 .padding(.vertical, 4)
-                                .offset(x: peekOffset)
+                                .modifier(PeekShift(peek: peek))
                         }
                         if let delta = participantDeltas[row.id] {
                             ParticipantChangeLine(delta: delta)
                                 .padding(.vertical, 8)
-                                .offset(x: peekOffset)
+                                .modifier(PeekShift(peek: peek))
                         }
                         let rowReactions = reactionsByTarget[row.message.messageID ?? ""] ?? []
                         MessageBubble(
                             model: model,
                             message: row.message,
                             folded: row.folded,
+                            isAwaitingBody: isFetchingBodies && row.message.bodyText == nil,
                             isOwn: row.isOwn,
                             hasTail: row.hasTail,
                             showSender: row.showSender,
@@ -328,7 +370,7 @@ struct ConversationView: View {
                             lockedEmoji: rowReactions.emoji(sentBy: model.account),
                             selfAddress: model.account.emailAddress,
                             isFlashed: flashedMessage == row.id,
-                            peekOffset: peekOffset,
+                            peek: peek,
                             onReact: { emoji in react(emoji, to: row.message, in: thread) },
                             onUndoReaction: { row.message.messageID.map { reactions.undo($0) } },
                             onReply: { beginReply(to: row.message) },
@@ -343,7 +385,7 @@ struct ConversationView: View {
                             ForEach(responses) { response in
                                 InviteResponseLine(response: response)
                                     .padding(.top, 6)
-                                    .offset(x: peekOffset)
+                                    .modifier(PeekShift(peek: peek))
                             }
                         }
                     }
@@ -381,11 +423,11 @@ struct ConversationView: View {
             .onChanged { value in
                 guard abs(value.translation.width) > abs(value.translation.height),
                       value.translation.width < 0 else { return }
-                peekOffset = max(value.translation.width, -TimestampPeek.width)
+                peek.offset = max(value.translation.width, -TimestampPeek.width)
             }
             .onEnded { _ in
                 withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                    peekOffset = 0
+                    peek.offset = 0
                 }
             }
     }
@@ -970,6 +1012,7 @@ private struct MessageBubble: View {
     let model: InboxModel
     let message: Message
     let folded: QuotedText.Folded?
+    let isAwaitingBody: Bool
     let isOwn: Bool
     /// Whether this bubble ends a run, so it gets the tail and the timestamp.
     let hasTail: Bool
@@ -994,7 +1037,7 @@ private struct MessageBubble: View {
     /// The shared timestamp-peek offset (0 at rest, negative while the stack is
     /// dragged left). The bubble slides left by this and reveals its send time at
     /// the trailing edge, iMessage-style.
-    let peekOffset: CGFloat
+    let peek: PeekDrag
     /// Add, change, or remove the user's reaction to this message.
     let onReact: (String) -> Void
     /// Pull back the pending reaction before its window passes.
@@ -1043,15 +1086,8 @@ private struct MessageBubble: View {
         // A pinned send-time sits at the trailing edge, revealed as the row slides
         // left under the timestamp-peek drag. Only bubbles that don't already show
         // a time below (the mid-run ones) reveal it, filling the gaps.
-        ZStack(alignment: .trailing) {
-            if canPeekTime, let date = message.date {
-                Text(date, format: .dateTime.hour().minute())
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .padding(.trailing, 8)
-                    .opacity(peekProgress)
-            }
-            row.offset(x: peekOffset)
+        PeekReveal(peek: peek, time: canPeekTime ? message.date : nil) {
+            row
         }
     }
 
@@ -1097,11 +1133,6 @@ private struct MessageBubble: View {
     /// doesn't already show one below.
     private var canPeekTime: Bool {
         message.date != nil && !showsFooterTime
-    }
-
-    /// How far the peek time has faded in, 0…1, tracking the leftward stack drag.
-    private var peekProgress: Double {
-        Double(min(-peekOffset, TimestampPeek.width) / TimestampPeek.width)
     }
 
     /// The Undo affordance shown while the user's reaction is inside its window:
@@ -1182,7 +1213,10 @@ private struct MessageBubble: View {
             // "(quoted message)" placeholder would just clutter the bubble, and
             // the quote stays reachable below either way.
             if hasVisibleBody || (message.attachments.isEmpty && message.invite == nil) {
-                if let folded {
+                if isAwaitingBody {
+                    Text("Loading…")
+                        .foregroundStyle(.secondary)
+                } else if let folded {
                     Text(folded.visible.isEmpty ? "(quoted message)" : folded.visible)
                         .foregroundStyle(folded.visible.isEmpty ? AnyShapeStyle(.secondary) : AnyShapeStyle(isOwn ? .white : .primary))
                 } else {

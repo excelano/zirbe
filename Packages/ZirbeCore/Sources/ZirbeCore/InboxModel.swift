@@ -360,6 +360,12 @@ public final class InboxModel {
         }
     }
 
+    /// A conversation as the store holds it, with no network: whatever bodies are
+    /// already cached, for showing at once while `conversation(id:)` fetches the rest.
+    public func cachedConversation(id: String) async -> Thread? {
+        try? await store.thread(id: id)
+    }
+
     /// Load a full conversation for display, fetching message bodies on first
     /// open and caching them. Returns nil if not connected or the thread is
     /// unknown. The conversation view owns its own loading indicator, so this
@@ -776,7 +782,7 @@ public final class InboxModel {
     /// The bytes of an inline-rendered attachment (an image thumbnail or a voice
     /// memo to play): the cache first (instant for a just-sent file, or one
     /// loaded before), then a fetch by part section, caching the result so the
-    /// next load is instant too. The disk read runs off the main actor. Returns
+    /// next load is instant too. The disk read and write run off the main actor. Returns
     /// nil for a purely local attachment that was never cached, or on a failed
     /// fetch; no error is surfaced, since an inline view that can't load falls
     /// back to a chip rather than interrupting the reader.
@@ -788,8 +794,10 @@ public final class InboxModel {
             return cached
         }
         guard !attachment.partID.isEmpty, let password else { return nil }
-        let data = try? await sync.fetchAttachment(messageID: messageID, partID: attachment.partID, password: password)
-        if let data {
+        guard let data = try? await sync.fetchAttachment(messageID: messageID, partID: attachment.partID, password: password) else {
+            return nil
+        }
+        Task.detached(priority: .utility) {
             AttachmentCache.save(data, messageID: messageID, filename: filename)
         }
         return data

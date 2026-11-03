@@ -150,6 +150,22 @@ final class InboxModelTests: XCTestCase {
         XCTAssertNotNil(model.errorMessage)
     }
 
+    func testCachedConversationReadsTheStoreWithoutFetchingBodies() async throws {
+        await server.add(incoming("Plan", id: "<a@x>"), body: MessageBody(text: "Lunch?", hasHTML: false))
+        try await store.upsert(account)
+        try await store.save([Message(incoming("Plan", id: "<a@x>"))], accountID: account.id, mailboxName: "INBOX")
+        try await store.rethread(accountID: account.id)
+        let summaries = try await store.threadSummaries(accountID: account.id)
+        let id = try XCTUnwrap(summaries.first?.id)
+
+        let thread = await model.cachedConversation(id: id)
+
+        XCTAssertEqual(thread?.messages.map(\.subject), ["Plan"])
+        XCTAssertNil(thread?.messages.first?.bodyText, "the body is left for conversation(id:) to fetch")
+        let fetches = await server.calls(.fetchTextBodies)
+        XCTAssertTrue(fetches.isEmpty)
+    }
+
     func testRefreshWithoutAConnectionSetsTheError() async {
         await model.refresh()
         XCTAssertEqual(model.errorMessage, notConnected)

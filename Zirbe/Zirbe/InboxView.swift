@@ -185,9 +185,7 @@ struct InboxView: View {
             }
             .buttonStyle(.plain)
         } else {
-            NavigationLink {
-                ConversationView(model: model, summary: summary)
-            } label: {
+            NavigationLink(value: summary) {
                 ThreadRow(summary: summary, selfAddress: model.account.emailAddress)
             }
         }

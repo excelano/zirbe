@@ -22,8 +22,6 @@ struct InlineAttachmentImage: View {
 
     /// The downsampled image for display; nil until loaded.
     @State private var thumbnail: UIImage?
-    /// The full bytes, held so a tap can open the original without re-fetching.
-    @State private var fullData: Data?
     /// Set once a load fails, switching to the chip fallback.
     @State private var failed = false
     /// The temp file the full image was written to; setting it presents QuickLook.
@@ -70,8 +68,10 @@ struct InlineAttachmentImage: View {
             failed = true
             return
         }
-        fullData = data
-        if let image = ImageDownsampler.thumbnail(from: data, maxPixelSize: 700) {
+        let image = await Task.detached(priority: .userInitiated) {
+            ImageDownsampler.thumbnail(from: data, maxPixelSize: 700)
+        }.value
+        if let image {
             thumbnail = image
         } else {
             failed = true
@@ -79,10 +79,13 @@ struct InlineAttachmentImage: View {
     }
 
     /// Write the full bytes to a temp file named for the attachment and open them
-    /// in QuickLook, where the image can be zoomed, saved, and shared.
+    /// in QuickLook, where the image can be zoomed, saved, and shared. The bytes
+    /// come back from the attachment cache the thumbnail load filled.
     private func openFull() {
-        guard let fullData else { return }
-        previewURL = try? AttachmentFile.write(fullData, filename: attachment.filename, mimeType: attachment.mimeType)
+        Task {
+            guard let data = await model.cachedAttachmentData(messageID: messageID, attachment: attachment) else { return }
+            previewURL = try? AttachmentFile.write(data, filename: attachment.filename, mimeType: attachment.mimeType)
+        }
     }
 }
 
@@ -90,7 +93,7 @@ struct InlineAttachmentImage: View {
 /// ImageIO so a large photo never fully decodes into memory just to be shown
 /// small. Honors the image's orientation.
 enum ImageDownsampler {
-    static func thumbnail(from data: Data, maxPixelSize: CGFloat) -> UIImage? {
+    nonisolated static func thumbnail(from data: Data, maxPixelSize: CGFloat) -> UIImage? {
         let sourceOptions = [kCGImageSourceShouldCache: false] as CFDictionary
         guard let source = CGImageSourceCreateWithData(data as CFData, sourceOptions) else { return nil }
         let options = [
