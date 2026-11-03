@@ -1,8 +1,8 @@
 # Zirbe
 
-An open-source email client for iPhone that looks and feels like a texting app,
-while keeping real email underneath. Standards-only, no backend, free. iPad is
-next.
+An open-source email client for iPhone and iPad that looks and feels like a
+texting app, while keeping real email underneath. Standards-only, no backend,
+free. On iPad the conversation list sits beside the open conversation.
 
 ## The name
 
@@ -49,8 +49,7 @@ so the engine stays swappable). Email content parsing — HTML to text, quote
 folding, signatures, inline images — comes from the shared
 [Klartext](https://github.com/excelano/klartext) package.
 
-Next up is an iPad split-view layout, then multiple accounts and an integrated
-inbox, then OAuth for the providers that are retiring app passwords.
+Next up is multiple accounts and an integrated inbox, then OAuth for the providers that are retiring app passwords.
 
 ## Building and testing
 

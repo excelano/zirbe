@@ -14,7 +14,10 @@ struct RootView: View {
     @State private var session = AppSession()
     /// The navigation stack's pushed conversations, each with the summary it was
     /// opened from, so an inbox reload doesn't redraw the open conversation.
+    /// On regular width the same path drives the split view's detail column, so a
+    /// size change carries the open conversation across.
     @State private var path: [ThreadSummary] = []
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @ObservedObject private var notifier = NewMailNotifier.shared
 
     var body: some View {
@@ -22,12 +25,7 @@ struct RootView: View {
             if session.isRestoring {
                 launch
             } else if let model = session.model, model.isConnected {
-                NavigationStack(path: $path) {
-                    InboxView(model: model, onSignOut: { Task { await session.signOut() } })
-                        .navigationDestination(for: ThreadSummary.self) { summary in
-                            ConversationView(model: model, summary: summary)
-                        }
-                }
+                navigation(model: model)
                 // Land in the inbox, then ask for notification permission once.
                 // Demo mode never prompts, so a permission alert can't land on a
                 // screenshot.
@@ -64,6 +62,41 @@ struct RootView: View {
             }
         }
         .task { await session.restore() }
+    }
+
+    /// The push stack on compact width; on regular width the conversation list
+    /// beside the open conversation.
+    @ViewBuilder
+    private func navigation(model: InboxModel) -> some View {
+        if horizontalSizeClass == .regular {
+            NavigationSplitView {
+                InboxView(model: model, onSignOut: signOut, openedThread: openedThread)
+            } detail: {
+                if let summary = path.last {
+                    ConversationView(model: model, summary: summary, onClose: { path.removeAll() })
+                        .id(summary.id)
+                } else {
+                    Color.zirbeCanvas.ignoresSafeArea()
+                }
+            }
+            .onChange(of: model.currentMailbox) { path.removeAll() }
+        } else {
+            NavigationStack(path: $path) {
+                InboxView(model: model, onSignOut: signOut)
+                    .navigationDestination(for: ThreadSummary.self) { summary in
+                        ConversationView(model: model, summary: summary, showsBack: true, onClose: { path.removeAll() })
+                    }
+            }
+        }
+    }
+
+    private func signOut() {
+        Task { await session.signOut() }
+    }
+
+    /// The split view's open conversation, as the inbox reads and sets it.
+    private var openedThread: Binding<ThreadSummary?> {
+        Binding(get: { path.last }, set: { path = $0.map { [$0] } ?? [] })
     }
 
     /// Push a notification's conversation. A message that arrived after the last

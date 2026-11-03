@@ -12,6 +12,9 @@ struct InboxView: View {
     let model: InboxModel
     /// Routes a full sign-out up to the session (forget credential + wipe cache).
     let onSignOut: () -> Void
+    /// The conversation open beside the list in the split view. Nil on compact
+    /// width, where a row pushes its conversation instead.
+    var openedThread: Binding<ThreadSummary?>? = nil
     /// Drives live refresh: the inbox watches the server (IMAP IDLE) only while
     /// the app is in the foreground, and pauses when it backgrounds.
     @Environment(\.scenePhase) private var scenePhase
@@ -78,9 +81,10 @@ struct InboxView: View {
                         model: model,
                         summary: summary,
                         enabled: !isSearching,
-                        onMove: { moveRequest = MoveRequest(threadIDs: [$0]) }
+                        onMove: { moveRequest = MoveRequest(threadIDs: [$0]) },
+                        onRemove: { close([$0]) }
                     ))
-                    .listRowBackground(Color.zirbeCanvas)
+                    .listRowBackground(isOpened(summary) ? Color.accentColor.opacity(0.15) : Color.zirbeCanvas)
             }
         }
         .listStyle(.plain)
@@ -110,7 +114,11 @@ struct InboxView: View {
             MailboxesView(model: model, mode: .browse)
         }
         .sheet(item: $moveRequest) { request in
-            MailboxesView(model: model, mode: .move(threadIDs: request.threadIDs))
+            MailboxesView(
+                model: model,
+                mode: .move(threadIDs: request.threadIDs),
+                onMoved: { close(request.threadIDs) }
+            )
         }
         .overlay { emptyState }
         .overlay {
@@ -172,23 +180,38 @@ struct InboxView: View {
     }
 
     /// One conversation row. In the Drafts folder (and not mid-selection) a tap
-    /// reopens the composer prefilled; everywhere else it pushes the read-only
-    /// conversation. Selection mode keeps the standard navigable row so the List's
-    /// selection circles and bulk actions work in Drafts too.
+    /// reopens the composer prefilled; everywhere else it opens the read-only
+    /// conversation, pushed on compact width and beside the list in the split view.
+    /// Selection mode keeps a row without a button so the List's selection circles
+    /// and bulk actions work in Drafts too.
     @ViewBuilder
     private func row(for summary: ThreadSummary) -> some View {
+        let label = ThreadRow(summary: summary, selfAddress: model.account.emailAddress)
         if isViewingDrafts && !isSelecting {
-            Button {
-                openDraft(summary)
-            } label: {
-                ThreadRow(summary: summary, selfAddress: model.account.emailAddress)
+            Button { openDraft(summary) } label: { label }
+                .buttonStyle(.plain)
+        } else if let openedThread {
+            if isSelecting {
+                label
+            } else {
+                Button { openedThread.wrappedValue = summary } label: { label }
+                    .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
         } else {
-            NavigationLink(value: summary) {
-                ThreadRow(summary: summary, selfAddress: model.account.emailAddress)
-            }
+            NavigationLink(value: summary) { label }
         }
+    }
+
+    /// Whether this row's conversation is the one open beside the list.
+    private func isOpened(_ summary: ThreadSummary) -> Bool {
+        openedThread?.wrappedValue?.id == summary.id
+    }
+
+    /// Empty the split view's detail column when its conversation is among those
+    /// leaving the list.
+    private func close(_ threadIDs: [String]) {
+        guard let openedThread, let id = openedThread.wrappedValue?.id, threadIDs.contains(id) else { return }
+        openedThread.wrappedValue = nil
     }
 
     /// Fetch a tapped draft's contents (recipients, subject, body, attachment
@@ -406,6 +429,7 @@ struct InboxView: View {
     private func bulkTrash() async {
         let ids = Array(selection)
         endSelecting()
+        close(ids)
         await model.trash(threadIDs: ids)
     }
 
@@ -414,6 +438,7 @@ struct InboxView: View {
     private func bulkArchive() async {
         let ids = Array(selection)
         endSelecting()
+        close(ids)
         await model.archive(threadIDs: ids)
     }
 
@@ -421,6 +446,7 @@ struct InboxView: View {
     private func bulkJunk() async {
         let ids = Array(selection)
         endSelecting()
+        close(ids)
         await model.junk(threadIDs: ids)
     }
 
@@ -457,17 +483,22 @@ private struct RowActions: ViewModifier {
     let enabled: Bool
     /// Opens the move-destination picker for this conversation.
     let onMove: (String) -> Void
+    /// Called with the conversation's id as a swipe or menu action takes it out of
+    /// the list.
+    let onRemove: (String) -> Void
 
     func body(content: Content) -> some View {
         if enabled {
             content
                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                     Button(role: .destructive) {
+                        onRemove(summary.id)
                         Task { await model.trash(summary) }
                     } label: {
                         Label("Trash", systemImage: "trash")
                     }
                     Button {
+                        onRemove(summary.id)
                         Task { await model.archive(summary) }
                     } label: {
                         Label("Archive", systemImage: "archivebox")
@@ -484,6 +515,7 @@ private struct RowActions: ViewModifier {
                         )
                     }
                     Button {
+                        onRemove(summary.id)
                         Task { await model.archive(summary) }
                     } label: {
                         Label("Archive", systemImage: "archivebox")
@@ -494,6 +526,7 @@ private struct RowActions: ViewModifier {
                         Label("Move to…", systemImage: "folder")
                     }
                     Button(role: .destructive) {
+                        onRemove(summary.id)
                         Task { await model.junk(summary) }
                     } label: {
                         Label("Move to Junk", systemImage: "xmark.bin")
@@ -605,6 +638,7 @@ private struct ThreadRow: View {
             }
         }
         .padding(.vertical, 5)
+        .contentShape(.rect)
     }
 
     /// Everyone in the thread except the account holder, in order — the faces the

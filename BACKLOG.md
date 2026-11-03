@@ -15,6 +15,19 @@ and the integrated inbox wait below that line.
 
 ## Shipped
 
+- **iPad split view.** The app is universal again. On regular width the
+  conversation list sits in a `NavigationSplitView` sidebar with the open
+  conversation beside it; on compact width (iPhone, and iPad Slide Over or a
+  narrow window) it is the same push stack as before. One navigation path drives
+  both, so a size change carries the open conversation across, though its
+  unsent reply text does not survive the rebuild. Bulk select keeps the List's
+  selection binding: in the split, a row opens its conversation through a
+  button and the open row is tinted, rather than through list selection.
+  Trash, archive, junk, move and block close the detail column instead of
+  popping, and so do the same actions taken on the open row from the list, and
+  switching mailbox. An iPhone Pro Max in landscape is regular width and gets
+  the split too.
+
 - **Calendar invites: read them, and add them to the calendar.** An invite
   from Outlook or Google Calendar used to render as an empty bubble: the engine
   picked a body from `text/plain` or `text/html` only, and a bare invite carries
@@ -297,19 +310,6 @@ With junk and block-sender shipped, Zirbe meets the bar set at the top of this
 file: a full single-account Apple Mail replacement, as chat-native as the
 Messages metaphor allows. New single-account feature requests land here as they
 surface.
-
-- **iPad split view.** 1.0 shipped iPhone-only (`TARGETED_DEVICE_FAMILY = 1`) to
-  clear the first submission without the iPad screenshot set. Next up: restore
-  universal and build a proper iPad layout. The app's core navigation is a
-  single-column `NavigationStack` in `RootView`; the work is an adaptive
-  two-column `NavigationSplitView` (conversation list beside the open
-  conversation) that collapses to today's push stack on compact width, so iPhone
-  behavior is unchanged. The crux is that `InboxView`'s List already binds
-  `selection` for bulk-select mode, so single-selection navigation has to branch
-  by edit mode. Regression surface to cover: push nav, notification-tap routing,
-  demo-open capture, Drafts-opens-composer, bulk select, and back behavior. Once
-  it lands, re-enable the iPad 13" screenshot set and the "beside the
-  conversation" marketing beat.
 
 ## The multi-account line
 

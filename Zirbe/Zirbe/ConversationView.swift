@@ -61,8 +61,13 @@ private struct PeekReveal<Content: View>: View {
 struct ConversationView: View {
     let model: InboxModel
     let summary: ThreadSummary
+    /// Whether the top bar leads with a back button: true when the conversation
+    /// was pushed, false beside the list in the split view.
+    var showsBack = false
+    /// Leaves the conversation: pops the push stack, or empties the split view's
+    /// detail column.
+    let onClose: () -> Void
 
-    @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @State private var thread: ZirbeCore.Thread?
     /// The user's just-added reactions still inside their undo window. The badge
@@ -142,17 +147,17 @@ struct ConversationView: View {
                     isFlagged.toggle()
                     Task { await model.markFlagged(threadID: summary.id, flagged: isFlagged) }
                 },
-                onBack: { dismiss() },
+                onBack: showsBack ? onClose : nil,
                 onTrash: {
-                    dismiss()
+                    onClose()
                     Task { await model.trash(summary) }
                 },
                 onArchive: {
-                    dismiss()
+                    onClose()
                     Task { await model.archive(summary) }
                 },
                 onJunk: {
-                    dismiss()
+                    onClose()
                     Task { await model.junk(summary) }
                 },
                 onMove: { isMoving = true },
@@ -225,7 +230,7 @@ struct ConversationView: View {
             MailboxesView(
                 model: model,
                 mode: .move(threadIDs: [summary.id]),
-                onMoved: { dismiss() }
+                onMoved: onClose
             )
         }
         .confirmationDialog(
@@ -235,7 +240,7 @@ struct ConversationView: View {
             presenting: pendingBlock
         ) { sender in
             Button("Block Sender", role: .destructive) {
-                dismiss()
+                onClose()
                 Task { await model.block(address: sender.address) }
             }
             Button("Cancel", role: .cancel) {}
@@ -620,7 +625,8 @@ private struct ConversationTopBar: View {
     let title: String
     let isFlagged: Bool
     let onToggleFlag: () -> Void
-    let onBack: () -> Void
+    /// Nil hides the back button.
+    let onBack: (() -> Void)?
     let onTrash: () -> Void
     let onArchive: () -> Void
     let onJunk: () -> Void
@@ -636,8 +642,10 @@ private struct ConversationTopBar: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
-            circleButton(systemName: "chevron.left", tint: .accentColor, action: onBack)
-                .accessibilityLabel("Back")
+            if let onBack {
+                circleButton(systemName: "chevron.left", tint: .accentColor, action: onBack)
+                    .accessibilityLabel("Back")
+            }
 
             Button {
                 // Only the truncated title has more to show; an untruncated one is
