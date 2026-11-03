@@ -27,6 +27,9 @@ public struct StackedMessage: Identifiable, Sendable {
     /// The date to caption a separator above this message, when it opens a new
     /// calendar day.
     public let daySeparator: Date?
+    /// Parsed here, once per thread load, because parsing is the costliest part
+    /// of drawing a bubble. Nil for a blank body.
+    public let folded: QuotedText.Folded?
 
     public var id: String { message.id }
 }
@@ -43,6 +46,7 @@ public enum MessageStack {
         calendar: Calendar = .current
     ) -> [StackedMessage] {
         messages.enumerated().map { index, message in
+            let body = message.bodyText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let previous = index > 0 ? messages[index - 1] : nil
             let next = index < messages.count - 1 ? messages[index + 1] : nil
             let startsRun = previous.map { $0.from?.address != message.from?.address } ?? true
@@ -54,7 +58,8 @@ public enum MessageStack {
                 hasTail: next.map { $0.from?.address != message.from?.address } ?? true,
                 showSender: !isOwn && startsRun,
                 needsRunSpacing: startsRun && index > 0,
-                daySeparator: separator(for: message, after: previous, calendar: calendar)
+                daySeparator: separator(for: message, after: previous, calendar: calendar),
+                folded: body.isEmpty ? nil : QuotedText.fold(body)
             )
         }
     }

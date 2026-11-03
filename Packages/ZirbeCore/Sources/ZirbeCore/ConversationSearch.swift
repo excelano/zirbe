@@ -46,15 +46,16 @@ public enum ConversationSearch {
     /// The matching messages for `query`, in the order they were given (which the
     /// caller passes chronologically). One hit per message, on its first match. A
     /// blank query, or a thread with nothing to show, yields no hits.
-    public static func hits(for query: String, in messages: [Message], contextRadius: Int = 40) -> [Hit] {
+    public static func hits(for query: String, in rows: [StackedMessage], contextRadius: Int = 40) -> [Hit] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return [] }
-        return messages.compactMap { hit(for: q, in: $0, contextRadius: contextRadius) }
+        return rows.compactMap { hit(for: q, in: $0, contextRadius: contextRadius) }
     }
 
     /// The hit for a single message, or nil when its visible text doesn't match.
-    private static func hit(for query: String, in message: Message, contextRadius: Int) -> Hit? {
-        let text = normalize(QuotedText.fold(message.bodyText ?? "").visible)
+    private static func hit(for query: String, in row: StackedMessage, contextRadius: Int) -> Hit? {
+        let message = row.message
+        let text = normalize(row.folded?.visible ?? "")
         guard !text.isEmpty,
               let range = text.range(of: query, options: [.caseInsensitive, .diacriticInsensitive]) else {
             return nil

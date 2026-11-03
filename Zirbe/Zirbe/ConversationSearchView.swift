@@ -15,11 +15,12 @@ import ZirbeCore
 /// field, the filtered results, and the empty and no-match states. Sits on an
 /// opaque canvas so the conversation it covers doesn't show through.
 struct ConversationSearchPanel: View {
-    @Binding var text: String
-    let hits: [ConversationSearch.Hit]
+    let rows: [StackedMessage]
     let onCancel: () -> Void
     let onJump: (_ messageID: String) -> Void
 
+    @State private var text = ""
+    @State private var hits: [ConversationSearch.Hit] = []
     @FocusState private var fieldFocused: Bool
 
     private var isQuerying: Bool {
@@ -35,6 +36,14 @@ struct ConversationSearchPanel: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.zirbeCanvas)
         .onAppear { fieldFocused = true }
+        .task(id: text) { await search() }
+    }
+
+    private func search() async {
+        guard isQuerying else { hits = []; return }
+        try? await Task.sleep(for: .milliseconds(150))
+        if Task.isCancelled { return }
+        hits = ConversationSearch.hits(for: text, in: rows)
     }
 
     private var searchField: some View {

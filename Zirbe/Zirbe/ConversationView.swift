@@ -36,12 +36,9 @@ struct ConversationView: View {
     /// an instant read, refined once the thread loads, and toggled optimistically.
     @State private var isFlagged = false
     @State private var isLoading = true
-    /// Whether the find-in-conversation panel is up, and its live query and
-    /// results. The panel overlays the (still-mounted) chat, so closing it and
-    /// scrolling to a hit is instant.
+    /// Whether the find-in-conversation panel is up. The panel overlays the
+    /// (still-mounted) chat, so closing it and scrolling to a hit is instant.
     @State private var isSearching = false
-    @State private var searchText = ""
-    @State private var searchHits: [ConversationSearch.Hit] = []
     /// A message to scroll to (a tapped search result); consumed and cleared by
     /// the chat's scroll reader.
     @State private var scrollTarget: String?
@@ -50,7 +47,7 @@ struct ConversationView: View {
     @State private var flashedMessage: String?
     /// The reply bar's draft: text, staged files, and the message a swipe aimed
     /// it at. Send takes it out in one step; see `ReplyComposer`.
-    @State private var composer = ReplyComposer<StagedAttachment>()
+    @State private var draft = ReplyDraft()
     /// A one-shot request to focus the reply bar, consumed by the bar.
     @State private var focusReply = false
     /// The live timestamp-peek offset: 0 at rest, negative while the message stack
@@ -151,26 +148,19 @@ struct ConversationView: View {
                     }
                     if isSearching {
                         ConversationSearchPanel(
-                            text: $searchText,
-                            hits: searchHits,
-                            onCancel: { exitSearch() },
+                            rows: stack,
+                            onCancel: { isSearching = false },
                             onJump: { jump(to: $0) }
                         )
                     }
                 }
                 if !isSearching {
                     Divider()
-                    if let target = composer.target {
-                        ReplyTargetChip(message: target) {
-                            composer.target = nil
-                            dismissKeyboard()
-                        }
-                    }
-                    ReplyBar(
-                        text: $composer.text,
-                        attachments: $composer.attachments,
+                    ReplyArea(
+                        draft: draft,
                         isSending: isSending,
                         focusRequest: $focusReply,
+                        onClearTarget: { dismissKeyboard() },
                         onSend: { send(into: thread) }
                     )
                 }
@@ -247,37 +237,14 @@ struct ConversationView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase != .active { reactions.flush() }
         }
-        // Recompute the find results as the query changes, debounced so a burst of
-        // keystrokes issues one pass. Mirrors the inbox search.
-        .task(id: searchText) { await runConversationSearch() }
-    }
-
-    /// Filter the loaded thread to the messages matching the current query, after
-    /// a short debounce. A blank query clears the results.
-    private func runConversationSearch() async {
-        guard let thread,
-              !searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            searchHits = []
-            return
-        }
-        try? await Task.sleep(for: .milliseconds(150))
-        if Task.isCancelled { return }
-        searchHits = ConversationSearch.hits(for: searchText, in: thread.conversationMessages)
     }
 
     /// Close the find panel and jump the chat to the tapped message, flashing it
     /// briefly so the eye finds where it landed.
     private func jump(to messageID: String) {
-        exitSearch()
+        isSearching = false
         flashedMessage = messageID
         scrollTarget = messageID
-    }
-
-    /// Leave find: hide the panel and drop the query and its results.
-    private func exitSearch() {
-        isSearching = false
-        searchText = ""
-        searchHits = []
     }
 
     private var subjectTitle: String {
@@ -352,12 +319,13 @@ struct ConversationView: View {
                         MessageBubble(
                             model: model,
                             message: row.message,
+                            folded: row.folded,
                             isOwn: row.isOwn,
                             hasTail: row.hasTail,
                             showSender: row.showSender,
                             reactions: rowReactions,
                             pendingEmoji: reactions.pendingEmoji(for: row.message.messageID),
-                            lockedEmoji: thread.myReaction(on: row.message.messageID, as: model.account),
+                            lockedEmoji: rowReactions.emoji(sentBy: model.account),
                             selfAddress: model.account.emailAddress,
                             isFlashed: flashedMessage == row.id,
                             peekOffset: peekOffset,
@@ -554,22 +522,22 @@ struct ConversationView: View {
     /// return (not connected, or the model rejected the draft with a message)
     /// puts the draft back so nothing typed is lost.
     private func send(into thread: ZirbeCore.Thread) {
-        let draft = composer.take()
+        let taken = draft.composer.take()
         isSending = true
         Task {
             let updated = await model.sendReply(
                 to: thread,
                 removing: removedAddresses,
-                body: draft.text,
-                attachments: draft.attachments.map(\.attachment),
-                replyingToMessageID: draft.target?.messageID
+                body: taken.text,
+                attachments: taken.attachments.map(\.attachment),
+                replyingToMessageID: taken.target?.messageID
             )
             isSending = false
             if let updated {
                 setThread(updated)
                 activeWeb = nil
             } else {
-                composer.restore(draft)
+                draft.composer.restore(taken)
             }
         }
     }
@@ -577,7 +545,7 @@ struct ConversationView: View {
     /// Begin a reply aimed at a specific message (a swipe on its bubble, or its
     /// long-press Reply): remember it as the target and focus the reply bar.
     private func beginReply(to message: Message) {
-        composer.target = message
+        draft.composer.target = message
         focusReply = true
     }
 
@@ -924,6 +892,36 @@ struct ReplyBar: View {
     }
 }
 
+@Observable
+final class ReplyDraft {
+    var composer = ReplyComposer<StagedAttachment>()
+}
+
+/// Reads the draft itself, so typing redraws this and not the conversation.
+private struct ReplyArea: View {
+    @Bindable var draft: ReplyDraft
+    let isSending: Bool
+    @Binding var focusRequest: Bool
+    let onClearTarget: () -> Void
+    let onSend: () -> Void
+
+    var body: some View {
+        if let target = draft.composer.target {
+            ReplyTargetChip(message: target) {
+                draft.composer.target = nil
+                onClearTarget()
+            }
+        }
+        ReplyBar(
+            text: $draft.composer.text,
+            attachments: $draft.composer.attachments,
+            isSending: isSending,
+            focusRequest: $focusRequest,
+            onSend: onSend
+        )
+    }
+}
+
 /// The strip above the reply bar naming the earlier message a swipe-to-reply is
 /// answering: a reply arrow, who wrote it, a one-line glance of its text, and an
 /// ✕ to cancel and return to a normal reply into the thread.
@@ -971,6 +969,7 @@ private struct ReplyTargetChip: View {
 private struct MessageBubble: View {
     let model: InboxModel
     let message: Message
+    let folded: QuotedText.Folded?
     let isOwn: Bool
     /// Whether this bubble ends a run, so it gets the tail and the timestamp.
     let hasTail: Bool
@@ -1183,8 +1182,13 @@ private struct MessageBubble: View {
             // "(quoted message)" placeholder would just clutter the bubble, and
             // the quote stays reachable below either way.
             if hasVisibleBody || (message.attachments.isEmpty && message.invite == nil) {
-                Text(folded.visible.isEmpty ? "(quoted message)" : folded.visible)
-                    .foregroundStyle(folded.visible.isEmpty ? AnyShapeStyle(.secondary) : AnyShapeStyle(isOwn ? .white : .primary))
+                if let folded {
+                    Text(folded.visible.isEmpty ? "(quoted message)" : folded.visible)
+                        .foregroundStyle(folded.visible.isEmpty ? AnyShapeStyle(.secondary) : AnyShapeStyle(isOwn ? .white : .primary))
+                } else {
+                    Text("(no text content)")
+                        .foregroundStyle(isOwn ? .white : .primary)
+                }
             }
             if !message.attachments.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
@@ -1200,7 +1204,7 @@ private struct MessageBubble: View {
                 }
                 .padding(.top, 2)
             }
-            if let quoted = folded.quoted {
+            if let quoted = folded?.quoted {
                 Button {
                     withAnimation(.easeInOut(duration: 0.15)) { quoteExpanded.toggle() }
                 } label: {
@@ -1367,17 +1371,11 @@ private struct MessageBubble: View {
         }
     }
 
-    /// Whether the message has no readable text body, so an attachment must carry
-    /// the bubble on its own.
-    private var bodyIsEmpty: Bool {
-        message.bodyText?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true
-    }
-
     /// Whether there's real text to show above the attachments: not a blank body,
     /// and not one that folds to nothing but a reply quote. False for a photo or
     /// voice message sent with no words, so the attachment stands alone.
     private var hasVisibleBody: Bool {
-        !bodyIsEmpty && !folded.visible.isEmpty
+        !(folded?.visible.isEmpty ?? true)
     }
 
     /// Image attachments, rendered inline as thumbnails.
@@ -1397,16 +1395,6 @@ private struct MessageBubble: View {
             let type = $0.mimeType.lowercased()
             return !type.hasPrefix("image/") && !type.hasPrefix("audio/")
         }
-    }
-
-    /// The body split into the part to show and the quoted history to fold. An
-    /// empty body falls back to a placeholder so a bubble is never blank.
-    private var folded: QuotedText.Folded {
-        let text = message.bodyText?.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let text, !text.isEmpty else {
-            return QuotedText.Folded(visible: "(no text content)", quoted: nil)
-        }
-        return QuotedText.fold(text)
     }
 }
 

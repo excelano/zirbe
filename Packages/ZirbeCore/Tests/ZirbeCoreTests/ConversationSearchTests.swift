@@ -20,23 +20,23 @@ final class ConversationSearchTests: XCTestCase {
             message("<2@x>", from: "Sam", body: "Sounds good, thanks."),
             message("<3@x>", from: "Pat", body: "The budget was approved."),
         ]
-        let hits = ConversationSearch.hits(for: "budget", in: messages)
+        let hits = ConversationSearch.hits(for: "budget", in: MessageStack.rows(messages, ownedBy: "me@x.com"))
         XCTAssertEqual(hits.map(\.messageID), ["mid:<1@x>", "mid:<3@x>"])
     }
 
     func testOneHitPerMessageEvenWithSeveralOccurrences() {
         let messages = [message("<1@x>", from: "Pat", body: "budget budget budget")]
-        XCTAssertEqual(ConversationSearch.hits(for: "budget", in: messages).count, 1)
+        XCTAssertEqual(ConversationSearch.hits(for: "budget", in: MessageStack.rows(messages, ownedBy: "me@x.com")).count, 1)
     }
 
     func testBlankQueryYieldsNothing() {
         let messages = [message("<1@x>", from: "Pat", body: "anything")]
-        XCTAssertTrue(ConversationSearch.hits(for: "   ", in: messages).isEmpty)
+        XCTAssertTrue(ConversationSearch.hits(for: "   ", in: MessageStack.rows(messages, ownedBy: "me@x.com")).isEmpty)
     }
 
     func testMatchingIsCaseAndDiacriticInsensitive() {
         let messages = [message("<1@x>", from: "José", body: "Café closes at five.")]
-        let hits = ConversationSearch.hits(for: "cafe", in: messages)
+        let hits = ConversationSearch.hits(for: "cafe", in: MessageStack.rows(messages, ownedBy: "me@x.com"))
         XCTAssertEqual(hits.count, 1)
         // The matched span still covers the accented word as written.
         let hit = hits[0]
@@ -47,7 +47,7 @@ final class ConversationSearchTests: XCTestCase {
 
     func testResultCarriesSenderAndDate() {
         let messages = [message("<1@x>", from: "Pat", body: "the budget", at: 100)]
-        let hit = ConversationSearch.hits(for: "budget", in: messages)[0]
+        let hit = ConversationSearch.hits(for: "budget", in: MessageStack.rows(messages, ownedBy: "me@x.com"))[0]
         XCTAssertEqual(hit.sender.label, "Pat")
         XCTAssertEqual(hit.date, Date(timeIntervalSince1970: 100))
     }
@@ -56,7 +56,7 @@ final class ConversationSearchTests: XCTestCase {
         let head = String(repeating: "x ", count: 60)   // 120 chars of lead-in
         let tail = String(repeating: "y ", count: 60)
         let messages = [message("<1@x>", from: "Pat", body: "\(head)needle\(tail)")]
-        let hit = ConversationSearch.hits(for: "needle", in: messages, contextRadius: 10)[0]
+        let hit = ConversationSearch.hits(for: "needle", in: MessageStack.rows(messages, ownedBy: "me@x.com"), contextRadius: 10)[0]
         XCTAssertTrue(hit.snippet.hasPrefix("…"), "a cut head gets a leading ellipsis")
         XCTAssertTrue(hit.snippet.hasSuffix("…"), "a cut tail gets a trailing ellipsis")
         // The highlight offset points at the query despite the prepended ellipsis.
@@ -67,7 +67,7 @@ final class ConversationSearchTests: XCTestCase {
 
     func testShortBodyKeepsWholeSnippetWithoutEllipses() {
         let messages = [message("<1@x>", from: "Pat", body: "the budget is fine")]
-        let hit = ConversationSearch.hits(for: "budget", in: messages)[0]
+        let hit = ConversationSearch.hits(for: "budget", in: MessageStack.rows(messages, ownedBy: "me@x.com"))[0]
         XCTAssertEqual(hit.snippet, "the budget is fine")
         XCTAssertFalse(hit.snippet.contains("…"))
     }
@@ -77,6 +77,6 @@ final class ConversationSearchTests: XCTestCase {
         // fold drops the quote before matching, so this is not a hit.
         let body = "Thanks!\n\nOn Jan 1, Pat wrote:\n> the secret budget line"
         let messages = [message("<1@x>", from: "Sam", body: body)]
-        XCTAssertTrue(ConversationSearch.hits(for: "secret", in: messages).isEmpty)
+        XCTAssertTrue(ConversationSearch.hits(for: "secret", in: MessageStack.rows(messages, ownedBy: "me@x.com")).isEmpty)
     }
 }

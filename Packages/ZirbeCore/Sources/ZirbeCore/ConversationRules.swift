@@ -29,8 +29,7 @@ extension Thread {
     /// The emoji the user has already sent as a reaction to a message, if any. A
     /// sent reaction is final, so this is what locks the picker for that message.
     public func myReaction(on messageID: String?, as account: Account) -> String? {
-        let me = account.emailAddress.lowercased()
-        return reactions(forMessageID: messageID).first { $0.reactor.address.lowercased() == me }?.emoji
+        reactions(forMessageID: messageID).emoji(sentBy: account)
     }
 
     /// The newest chat message when it carries HTML, for opening the conversation
@@ -39,6 +38,13 @@ extension Thread {
     public var latestHTMLMessage: Message? {
         guard let latest = conversationMessages.last, latest.hasHTML else { return nil }
         return latest
+    }
+}
+
+extension [Reaction] {
+    public func emoji(sentBy account: Account) -> String? {
+        let me = account.emailAddress.lowercased()
+        return first { $0.reactor.address.lowercased() == me }?.emoji
     }
 }
 
