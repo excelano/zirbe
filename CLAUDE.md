@@ -61,6 +61,10 @@ written as an API spec. Transport stays here; content parsing stays there.
   check is `scripts/check.sh`, which runs both packages' tests with coverage and
   builds the app scheme (`--skip-app` for tests only, `--files` for per-file
   coverage).
+- The app icons (light, dark, tinted) are drawn in `Zirbe/Icon/AppIcon.svg`,
+  `AppIcon-dark.svg` and `AppIcon-tinted.svg`; change one there and render it into
+  `Zirbe/Zirbe/Assets.xcassets/AppIcon.appiconset/` with
+  `rsvg-convert -w 1024 -h 1024 <svg> | magick - -alpha off -strip PNG24:<png>`.
 
 ## Releases
 
