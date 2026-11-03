@@ -18,10 +18,13 @@ public final class AppSession {
     public private(set) var model: InboxModel?
     /// The last restore/connect error, in a form a view can show.
     public private(set) var errorMessage: String?
-    /// An account we found persisted but couldn't auto-connect (no stored
-    /// password, or the sign-in failed). The onboarding screen prefills from it
-    /// so the user only re-enters the password.
-    public private(set) var restoredAccount: Account?
+    /// An account found persisted but not connected: no stored password, or the
+    /// server rejected it. The onboarding screen prefills from it so the user
+    /// only re-enters the password.
+    public var restoredAccount: Account? {
+        storedAccountWithoutPassword ?? model.flatMap { $0.isConnected ? nil : $0.account }
+    }
+    private var storedAccountWithoutPassword: Account?
     /// True until the first restore attempt finishes, so the UI can hold a
     /// launch view instead of flashing onboarding before a silent auto-connect.
     public private(set) var isRestoring = true
@@ -32,11 +35,12 @@ public final class AppSession {
 
     public var isConnected: Bool { model?.isConnected == true }
 
-    /// On launch: if an account and its Keychain password are both present, sign
-    /// in silently. Any failure (no password, rejected password, server
-    /// unreachable) leaves the account in `restoredAccount` and drops to
-    /// onboarding for password re-entry. The stored credential and account row
-    /// are left intact, so a later relaunch can still auto-connect.
+    /// On launch: if an account and its Keychain password are both present, resume
+    /// it from the cache with no network, so the inbox shows at once and syncs
+    /// once it's up. A missing password leaves the account in `restoredAccount`
+    /// and drops to onboarding for password re-entry; a password the server
+    /// rejects on that first sync does the same from the inbox (see
+    /// `InboxModel.resume`). An unreachable server leaves the cached inbox up.
     public func restore() async {
         guard model == nil else { isRestoring = false; return }
         defer { isRestoring = false }
@@ -50,11 +54,11 @@ public final class AppSession {
             let store = try ensureStore()
             guard let account = try await store.accounts().first else { return }
             guard let password = try KeychainStore.password(for: account.id) else {
-                restoredAccount = account
+                storedAccountWithoutPassword = account
                 return
             }
             let candidate = InboxModel(account: account, store: store)
-            try await candidate.signIn(password: password)
+            await candidate.resume(password: password)
             model = candidate
         } catch {
             errorMessage = error.localizedDescription
@@ -71,7 +75,7 @@ public final class AppSession {
         try await candidate.signIn(password: password)
         try KeychainStore.save(password: password, for: account.id)
         errorMessage = nil
-        restoredAccount = nil
+        storedAccountWithoutPassword = nil
         model = candidate
     }
 
@@ -81,7 +85,7 @@ public final class AppSession {
         let account = model?.account
         model?.signOut()
         model = nil
-        restoredAccount = nil
+        storedAccountWithoutPassword = nil
         if let account {
             try? KeychainStore.delete(for: account.id)
         }

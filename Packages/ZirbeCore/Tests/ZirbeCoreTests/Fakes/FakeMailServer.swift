@@ -73,6 +73,9 @@ actor FakeMailServer: IMAPTransport {
     /// Standing failures scoped to one folder, for a thread that spans several.
     private var failInFolder: [Operation: Set<String>] = [:]
     private var idle: AsyncStream<Void>.Continuation?
+    private var rejectsPassword = false
+    private var holdingMailboxState = false
+    private var heldMailboxState: CheckedContinuation<Void, Never>?
 
     /// A server with the standard special-use folders present and empty. The
     /// UIDVALIDITY seeds differ per folder so a test can't confuse them.
@@ -95,6 +98,18 @@ actor FakeMailServer: IMAPTransport {
 
     /// Make `operation` throw only when aimed at `mailbox`, until cleared.
     func fail(_ operation: Operation, in mailbox: String) { failInFolder[operation, default: []].insert(mailbox) }
+
+    func rejectPassword() { rejectsPassword = true }
+
+    /// Park the next sync at its first server call until `release()`.
+    func holdNextSync() { holdingMailboxState = true }
+
+    var isHoldingSync: Bool { heldMailboxState != nil }
+
+    func release() {
+        heldMailboxState?.resume()
+        heldMailboxState = nil
+    }
 
     /// Clear a standing failure.
     func succeed(_ operation: Operation) {
@@ -173,6 +188,7 @@ actor FakeMailServer: IMAPTransport {
 
     func connect(username: String, password: String) async throws {
         calls.append(.connect(username: username))
+        if rejectsPassword { throw MailEngineError.authenticationRejected }
         try check(.connect)
         session = (username, password)
     }
@@ -185,6 +201,10 @@ actor FakeMailServer: IMAPTransport {
 
     func mailboxState(in mailbox: String) async throws -> MailboxState {
         calls.append(.mailboxState(mailbox: mailbox))
+        if holdingMailboxState {
+            holdingMailboxState = false
+            await withCheckedContinuation { heldMailboxState = $0 }
+        }
         try check(.mailboxState)
         let folder = try folder(mailbox)
         return MailboxState(uidValidity: folder.uidValidity, uids: Set(folder.messages.keys))

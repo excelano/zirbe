@@ -536,46 +536,42 @@ public final class MailStore: @unchecked Sendable {
         }
     }
 
-    /// The server references (UID and mailbox) of a thread's messages that have a
-    /// UID, so the sync can mark or move them on the server, each with its local
-    /// id so the sync can drop exactly the rows the server acted on. A
+    /// The server references (UID and mailbox) of the given threads' messages that
+    /// have a UID, so the sync can mark or move them on the server, each with its
+    /// local id so the sync can drop exactly the rows the server acted on. A
     /// locally-composed copy with no UID is omitted; it has nothing to act on
     /// server-side.
-    public func messageRefs(threadID: String) async throws -> [(id: String, uid: UInt32, mailbox: String)] {
-        try await database.read { db in
-            try MessageRow
-                .filter(Column("threadID") == threadID && Column("uid") != nil)
-                .fetchAll(db)
-                .compactMap { row in
-                    row.uid.map { (id: row.id, uid: UInt32(truncatingIfNeeded: $0), mailbox: row.mailboxName) }
-                }
+    public func messageRefs(threadIDs: [String]) async throws -> [(id: String, uid: UInt32, mailbox: String)] {
+        guard !threadIDs.isEmpty else { return [] }
+        return try await database.read { db in
+            try Row.fetchAll(db, sql: """
+                SELECT id, uid, mailboxName FROM message
+                WHERE threadID IN (\(databaseQuestionMarks(count: threadIDs.count))) AND uid IS NOT NULL
+                """, arguments: StatementArguments(threadIDs))
+                .map { (id: $0["id"], uid: UInt32(truncatingIfNeeded: $0["uid"] as Int64), mailbox: $0["mailboxName"]) }
         }
     }
 
-    /// Set or clear the `\Seen` flag on every message in a thread, locally. The
-    /// caller rethreads after, so the thread's unread state (derived from its
-    /// messages) updates. The server is told separately by the sync.
-    public func setSeen(_ seen: Bool, threadID: String) async throws {
-        try await database.write { db in
-            let rows = try MessageRow.filter(Column("threadID") == threadID).fetchAll(db)
-            for var row in rows {
-                var flags = Set(row.flags)
-                if seen { flags.insert(.seen) } else { flags.remove(.seen) }
-                row.flags = Array(flags)
-                try row.save(db)
-            }
-        }
+    /// Set or clear the `\Seen` flag on every message in the given threads,
+    /// locally. The caller rethreads after, so each thread's unread state (derived
+    /// from its messages) updates. The server is told separately by the sync.
+    public func setSeen(_ seen: Bool, threadIDs: [String]) async throws {
+        try await setFlag(.seen, seen, threadIDs: threadIDs)
     }
 
-    /// Set or clear the `\Flagged` flag on every message in a thread, locally.
-    /// The caller rethreads after, so the thread's flagged state (derived from
-    /// its messages) updates. The server is told separately by the sync.
-    public func setFlagged(_ flagged: Bool, threadID: String) async throws {
+    /// Set or clear the `\Flagged` flag on every message in the given threads,
+    /// locally, mirroring `setSeen`.
+    public func setFlagged(_ flagged: Bool, threadIDs: [String]) async throws {
+        try await setFlag(.flagged, flagged, threadIDs: threadIDs)
+    }
+
+    private func setFlag(_ flag: Flag, _ on: Bool, threadIDs: [String]) async throws {
+        guard !threadIDs.isEmpty else { return }
         try await database.write { db in
-            let rows = try MessageRow.filter(Column("threadID") == threadID).fetchAll(db)
+            let rows = try MessageRow.filter(threadIDs.contains(Column("threadID"))).fetchAll(db)
             for var row in rows {
                 var flags = Set(row.flags)
-                if flagged { flags.insert(.flagged) } else { flags.remove(.flagged) }
+                if on { flags.insert(flag) } else { flags.remove(flag) }
                 row.flags = Array(flags)
                 try row.save(db)
             }
@@ -602,12 +598,14 @@ public final class MailStore: @unchecked Sendable {
         }
     }
 
-    /// Delete every message in a thread, locally. Used when a conversation is
-    /// trashed: after the server move, the local copies go too. The caller
-    /// rethreads after, which drops the now-empty thread from the inbox.
-    public func deleteThread(threadID: String) async throws {
+    /// Delete every message in the given threads, locally. Used when
+    /// conversations are trashed or moved: after the server move, the local copies
+    /// go too. The caller rethreads after, which drops the now-empty threads from
+    /// the list.
+    public func deleteThreads(threadIDs: [String]) async throws {
+        guard !threadIDs.isEmpty else { return }
         try await database.write { db in
-            _ = try MessageRow.filter(Column("threadID") == threadID).deleteAll(db)
+            _ = try MessageRow.filter(threadIDs.contains(Column("threadID"))).deleteAll(db)
         }
     }
 

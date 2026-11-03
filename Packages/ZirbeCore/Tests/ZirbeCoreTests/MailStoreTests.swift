@@ -397,12 +397,12 @@ final class MailStoreTests: XCTestCase {
         let initial = try await store.threadSummaries(accountID: acct.id)
         let threadID = try XCTUnwrap(initial.first?.id)
 
-        try await store.setSeen(true, threadID: threadID)
+        try await store.setSeen(true, threadIDs: [threadID])
         try await store.rethread(accountID: acct.id)
         var summaries = try await store.threadSummaries(accountID: acct.id)
         XCTAssertEqual(summaries.first?.isUnread, false)
 
-        try await store.setSeen(false, threadID: threadID)
+        try await store.setSeen(false, threadIDs: [threadID])
         try await store.rethread(accountID: acct.id)
         summaries = try await store.threadSummaries(accountID: acct.id)
         XCTAssertEqual(summaries.first?.isUnread, true)
@@ -420,12 +420,12 @@ final class MailStoreTests: XCTestCase {
         let threadID = try XCTUnwrap(initial.first?.id)
         XCTAssertEqual(initial.first?.isFlagged, false)
 
-        try await store.setFlagged(true, threadID: threadID)
+        try await store.setFlagged(true, threadIDs: [threadID])
         try await store.rethread(accountID: acct.id)
         var summaries = try await store.threadSummaries(accountID: acct.id)
         XCTAssertEqual(summaries.first?.isFlagged, true)
 
-        try await store.setFlagged(false, threadID: threadID)
+        try await store.setFlagged(false, threadIDs: [threadID])
         try await store.rethread(accountID: acct.id)
         summaries = try await store.threadSummaries(accountID: acct.id)
         XCTAssertEqual(summaries.first?.isFlagged, false)
@@ -444,13 +444,13 @@ final class MailStoreTests: XCTestCase {
         let initial = try await store.threadSummaries(accountID: acct.id)
         let threadID = try XCTUnwrap(initial.first?.id)
 
-        try await store.setFlagged(true, threadID: threadID)
+        try await store.setFlagged(true, threadIDs: [threadID])
         try await store.rethread(accountID: acct.id)
         let flagged = try await store.threadSummaries(accountID: acct.id)
         XCTAssertEqual(flagged.first?.isFlagged, true)
         XCTAssertEqual(flagged.first?.isUnread, false)
 
-        try await store.setSeen(false, threadID: threadID)
+        try await store.setSeen(false, threadIDs: [threadID])
         try await store.rethread(accountID: acct.id)
         let unread = try await store.threadSummaries(accountID: acct.id)
         XCTAssertEqual(unread.first?.isUnread, true)
@@ -469,7 +469,7 @@ final class MailStoreTests: XCTestCase {
         let summaries = try await store.threadSummaries(accountID: acct.id)
         let threadID = try XCTUnwrap(summaries.first?.id)
 
-        try await store.setFlagged(true, threadID: threadID)
+        try await store.setFlagged(true, threadIDs: [threadID])
         let loaded = try await store.thread(id: threadID)
         let thread = try XCTUnwrap(loaded)
         XCTAssertEqual(thread.messages.count, 2)
@@ -489,7 +489,7 @@ final class MailStoreTests: XCTestCase {
         let beforeDelete = try await store.threadSummaries(accountID: acct.id)
         let dropID = try XCTUnwrap(beforeDelete.first { $0.subject == "Drop" }?.id)
 
-        try await store.deleteThread(threadID: dropID)
+        try await store.deleteThreads(threadIDs: [dropID])
         try await store.rethread(accountID: acct.id)
 
         let subjects = try await store.threadSummaries(accountID: acct.id).map(\.subject)
@@ -518,7 +518,7 @@ final class MailStoreTests: XCTestCase {
         let threaded = try await store.threadSummaries(accountID: acct.id)
         let threadID = try XCTUnwrap(threaded.first?.id)
 
-        let refs = try await store.messageRefs(threadID: threadID)
+        let refs = try await store.messageRefs(threadIDs: [threadID])
         XCTAssertEqual(refs.count, 1)
         XCTAssertEqual(refs.first?.uid, 7)
         XCTAssertEqual(refs.first?.mailbox, "INBOX")

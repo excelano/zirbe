@@ -61,6 +61,13 @@ public final class InboxModel {
     private var inOperation = false
     private var operationWaiters: [CheckedContinuation<Void, Never>] = []
 
+    /// Conversations the user just trashed, archived, junked, or moved out of this
+    /// list, hidden from every reload until their mutation finishes. The rows leave
+    /// the screen on the tap, before the mutation reaches the gate; a sync already
+    /// holding it would otherwise reload them back into view, and a second delete
+    /// queued behind that sync would sit on screen until the sync finished.
+    private var pendingRemovals: Set<String> = []
+
     /// Set when a live-refresh tick arrives while an operation holds the gate, so
     /// the tick can be dropped now and made up once with a single catch-up sync.
     private var missedLiveTick = false
@@ -169,8 +176,18 @@ public final class InboxModel {
     /// after any sync or mutation, so the list and the switcher's badges stay in
     /// step with the cache without each call path repeating the two reads.
     private func reloadList() async throws {
-        summaries = try await currentSummaries()
+        let current = try await currentSummaries()
+        summaries = pendingRemovals.isEmpty ? current : current.filter { !pendingRemovals.contains($0.id) }
         unreadCounts = try await store.unreadCounts(accountID: account.id)
+    }
+
+    public private(set) var hasSynced = false
+
+    /// Resume a saved session from the cache with no network; the inbox syncs
+    /// once it is on screen.
+    public func resume(password: String) async {
+        self.password = password
+        await loadCached()
     }
 
     /// Connect with an app-specific password, then sync the inbox. Throws if the
@@ -198,9 +215,20 @@ public final class InboxModel {
         }
         isSyncing = true
         await attempt {
-            try await self.performSync(password: password)
+            do {
+                try await self.performSync(password: password)
+            } catch MailEngineError.authenticationRejected {
+                self.credentialRejected()
+            }
         }
         isSyncing = false
+    }
+
+    /// Dropping the password routes the app to onboarding; the cache stays.
+    private func credentialRejected() {
+        monitorTask?.cancel()
+        monitorTask = nil
+        password = nil
     }
 
     private func performSync(password: String) async throws {
@@ -216,6 +244,7 @@ public final class InboxModel {
             }
             try await reloadList()
         }
+        hasSynced = true
         // The user is present for a foreground sync (a refresh, or the IDLE watch
         // firing), so anything now in the inbox counts as already seen: advance the
         // notification mark past it, leaving the background poll to notify only for
@@ -619,37 +648,34 @@ public final class InboxModel {
         }
     }
 
-    /// Apply a per-thread server mutation across a selection, rethreading and
-    /// refreshing once at the end rather than once per thread: K selected
-    /// conversations cost one rethread, not K. Even if a mutation fails midway the
-    /// threads already changed are rethreaded and shown before the error surfaces,
-    /// so partial progress isn't lost. The shared shape of the bulk read/flag/
-    /// trash/archive/junk/move actions; each passes `rethread: false` to the
-    /// per-thread sync call. Errors surface in `errorMessage`.
+    /// Apply a server mutation to a selection of conversations, as one batched
+    /// call that rethreads once, then reload the list. Even if the mutation fails
+    /// partway, what did apply is reflected before the error surfaces in
+    /// `errorMessage`. The shared shape of the bulk read/flag/trash/archive/junk/
+    /// move actions.
+    ///
+    /// `removingRows` drops the rows from the list at once, before waiting for the
+    /// gate: the server round trip is seconds on a slow connection, and a sync may
+    /// already hold the gate, so leaving the rows up reads as a dead tap. The
+    /// reload at the end is still the truth: anything the server refused comes
+    /// straight back.
     private func bulkMutate(
         _ threadIDs: [String],
         removingRows: Bool = false,
-        _ mutate: @escaping (String) async throws -> Void
+        _ mutate: @escaping ([String]) async throws -> Void
     ) async {
-        // Gated for the whole loop, so a live-refresh or pull sync can't land in a
-        // gap between two threads and write its pre-delete snapshot back over them.
+        let removed: Set<String> = removingRows ? Set(threadIDs) : []
+        if !removed.isEmpty {
+            pendingRemovals.formUnion(removed)
+            summaries.removeAll { removed.contains($0.id) }
+        }
+        // Gated, so a live-refresh or pull sync can't land mid-mutation and write
+        // its pre-delete snapshot back over it.
         await attempt {
             try await self.exclusively {
-                // Drop the rows now for the actions that remove a conversation from
-                // this list. The server round trip is seconds on a slow connection
-                // and a whole multiple of that for a bulk selection, and leaving the
-                // rows up for it reads as a dead tap. The reload below is still the
-                // truth: anything the server refused comes straight back, with the
-                // reason in `errorMessage`.
-                if removingRows {
-                    let removed = Set(threadIDs)
-                    self.summaries.removeAll { removed.contains($0.id) }
-                }
                 var caught: Error?
-                for id in threadIDs {
-                    do { try await mutate(id) } catch { caught = error; break }
-                }
-                try await self.sync.rethread()
+                do { try await mutate(threadIDs) } catch { caught = error }
+                self.pendingRemovals.subtract(removed)
                 try await self.reloadList()
                 if let caught { throw caught }
             }
@@ -665,8 +691,8 @@ public final class InboxModel {
             errorMessage = "Connect an account first."
             return
         }
-        await bulkMutate(threadIDs) { id in
-            try await self.sync.setRead(threadID: id, seen: read, password: password, rethread: false)
+        await bulkMutate(threadIDs) { ids in
+            try await self.sync.setRead(threadIDs: ids, seen: read, password: password)
         }
     }
 
@@ -691,8 +717,8 @@ public final class InboxModel {
             errorMessage = "Connect an account first."
             return
         }
-        await bulkMutate(threadIDs) { id in
-            try await self.sync.setFlagged(threadID: id, flagged: flagged, password: password, rethread: false)
+        await bulkMutate(threadIDs) { ids in
+            try await self.sync.setFlagged(threadIDs: ids, flagged: flagged, password: password)
         }
     }
 
@@ -832,8 +858,8 @@ public final class InboxModel {
             errorMessage = "Connect an account first."
             return
         }
-        await bulkMutate(threadIDs, removingRows: !isViewing(.trash)) { id in
-            try await self.sync.trash(threadID: id, password: password, rethread: false)
+        await bulkMutate(threadIDs, removingRows: !isViewing(.trash)) { ids in
+            try await self.sync.trash(threadIDs: ids, password: password)
         }
     }
 
@@ -851,8 +877,8 @@ public final class InboxModel {
             errorMessage = "Connect an account first."
             return
         }
-        await bulkMutate(threadIDs, removingRows: !isViewing(.archive)) { id in
-            try await self.sync.archive(threadID: id, password: password, rethread: false)
+        await bulkMutate(threadIDs, removingRows: !isViewing(.archive)) { ids in
+            try await self.sync.archive(threadIDs: ids, password: password)
         }
     }
 
@@ -869,8 +895,8 @@ public final class InboxModel {
             errorMessage = "Connect an account first."
             return
         }
-        await bulkMutate(threadIDs, removingRows: !isViewing(.junk)) { id in
-            try await self.sync.junk(threadID: id, password: password, rethread: false)
+        await bulkMutate(threadIDs, removingRows: !isViewing(.junk)) { ids in
+            try await self.sync.junk(threadIDs: ids, password: password)
         }
     }
 
@@ -927,8 +953,8 @@ public final class InboxModel {
             errorMessage = "Connect an account first."
             return
         }
-        await bulkMutate(threadIDs, removingRows: destination != currentMailbox.name) { id in
-            try await self.sync.move(threadID: id, to: destination, password: password, rethread: false)
+        await bulkMutate(threadIDs, removingRows: destination != currentMailbox.name) { ids in
+            try await self.sync.move(threadIDs: ids, to: destination, password: password)
         }
     }
 

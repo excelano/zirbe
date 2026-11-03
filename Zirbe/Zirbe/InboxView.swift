@@ -123,7 +123,7 @@ struct InboxView: View {
         .refreshable { await model.refresh() }
         .task {
             await model.loadCached()
-            if model.summaries.isEmpty {
+            if !model.hasSynced {
                 await model.refresh()
             }
             // The first foreground doesn't fire `onChange(of: scenePhase)`, so

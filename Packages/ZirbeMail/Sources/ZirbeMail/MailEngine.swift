@@ -22,6 +22,18 @@ public enum MailEngineError: Error {
     case partNotFound
     /// The part's bytes couldn't be decoded with its transfer encoding.
     case decodeFailed
+    /// The server turned the username and password away at login, as opposed to
+    /// being unreachable, so the caller can ask for the password again.
+    case authenticationRejected
+}
+
+extension MailEngineError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .authenticationRejected: "The mail server didn’t accept that password."
+        case .notConnected, .partNotFound, .decodeFailed: nil
+        }
+    }
 }
 
 public actor MailEngine {
@@ -545,7 +557,11 @@ public actor MailEngine {
         if await !server.isConnected {
             try await server.connect()
         }
-        try await server.login(username: credentials.username, password: credentials.password)
+        do {
+            try await server.login(username: credentials.username, password: credentials.password)
+        } catch IMAPError.loginFailed, IMAPError.authFailed {
+            throw MailEngineError.authenticationRejected
+        }
         isLoggedIn = true
         logger.debug("session ready for \(LogRedaction.address(credentials.username))")
     }

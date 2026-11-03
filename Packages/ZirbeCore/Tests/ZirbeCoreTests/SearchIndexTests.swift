@@ -213,7 +213,7 @@ final class SearchIndexTests: XCTestCase {
 
         let summaries = try await store.threadSummaries(accountID: acct.id)
         let threadID = try XCTUnwrap(summaries.first?.id)
-        try await store.deleteThread(threadID: threadID)
+        try await store.deleteThreads(threadIDs: [threadID])
 
         XCTAssertEqual(try indexedRows(at: dbPath), 0, "the index doesn't keep trashed mail")
         let gone = try await store.searchThreads(accountID: acct.id, query: "tacos")

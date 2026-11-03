@@ -116,6 +116,40 @@ final class InboxModelTests: XCTestCase {
         XCTAssertTrue(model.summaries.isEmpty)
     }
 
+    func testResumeShowsTheCacheWithoutTheNetwork() async throws {
+        try await store.upsert(account)
+        try await store.save([Message(incoming("Cached", id: "<c@x>"))], accountID: account.id, mailboxName: "INBOX")
+        try await store.rethread(accountID: account.id)
+
+        await model.resume(password: "pw")
+
+        XCTAssertTrue(model.isConnected)
+        XCTAssertFalse(model.hasSynced, "the inbox still owes its first sync")
+        XCTAssertEqual(model.summaries.map(\.subject), ["Cached"])
+        let calls = await server.calls(.connect)
+        XCTAssertTrue(calls.isEmpty)
+    }
+
+    func testARejectedPasswordOnRefreshDisconnects() async throws {
+        await model.resume(password: "old")
+        await server.rejectPassword()
+
+        await model.refresh()
+
+        XCTAssertFalse(model.isConnected, "dropping the password routes to onboarding")
+        XCTAssertFalse(model.isSyncing)
+    }
+
+    func testAnUnreachableServerOnRefreshStaysConnected() async throws {
+        await model.resume(password: "pw")
+        await server.fail(.connect)
+
+        await model.refresh()
+
+        XCTAssertTrue(model.isConnected, "offline is not a wrong password")
+        XCTAssertNotNil(model.errorMessage)
+    }
+
     func testRefreshWithoutAConnectionSetsTheError() async {
         await model.refresh()
         XCTAssertEqual(model.errorMessage, notConnected)
@@ -511,6 +545,29 @@ final class InboxModelTests: XCTestCase {
         XCTAssertTrue(model.summaries.isEmpty)
         let trashed = await server.messages(in: "Trash").map(\.subject)
         XCTAssertEqual(Set(trashed), ["A", "B"])
+    }
+
+    func testATrashQueuedBehindASyncLeavesTheListAtOnce() async throws {
+        await server.add(incoming("A", id: "<A@x>", minutes: 0))
+        await server.add(incoming("B", id: "<B@x>", minutes: 1))
+        try await model.signIn(password: "pw")
+        let a = try summary("A").id
+
+        await server.holdNextSync()
+        let refresh = Task { await model.refresh() }
+        while await !server.isHoldingSync { await Task.yield() }
+
+        let trash = Task { await model.trash(threadIDs: [a]) }
+        for _ in 0..<5 { await Task.yield() }
+        XCTAssertEqual(model.summaries.map(\.subject), ["B"], "the row leaves on the tap, not when the sync finishes")
+
+        await server.release()
+        await refresh.value
+        XCTAssertFalse(model.summaries.contains { $0.id == a }, "the sync's reload must not bring the row back")
+        await trash.value
+        XCTAssertEqual(model.summaries.map(\.subject), ["B"])
+        let trashed = await server.messages(in: "Trash").map(\.subject)
+        XCTAssertEqual(trashed, ["A"])
     }
 
     func testMutationsWithoutAConnectionSetTheError() async {

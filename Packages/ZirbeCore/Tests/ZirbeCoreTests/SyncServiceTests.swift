@@ -431,7 +431,7 @@ final class SyncServiceTests: XCTestCase {
     func testSetReadReachesEveryFolderTheThreadSpans() async throws {
         let thread = try await seedThreadAcrossTwoFolders()
 
-        try await sync.setRead(threadID: thread.id, seen: true, password: password)
+        try await sync.setRead(threadIDs: [thread.id], seen: true, password: password)
 
         let calls = await server.calls(.setSeen)
         XCTAssertEqual(Set(calls), [
@@ -443,7 +443,7 @@ final class SyncServiceTests: XCTestCase {
         let summary = try await allSummaries().first
         XCTAssertEqual(summary?.isUnread, false)
 
-        try await sync.setRead(threadID: thread.id, seen: false, password: password)
+        try await sync.setRead(threadIDs: [thread.id], seen: false, password: password)
         let reread = try await allSummaries().first
         XCTAssertEqual(reread?.isUnread, true)
     }
@@ -451,7 +451,7 @@ final class SyncServiceTests: XCTestCase {
     func testSetFlaggedReachesEveryFolderTheThreadSpans() async throws {
         let thread = try await seedThreadAcrossTwoFolders()
 
-        try await sync.setFlagged(threadID: thread.id, flagged: true, password: password)
+        try await sync.setFlagged(threadIDs: [thread.id], flagged: true, password: password)
 
         let calls = await server.calls(.setFlagged)
         XCTAssertEqual(Set(calls), [
@@ -469,7 +469,7 @@ final class SyncServiceTests: XCTestCase {
     func testTrashMovesEveryMessageAndDropsTheThread() async throws {
         let thread = try await seedThreadAcrossTwoFolders()
 
-        try await sync.trash(threadID: thread.id, password: password)
+        try await sync.trash(threadIDs: [thread.id], password: password)
 
         let inbox = await server.uids(in: "INBOX")
         let archive = await server.uids(in: "Archive")
@@ -488,9 +488,9 @@ final class SyncServiceTests: XCTestCase {
         let summaries = try await sync.syncInbox(password: password)
         let ids = Dictionary(uniqueKeysWithValues: summaries.map { ($0.subject, $0.id) })
 
-        try await sync.archive(threadID: ids["A"]!, password: password)
-        try await sync.junk(threadID: ids["J"]!, password: password)
-        try await sync.move(threadID: ids["M"]!, to: "Projects", password: password)
+        try await sync.archive(threadIDs: [ids["A"]!], password: password)
+        try await sync.junk(threadIDs: [ids["J"]!], password: password)
+        try await sync.move(threadIDs: [ids["M"]!], to: "Projects", password: password)
 
         let archive = await server.messages(in: "Archive").map(\.subject)
         let junk = await server.messages(in: "Junk").map(\.subject)
@@ -511,7 +511,7 @@ final class SyncServiceTests: XCTestCase {
         await server.fail(.trash)
 
         do {
-            try await sync.trash(threadID: id, password: password)
+            try await sync.trash(threadIDs: [id], password: password)
             XCTFail("expected the server refusal to propagate")
         } catch is FakeMailServer.ScriptedFailure {}
 
@@ -526,7 +526,7 @@ final class SyncServiceTests: XCTestCase {
         await server.fail(.trash, in: "Archive")
 
         do {
-            try await sync.trash(threadID: thread.id, password: password)
+            try await sync.trash(threadIDs: [thread.id], password: password)
             XCTFail("expected the Archive refusal to propagate")
         } catch is FakeMailServer.ScriptedFailure {}
 
@@ -549,7 +549,7 @@ final class SyncServiceTests: XCTestCase {
         await server.fail(.move, in: "INBOX")
 
         do {
-            try await sync.move(threadID: thread.id, to: "Projects", password: password)
+            try await sync.move(threadIDs: [thread.id], to: "Projects", password: password)
             XCTFail("expected the INBOX refusal to propagate")
         } catch is FakeMailServer.ScriptedFailure {}
 
@@ -565,7 +565,7 @@ final class SyncServiceTests: XCTestCase {
         try await sync.recordLocal(newDraft(), state: .failed)
         let id = try await onlyThread().id
 
-        try await sync.trash(threadID: id, password: password)
+        try await sync.trash(threadIDs: [id], password: password)
 
         let trashed = await server.calls(.trash)
         XCTAssertTrue(trashed.isEmpty, "a never-delivered bubble has no server copy to move")
@@ -573,16 +573,18 @@ final class SyncServiceTests: XCTestCase {
         XCTAssertTrue(summaries.isEmpty)
     }
 
-    func testBulkCallersCanDeferTheRethread() async throws {
+    func testASelectionMovesInOneCallPerFolder() async throws {
         await server.add(incoming("A", id: "<a@x>", minutes: 0))
         await server.add(incoming("B", id: "<b@x>", minutes: 1))
+        await server.add(incoming("C", id: "<c@x>", minutes: 2))
         let ids = try await sync.syncInbox(password: password).map(\.id)
 
-        for id in ids {
-            try await sync.trash(threadID: id, password: password, rethread: false)
-        }
-        try await sync.rethread()
+        try await sync.trash(threadIDs: ids, password: password)
 
+        let calls = await server.calls(.trash)
+        XCTAssertEqual(calls.count, 1, "three conversations in one folder cost one server move")
+        let trash = await server.messages(in: "Trash").map(\.subject)
+        XCTAssertEqual(Set(trash), ["A", "B", "C"])
         let summaries = try await inboxSummaries()
         XCTAssertTrue(summaries.isEmpty)
     }
