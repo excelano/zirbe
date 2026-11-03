@@ -11,7 +11,7 @@
 # record's sign-in fields, never here: this repository is public.
 
 apple-review-notes = """
-Zirbe is a standards-based email client for iPhone. It connects only to the mail servers of the account you sign in with, using IMAP to read and SMTP to send. There is no Zirbe account, server, or backend, and no registration step; the sign-in is an ordinary email mailbox on a private server.
+Zirbe is a standards-based email client for iPhone and iPad. It connects only to the mail servers of the account you sign in with, using IMAP to read and SMTP to send. There is no Zirbe account, server, or backend, and no registration step; the sign-in is an ordinary email mailbox on a private server.
 
 DEMO ACCOUNT
 The address and password are in the sign-in fields of this submission. The mailbox is on a private server, so its settings are entered by hand:
@@ -31,7 +31,7 @@ HOW TO SIGN IN
 5. The app may ask permission to send notifications and to use Contacts. Both are optional and can be declined without affecting the review. Notifications drive a local new-mail banner; Contacts is used only on the device to show sender photos and suggest recipients.
 
 WHAT YOU CAN DO
-The inbox is a list of conversations, where each conversation is an email thread shown like a group chat: the subject is the title and every message is a bubble in time order. Tap a conversation to open it, then reply, attach a photo or file, react to a message, search within the thread, or swipe a message to reply, and swipe a conversation to archive, delete, or pin. A meeting invitation shows as a card with the time, the organizer and a Join button, and Add to Calendar opens Apple's own event editor. The mailbox contains a sample conversation to open and act on. Sending delivers over the account's own SMTP server (excelano.com).
+The inbox is a list of conversations, where each conversation is an email thread shown like a group chat: the subject is the title and every message is a bubble in time order. Tap a conversation to open it (on iPad it opens beside the list), then reply, attach a photo or file, react to a message, search within the thread, or swipe a message to reply, and swipe a conversation to archive, delete, or pin. A meeting invitation shows as a card with the time, the organizer and a Join button, and Add to Calendar opens Apple's own event editor. The mailbox contains a sample conversation to open and act on. Sending delivers over the account's own SMTP server (excelano.com).
 
 PRIVACY
 Zirbe's only network destinations are the demo account's own IMAP and SMTP servers. It contains no analytics, telemetry, or third-party SDKs, which is why the App Privacy declaration is Data Not Collected. The full privacy statement is at https://excelano.com/legal/#zirbe and the complete source is public at https://github.com/excelano/zirbe.
