@@ -47,11 +47,9 @@ final class VoiceRecorder {
         case .denied:
             phase = .denied
         case .undetermined:
-            AVAudioApplication.requestRecordPermission { [weak self] granted in
-                Task { @MainActor in
-                    guard let self else { return }
-                    granted ? self.beginRecording() : (self.phase = .denied)
-                }
+            Task {
+                let granted = await AVAudioApplication.requestRecordPermission()
+                granted ? beginRecording() : (phase = .denied)
             }
         @unknown default:
             phase = .denied

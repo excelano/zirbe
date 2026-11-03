@@ -12,7 +12,7 @@ import BackgroundTasks
 import ZirbeCore
 
 /// Queues the next background inbox poll with the system scheduler.
-enum BackgroundRefreshScheduler {
+nonisolated enum BackgroundRefreshScheduler {
     /// Ask iOS to wake the app for a refresh no sooner than this far out. The
     /// system clamps and defers to its own budget regardless, so this is a floor,
     /// not a promise.
