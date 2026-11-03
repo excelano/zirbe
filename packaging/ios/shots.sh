@@ -49,10 +49,10 @@ shot() {
 # rather than leave half the screen empty.
 if xcrun simctl list devices | grep "$device" | grep -q iPad; then
     settle=14
-    shot 01-inbox --demo-open "--demo-open-subject=photos from the ridge"
+    shot 01-inbox --demo-open "--demo-open-subject=lunch"
     shot 02-conversation --demo-open
     shot 03-invitation --demo-open "--demo-open-subject=planning call"
-    shot 04-search --demo-search Priya --demo-open "--demo-open-subject=book club"
+    shot 04-search --demo-search Leo --demo-open "--demo-open-subject=bike pump"
 else
     shot 01-inbox
     settle=14
