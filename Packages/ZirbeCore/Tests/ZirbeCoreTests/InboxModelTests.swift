@@ -625,6 +625,21 @@ final class InboxModelTests: XCTestCase {
         XCTAssertEqual(inboxFetches.count, 1, "returning home reads the cache, it does not re-sync")
     }
 
+    func testAFolderShowsItsCacheBeforeItsSyncAnswers() async throws {
+        await server.add(incoming("Plan", id: "<a@x>"))
+        await server.add(incoming("Filed", id: "<f@x>"), to: "Archive")
+        try await model.signIn(password: "pw")
+        let archive = Mailbox(accountID: account.id, name: "Archive", role: .archive)
+        await model.selectMailbox(archive)
+        await model.selectMailbox(Mailbox(accountID: account.id, name: "INBOX", role: .inbox))
+        await server.fail(.fetchRecentEnvelopes, in: "Archive")
+
+        await model.selectMailbox(archive)
+
+        XCTAssertEqual(model.summaries.map(\.subject), ["Filed"], "the cached folder shows even when its sync fails")
+        XCTAssertFalse(model.isSyncing)
+    }
+
     func testRefreshSyncsTheFolderOnScreen() async throws {
         try await model.signIn(password: "pw")
         await model.selectMailbox(Mailbox(accountID: account.id, name: "Archive", role: .archive))

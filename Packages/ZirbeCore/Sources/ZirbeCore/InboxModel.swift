@@ -276,24 +276,17 @@ public final class InboxModel {
         }
     }
 
-    /// Switch the visible list to `mailbox`, syncing it if it's not the home view.
-    /// INBOX is home and reads its cached "all conversations" list immediately
-    /// (it's already synced and watched); any other folder syncs lazily on this
-    /// first switch, then serves from the cache on later visits.
+    /// Switch the visible list to `mailbox`, showing its cached conversations at
+    /// once. INBOX is home and stops there (it's already synced and watched); any
+    /// other folder then syncs, its list updating when the server answers. A
+    /// folder never synced before has an empty cache, so the inbox shows its
+    /// syncing state rather than the folder it left.
     public func selectMailbox(_ mailbox: Mailbox) async {
         currentMailbox = mailbox
-        guard let password else {
-            await attempt { try await self.reloadList() }
-            return
-        }
+        await attempt { try await self.reloadList() }
+        guard let password, !isViewingInbox else { return }
         isSyncing = true
-        await attempt {
-            if self.isViewingInbox {
-                try await self.reloadList()
-            } else {
-                try await self.performSync(password: password)
-            }
-        }
+        await attempt { try await self.performSync(password: password) }
         isSyncing = false
     }
 
