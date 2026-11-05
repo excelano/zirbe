@@ -20,13 +20,19 @@ import ZirbeCore
 final class NewMailNotifier: NSObject, ObservableObject, UNUserNotificationCenterDelegate {
     static let shared = NewMailNotifier()
 
+    struct Target: Equatable {
+        let accountID: String
+        let threadID: String
+    }
+
     /// The conversation a tapped notification wants opened, for RootView to push.
     /// Set on tap (including a cold launch from the lock screen) and cleared once
     /// routed. Published so the view layer can react without polling.
-    @Published var pendingThreadID: String?
+    @Published var pendingTarget: Target?
 
     /// The notification `userInfo` key carrying the thread to open.
     private static let threadIDKey = "threadID"
+    private static let accountIDKey = "accountID"
 
     private override init() { super.init() }
 
@@ -80,14 +86,15 @@ final class NewMailNotifier: NSObject, ObservableObject, UNUserNotificationCente
     /// summary. A per-message banner carries its thread id so a tap can open it and
     /// so iOS groups same-thread banners; the summary carries none.
     private func requests(for plan: NewMailNotification.Plan) -> [UNNotificationRequest] {
-        func make(title: String, body: String, threadID: String?) -> UNNotificationRequest {
+        func make(title: String, body: String, accountID: String?, threadID: String?) -> UNNotificationRequest {
             let content = UNMutableNotificationContent()
             content.title = title
             content.body = body
             content.sound = .default
             var info: [AnyHashable: Any] = [:]
-            if let threadID {
-                content.threadIdentifier = threadID
+            if let accountID, let threadID {
+                content.threadIdentifier = "\(accountID)/\(threadID)"
+                info[Self.accountIDKey] = accountID
                 info[Self.threadIDKey] = threadID
             }
             content.userInfo = info
@@ -97,9 +104,9 @@ final class NewMailNotifier: NSObject, ObservableObject, UNUserNotificationCente
         case .none:
             return []
         case .summary(let count):
-            return [make(title: "New mail", body: "\(count) new messages", threadID: nil)]
+            return [make(title: "New mail", body: "\(count) new messages", accountID: nil, threadID: nil)]
         case .items(let banners):
-            return banners.map { make(title: $0.title, body: $0.body, threadID: $0.threadID) }
+            return banners.map { make(title: $0.title, body: $0.body, accountID: $0.accountID, threadID: $0.threadID) }
         }
     }
 
@@ -120,8 +127,9 @@ final class NewMailNotifier: NSObject, ObservableObject, UNUserNotificationCente
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse
     ) async {
-        if let threadID = response.notification.request.content.userInfo[Self.threadIDKey] as? String {
-            pendingThreadID = threadID
+        let info = response.notification.request.content.userInfo
+        if let accountID = info[Self.accountIDKey] as? String, let threadID = info[Self.threadIDKey] as? String {
+            pendingTarget = Target(accountID: accountID, threadID: threadID)
         }
     }
 }

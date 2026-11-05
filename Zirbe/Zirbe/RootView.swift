@@ -26,6 +26,10 @@ struct RootView: View {
                 launch
             } else if let model = session.model, model.isConnected {
                 navigation(model: model)
+                .id(model.account.id)
+                .task(id: session.inboxUnreadCount) {
+                    await notifier.updateBadge(unreadCount: session.inboxUnreadCount)
+                }
                 // Land in the inbox, then ask for notification permission once.
                 // Demo mode never prompts, so a permission alert can't land on a
                 // screenshot.
@@ -47,10 +51,10 @@ struct RootView: View {
                 }
                 #endif
                 // A tapped notification surfaces its thread here; open it and clear.
-                .onReceive(notifier.$pendingThreadID) { threadID in
-                    guard let threadID else { return }
-                    notifier.pendingThreadID = nil
-                    Task { await open(threadID, model: model) }
+                .onReceive(notifier.$pendingTarget) { target in
+                    guard let target else { return }
+                    notifier.pendingTarget = nil
+                    Task { await open(target) }
                 }
             } else {
                 OnboardingView(
@@ -91,7 +95,9 @@ struct RootView: View {
     }
 
     private func signOut() {
-        Task { await session.signOut() }
+        guard let accountID = session.model?.account.id else { return }
+        path.removeAll()
+        Task { await session.remove(accountID) }
     }
 
     private func closeConversation() {
@@ -105,8 +111,13 @@ struct RootView: View {
 
     /// Open a notification's conversation. A message that arrived after the last
     /// sync isn't in the list yet, so a miss syncs once and looks again.
-    private func open(_ threadID: String, model: InboxModel) async {
-        func summary() -> ThreadSummary? { model.summaries.first { $0.id == threadID } }
+    private func open(_ target: NewMailNotifier.Target) async {
+        if session.currentAccountID != target.accountID {
+            path.removeAll()
+            await session.select(target.accountID)
+        }
+        guard let model = session.model, model.account.id == target.accountID else { return }
+        func summary() -> ThreadSummary? { model.summaries.first { $0.id == target.threadID } }
         if summary() == nil { await model.refresh() }
         if let found = summary() { path = [found] }
     }

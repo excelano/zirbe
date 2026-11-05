@@ -448,10 +448,10 @@ public final class MailStore: @unchecked Sendable {
         try await database.write { db in try account.save(db) }
     }
 
-    /// Every persisted account, for restoring a session on launch. Today there
-    /// is at most one; returning a list keeps the door open for multiple.
+    /// Every persisted account, in the order they were added, for restoring the
+    /// sessions on launch.
     public func accounts() async throws -> [Account] {
-        try await database.read { db in try Account.fetchAll(db) }
+        try await database.read { db in try Account.order(Column.rowID).fetchAll(db) }
     }
 
     /// Every folder discovered for an account, for the mailbox switcher. Returns
@@ -473,6 +473,18 @@ public final class MailStore: @unchecked Sendable {
     public func eraseAll() async throws {
         try await database.erase()
         try Self.migrator.migrate(database)
+    }
+
+    public func eraseAccount(_ accountID: String) async throws {
+        try await database.write { db in
+            for table in ["message", "thread", "mailbox", "syncState", "pinnedThread", "blockedSender"] {
+                try db.execute(sql: "DELETE FROM \(table) WHERE accountID = ?", arguments: [accountID])
+            }
+            try db.execute(sql: "DELETE FROM account WHERE id = ?", arguments: [accountID])
+        }
+        try await database.writeWithoutTransaction { db in
+            try db.execute(sql: "VACUUM")
+        }
     }
 
     public func upsert(_ mailbox: Mailbox) async throws {
@@ -1004,6 +1016,7 @@ public final class MailStore: @unchecked Sendable {
                 .filter { !$0.flags.contains(.seen) }
                 .map { row in
                     NewMailItem(
+                        accountID: accountID,
                         threadID: row.threadID,
                         senderName: row.fromName,
                         senderAddress: row.fromAddress,

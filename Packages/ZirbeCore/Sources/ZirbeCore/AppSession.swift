@@ -14,35 +14,64 @@ import Observation
 @MainActor
 @Observable
 public final class AppSession {
-    /// The connected session, or nil when no account is signed in.
-    public private(set) var model: InboxModel?
+    public private(set) var models: [InboxModel] = []
+    public private(set) var currentAccountID: String?
     /// The last restore/connect error, in a form a view can show.
     public private(set) var errorMessage: String?
-    /// An account found persisted but not connected: no stored password, or the
-    /// server rejected it. The onboarding screen prefills from it so the user
-    /// only re-enters the password.
-    public var restoredAccount: Account? {
-        storedAccountWithoutPassword ?? model.flatMap { $0.isConnected ? nil : $0.account }
-    }
-    private var storedAccountWithoutPassword: Account?
     /// True until the first restore attempt finishes, so the UI can hold a
     /// launch view instead of flashing onboarding before a silent auto-connect.
     public private(set) var isRestoring = true
 
     private var store: MailStore?
+    private let credentials: any CredentialStore
+    private let openStore: () throws -> MailStore
+    private let makeModel: (Account, MailStore) -> InboxModel
+    private let defaults: UserDefaults
 
-    public init() {}
+    private static let currentAccountKey = "session.currentAccountID"
+
+    public convenience init() {
+        self.init(
+            credentials: KeychainStore(),
+            openStore: { try MailStore(path: StoreLocation.databasePath()) },
+            makeModel: { InboxModel(account: $0, store: $1) },
+            defaults: .standard
+        )
+    }
+
+    init(
+        credentials: any CredentialStore,
+        openStore: @escaping () throws -> MailStore,
+        makeModel: @escaping (Account, MailStore) -> InboxModel,
+        defaults: UserDefaults
+    ) {
+        self.credentials = credentials
+        self.openStore = openStore
+        self.makeModel = makeModel
+        self.defaults = defaults
+    }
+
+    public var model: InboxModel? {
+        models.first { $0.account.id == currentAccountID } ?? models.first
+    }
+
+    public var accounts: [Account] { models.map(\.account) }
 
     public var isConnected: Bool { model?.isConnected == true }
 
-    /// On launch: if an account and its Keychain password are both present, resume
-    /// it from the cache with no network, so the inbox shows at once and syncs
-    /// once it's up. A missing password leaves the account in `restoredAccount`
-    /// and drops to onboarding for password re-entry; a password the server
-    /// rejects on that first sync does the same from the inbox (see
-    /// `InboxModel.resume`). An unreachable server leaves the cached inbox up.
+    /// An account found persisted but not connected: no stored password, or the
+    /// server rejected it. The onboarding screen prefills from it so the user
+    /// only re-enters the password.
+    public var restoredAccount: Account? {
+        model.flatMap { $0.isConnected ? nil : $0.account }
+    }
+
+    public var inboxUnreadCount: Int {
+        models.reduce(0) { $0 + ($1.unreadCounts["INBOX"] ?? 0) }
+    }
+
     public func restore() async {
-        guard model == nil else { isRestoring = false; return }
+        guard models.isEmpty else { isRestoring = false; return }
         defer { isRestoring = false }
         #if DEBUG
         if DemoMode.isActive {
@@ -52,14 +81,19 @@ public final class AppSession {
         #endif
         do {
             let store = try ensureStore()
-            guard let account = try await store.accounts().first else { return }
-            guard let password = try KeychainStore.password(for: account.id) else {
-                storedAccountWithoutPassword = account
-                return
+            for account in try await store.accounts() {
+                let candidate = makeModel(account, store)
+                do {
+                    if let password = try credentials.password(for: account.id) {
+                        await candidate.resume(password: password)
+                    }
+                } catch {
+                    errorMessage = error.localizedDescription
+                }
+                models.append(candidate)
             }
-            let candidate = InboxModel(account: account, store: store)
-            await candidate.resume(password: password)
-            model = candidate
+            let remembered = defaults.string(forKey: Self.currentAccountKey)
+            currentAccountID = models.contains { $0.account.id == remembered } ? remembered : models.first?.account.id
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -71,25 +105,45 @@ public final class AppSession {
     /// written to the Keychain unless the sign-in succeeds.
     public func connect(account: Account, password: String) async throws {
         let store = try ensureStore()
-        let candidate = InboxModel(account: account, store: store)
+        let candidate = makeModel(account, store)
         try await candidate.signIn(password: password)
-        try KeychainStore.save(password: password, for: account.id)
+        try credentials.save(password: password, for: account.id)
         errorMessage = nil
-        storedAccountWithoutPassword = nil
-        model = candidate
+        if let index = models.firstIndex(where: { $0.account.id == account.id }) {
+            let replaced = models[index]
+            models[index] = candidate
+            await replaced.stopLiveRefresh()
+            replaced.signOut()
+        } else {
+            models.append(candidate)
+        }
+        await select(account.id)
     }
 
-    /// Full sign-out: forget the credential, wipe the local cache, and return to
-    /// onboarding. Best-effort — a failed erase still drops the session.
-    public func signOut() async {
-        let account = model?.account
-        model?.signOut()
-        model = nil
-        storedAccountWithoutPassword = nil
-        if let account {
-            try? KeychainStore.delete(for: account.id)
+    public func select(_ accountID: String) async {
+        guard models.contains(where: { $0.account.id == accountID }) else { return }
+        if let previous = model, previous.account.id != accountID {
+            await previous.stopLiveRefresh()
         }
-        try? await store?.eraseAll()
+        currentAccountID = accountID
+        defaults.set(accountID, forKey: Self.currentAccountKey)
+    }
+
+    public func remove(_ accountID: String) async {
+        guard let index = models.firstIndex(where: { $0.account.id == accountID }) else { return }
+        let removed = models.remove(at: index)
+        await removed.stopLiveRefresh()
+        removed.signOut()
+        try? credentials.delete(for: accountID)
+        if models.isEmpty {
+            try? await store?.eraseAll()
+        } else {
+            try? await store?.eraseAccount(accountID)
+        }
+        if currentAccountID == accountID {
+            currentAccountID = models.first?.account.id
+            defaults.set(currentAccountID, forKey: Self.currentAccountKey)
+        }
     }
 
     #if DEBUG
@@ -105,7 +159,8 @@ public final class AppSession {
             candidate.enterDemoMode()
             await candidate.loadCached()
             store = demoStore
-            model = candidate
+            models = [candidate]
+            currentAccountID = DemoData.account.id
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -114,7 +169,7 @@ public final class AppSession {
 
     private func ensureStore() throws -> MailStore {
         if let store { return store }
-        let created = try MailStore(path: StoreLocation.databasePath())
+        let created = try openStore()
         store = created
         return created
     }

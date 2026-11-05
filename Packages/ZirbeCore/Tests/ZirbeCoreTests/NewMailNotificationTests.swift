@@ -8,7 +8,7 @@ final class NewMailNotificationTests: XCTestCase {
         address: String? = "p@x.com",
         subject: String? = "Hello"
     ) -> NewMailItem {
-        NewMailItem(threadID: thread, senderName: name, senderAddress: address, subject: subject)
+        NewMailItem(accountID: "me@x.com", threadID: thread, senderName: name, senderAddress: address, subject: subject)
     }
 
     func testEmptyIsNone() {
@@ -18,7 +18,7 @@ final class NewMailNotificationTests: XCTestCase {
     func testSingleArrivalIsOneBanner() {
         let plan = NewMailNotification.plan(for: [item(name: "Pat Lee", subject: "Lunch?")])
         XCTAssertEqual(plan, .items([
-            NewMailNotification.Pending(threadID: "t1", title: "Pat Lee", body: "Lunch?")
+            NewMailNotification.Pending(accountID: "me@x.com", threadID: "t1", title: "Pat Lee", body: "Lunch?")
         ]))
     }
 
@@ -43,19 +43,19 @@ final class NewMailNotificationTests: XCTestCase {
     func testNameFallsBackToAddressThenStandIn() {
         let noName = NewMailNotification.plan(for: [item(name: nil, address: "raw@x.com")])
         XCTAssertEqual(noName, .items([
-            NewMailNotification.Pending(threadID: "t1", title: "raw@x.com", body: "Hello")
+            NewMailNotification.Pending(accountID: "me@x.com", threadID: "t1", title: "raw@x.com", body: "Hello")
         ]))
 
         let noSender = NewMailNotification.plan(for: [item(name: "  ", address: "")])
         XCTAssertEqual(noSender, .items([
-            NewMailNotification.Pending(threadID: "t1", title: "New message", body: "Hello")
+            NewMailNotification.Pending(accountID: "me@x.com", threadID: "t1", title: "New message", body: "Hello")
         ]))
     }
 
     func testMissingSubjectGetsStandIn() {
         let plan = NewMailNotification.plan(for: [item(name: "Pat", subject: "   ")])
         XCTAssertEqual(plan, .items([
-            NewMailNotification.Pending(threadID: "t1", title: "Pat", body: "(no subject)")
+            NewMailNotification.Pending(accountID: "me@x.com", threadID: "t1", title: "Pat", body: "(no subject)")
         ]))
     }
 }

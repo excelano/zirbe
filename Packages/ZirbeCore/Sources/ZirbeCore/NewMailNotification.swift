@@ -14,6 +14,7 @@ import Foundation
 /// from a stored row by `MailStore.unnotifiedInboxArrivals`, so it carries the
 /// thread id already stamped by the rethread, not the whole `Message`.
 public struct NewMailItem: Sendable, Equatable {
+    public let accountID: String
     /// The conversation to open when the notification is tapped. Nil only for the
     /// rare message that never landed in a thread.
     public let threadID: String?
@@ -23,7 +24,8 @@ public struct NewMailItem: Sendable, Equatable {
     public let senderAddress: String?
     public let subject: String?
 
-    public init(threadID: String?, senderName: String?, senderAddress: String?, subject: String?) {
+    public init(accountID: String, threadID: String?, senderName: String?, senderAddress: String?, subject: String?) {
+        self.accountID = accountID
         self.threadID = threadID
         self.senderName = senderName
         self.senderAddress = senderAddress
@@ -40,11 +42,13 @@ public enum NewMailNotification {
     /// One banner to post: its title (the sender), its body (the subject), and the
     /// conversation a tap should open.
     public struct Pending: Sendable, Equatable {
+        public let accountID: String
         public let threadID: String?
         public let title: String
         public let body: String
 
-        public init(threadID: String?, title: String, body: String) {
+        public init(accountID: String, threadID: String?, title: String, body: String) {
+            self.accountID = accountID
             self.threadID = threadID
             self.title = title
             self.body = body
@@ -67,7 +71,7 @@ public enum NewMailNotification {
         guard !items.isEmpty else { return .none }
         guard items.count <= cap else { return .summary(count: items.count) }
         return .items(items.map { item in
-            Pending(threadID: item.threadID, title: senderLabel(item), body: subjectLine(item))
+            Pending(accountID: item.accountID, threadID: item.threadID, title: senderLabel(item), body: subjectLine(item))
         })
     }
 

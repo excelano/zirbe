@@ -43,31 +43,45 @@ public enum BackgroundRefresh {
     /// twice across polls.
     @discardableResult
     public static func run() async -> BackgroundRefreshResult {
-        do {
-            let store = try MailStore(path: StoreLocation.databasePath())
-            guard let account = try await store.accounts().first,
-                  let password = try KeychainStore.password(for: account.id) else {
-                return .failed
+        guard let store = try? MailStore(path: StoreLocation.databasePath()) else { return .failed }
+        return await run(store: store, credentials: KeychainStore()) { SyncService(account: $0, store: store) }
+    }
+
+    static func run(
+        store: MailStore,
+        credentials: any CredentialStore,
+        makeSync: (Account) -> SyncService
+    ) async -> BackgroundRefreshResult {
+        guard let accounts = try? await store.accounts() else { return .failed }
+        var arrivals: [NewMailItem] = []
+        var anySynced = false
+        for account in accounts {
+            guard let password = try? credentials.password(for: account.id) else { continue }
+            let sync = makeSync(account)
+            let found = try? await poll(account, password: password, sync: sync, store: store)
+            await sync.disconnect()
+            if let found {
+                arrivals += found
+                anySynced = true
             }
-            let sync = SyncService(account: account, store: store)
-            do {
-                try await sync.syncInbox(password: password)
-                // Read what's new since the last surfaced UID, then advance the
-                // mark so the next poll starts above these. The unread count is the
-                // app badge.
-                let arrivals = try await store.unnotifiedInboxArrivals(accountID: account.id)
-                let unreadCount = try await store.unreadCounts(accountID: account.id)["INBOX"] ?? 0
-                try await store.markNotificationWatermark(accountID: account.id)
-                await sync.disconnect()
-                return arrivals.isEmpty ? .upToDate : .newMail(arrivals, unreadCount: unreadCount)
-            } catch {
-                // Close the brief connection even when the sync itself failed, so
-                // nothing lingers open while the app suspends.
-                await sync.disconnect()
-                return .failed
-            }
-        } catch {
-            return .failed
         }
+        guard anySynced else { return .failed }
+        var unreadCount = 0
+        for account in accounts {
+            unreadCount += (try? await store.unreadCounts(accountID: account.id)["INBOX"]) ?? 0
+        }
+        return arrivals.isEmpty ? .upToDate : .newMail(arrivals, unreadCount: unreadCount)
+    }
+
+    private static func poll(
+        _ account: Account,
+        password: String,
+        sync: SyncService,
+        store: MailStore
+    ) async throws -> [NewMailItem] {
+        try await sync.syncInbox(password: password)
+        let arrivals = try await store.unnotifiedInboxArrivals(accountID: account.id)
+        try await store.markNotificationWatermark(accountID: account.id)
+        return arrivals
     }
 }

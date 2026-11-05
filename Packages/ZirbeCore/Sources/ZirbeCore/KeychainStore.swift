@@ -11,9 +11,17 @@
 import Foundation
 import Security
 
+public protocol CredentialStore: Sendable {
+    func save(password: String, for accountID: String) throws
+    func password(for accountID: String) throws -> String?
+    func delete(for accountID: String) throws
+}
+
 /// A thin wrapper over the Keychain for one secret per account. Stateless; all
 /// methods key on the account id (the lowercased email).
-public enum KeychainStore {
+public struct KeychainStore: CredentialStore {
+    public init() {}
+
     /// The Keychain service all Zirbe credentials live under.
     private static let service = "com.excelano.zirbe"
 
@@ -27,7 +35,7 @@ public enum KeychainStore {
     /// `AfterFirstUnlock` so a future background refresh can still read it once
     /// the device has been unlocked since boot, but `ThisDeviceOnly` so it never
     /// leaves this device. Synchronizable is left off (no iCloud Keychain).
-    public static func save(password: String, for accountID: String) throws {
+    public func save(password: String, for accountID: String) throws {
         let data = Data(password.utf8)
         // Replace any existing item: delete then add keeps this idempotent
         // without a read-modify-write race.
@@ -35,7 +43,7 @@ public enum KeychainStore {
 
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: Self.service,
             kSecAttrAccount as String: accountID,
             kSecValueData as String: data,
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
@@ -46,10 +54,10 @@ public enum KeychainStore {
 
     /// The stored password for an account, or nil if none is held. A missing
     /// item is not an error; any other failure is.
-    public static func password(for accountID: String) throws -> String? {
+    public func password(for accountID: String) throws -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: Self.service,
             kSecAttrAccount as String: accountID,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
@@ -68,10 +76,10 @@ public enum KeychainStore {
     }
 
     /// Remove the stored password for an account. A missing item is a no-op.
-    public static func delete(for accountID: String) throws {
+    public func delete(for accountID: String) throws {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
+            kSecAttrService as String: Self.service,
             kSecAttrAccount as String: accountID,
         ]
         let status = SecItemDelete(query as CFDictionary)
