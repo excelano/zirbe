@@ -40,8 +40,8 @@ Contact for review questions: David M. Anderson, david.anderson@excelano.com.
 """
 
 [locales."en-us"]
-website = "https://excelano.com/zirbe"
-support = "https://excelano.com/zirbe"
+website = "https://excelano.com/zirbe/"
+support = "https://excelano.com/support/?app=Zirbe&channel=App%20Store"
 privacy = "https://excelano.com/legal/#zirbe"
 description = """
 Zirbe is an email app that looks and feels like a texting app while keeping real email underneath. A conversation in Zirbe is a mail thread, not a person: the subject is the title, the people on it are the members, and every message is a bubble in time order. The same person writing you about five different things becomes five conversations, which is how email actually works. Starting a new conversation means naming it, and that name is the subject.
