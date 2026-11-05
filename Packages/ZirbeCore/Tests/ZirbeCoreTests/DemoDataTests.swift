@@ -16,7 +16,7 @@ final class DemoDataTests: XCTestCase {
         XCTAssertGreaterThan(summaries.count, 3)
         let meeting = try XCTUnwrap(summaries.first { $0.subject.contains("planning call") })
         XCTAssertEqual(meeting.preview, "Pushed it half an hour so Daniel can make it.")
-        let loaded = try await store.thread(id: meeting.id)
+        let loaded = try await store.thread(id: meeting.id, accountID: DemoData.account.id)
         let thread = try XCTUnwrap(loaded)
         XCTAssertEqual(thread.messages.count, 3)
         XCTAssertEqual(thread.conversationMessages.count, 1, "the update replaces the invite; the answer is a line")

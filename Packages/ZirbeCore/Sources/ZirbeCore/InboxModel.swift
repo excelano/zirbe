@@ -356,7 +356,7 @@ public final class InboxModel {
     /// A conversation as the store holds it, with no network: whatever bodies are
     /// already cached, for showing at once while `conversation(id:)` fetches the rest.
     public func cachedConversation(id: String) async -> Thread? {
-        try? await store.thread(id: id)
+        try? await store.thread(id: id, accountID: account.id)
     }
 
     /// Load a full conversation for display, fetching message bodies on first
@@ -451,13 +451,13 @@ public final class InboxModel {
             // compose or forward sheet, which reads the same property.
             pendingReplies[draft.messageID] = draft
             try? await sync.recordLocal(draft, state: .failed)
-            return try? await store.thread(id: threadID)
+            return try? await store.thread(id: threadID, accountID: account.id)
         }
         try? await sync.recordLocal(draft, state: .sent)
         pendingReplies[draft.messageID] = nil
         errorMessage = nil
         await sync.saveSentCopy(draft, password: password)
-        return try? await store.thread(id: threadID)
+        return try? await store.thread(id: threadID, accountID: account.id)
     }
 
     /// Send a reaction (tapback) to a message in `thread`. The emoji rides out as
@@ -484,11 +484,11 @@ public final class InboxModel {
             try await sync.transmit(draft, password: password)
         } catch {
             errorMessage = "Couldn't send your reaction. Try again."
-            return try? await store.thread(id: thread.id)
+            return try? await store.thread(id: thread.id, accountID: account.id)
         }
         try? await sync.recordLocal(draft, state: .sent)
         await sync.saveSentCopy(draft, password: password)
-        return try? await store.thread(id: thread.id)
+        return try? await store.thread(id: thread.id, accountID: account.id)
     }
 
     /// Start a new conversation. The subject is required (a status panel reads by

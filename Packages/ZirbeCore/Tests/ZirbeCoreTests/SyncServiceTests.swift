@@ -84,7 +84,7 @@ final class SyncServiceTests: XCTestCase {
         let summaries = try await allSummaries()
         XCTAssertEqual(summaries.count, 1, "expected exactly one thread")
         let id = try XCTUnwrap(summaries.first?.id)
-        let thread = try await store.thread(id: id)
+        let thread = try await store.thread(id: id, accountID: account.id)
         return try XCTUnwrap(thread)
     }
 
@@ -141,7 +141,7 @@ final class SyncServiceTests: XCTestCase {
         XCTAssertEqual(summaries.map(\.subject), ["Budget"])
         let validity = try await store.uidValidity(accountID: account.id, mailboxName: "INBOX")
         XCTAssertEqual(validity, 1001)
-        let ref = try await store.messageRef(id: "mid:<b@x>")
+        let ref = try await store.messageRef(id: "mid:<b@x>", accountID: account.id)
         XCTAssertEqual(ref?.uid, 1, "the cached row carries the reissued UID, not the stale one")
     }
 

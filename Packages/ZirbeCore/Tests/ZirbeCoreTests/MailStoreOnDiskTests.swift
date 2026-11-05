@@ -40,7 +40,7 @@ final class MailStoreOnDiskTests: XCTestCase {
             flags: [.seen]
         )
         try await store.save([message], accountID: acct.id, mailboxName: "INBOX")
-        try await store.storeBodies([message.id: (text: "One works.", hasHTML: false, attachments: [])])
+        try await store.storeBodies([message.id: (text: "One works.", hasHTML: false, attachments: [])], accountID: acct.id)
         try await store.rethread(accountID: acct.id)
 
         let summaries = try await store.threadSummaries(accountID: acct.id, mailboxName: "INBOX")

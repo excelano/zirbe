@@ -122,12 +122,12 @@ final class InviteThreadingTests: XCTestCase {
         try await store.rethread(accountID: account.id)
 
         let parsed = invite("M1", summary: "Lunch with Pat")
-        try await store.storeBodies([header.id: FetchedBody(text: "", hasHTML: false, invite: parsed)])
+        try await store.storeBodies([header.id: FetchedBody(text: "", hasHTML: false, invite: parsed)], accountID: account.id)
         try await store.rethread(accountID: account.id)
 
         let summaries = try await store.threadSummaries(accountID: account.id)
         XCTAssertEqual(summaries.first?.preview, "Invitation: Lunch with Pat", "an invite with no text previews as the meeting")
-        let thread = try await store.thread(id: XCTUnwrap(summaries.first?.id))
+        let thread = try await store.thread(id: XCTUnwrap(summaries.first?.id), accountID: account.id)
         XCTAssertEqual(thread?.messages.first?.invite, parsed)
         XCTAssertEqual(thread?.messages.first?.bodyText, "")
         let hits = try await store.searchThreads(accountID: account.id, query: "lunch")
@@ -136,7 +136,7 @@ final class InviteThreadingTests: XCTestCase {
         // A header re-save and rethread (the next sync) must not wipe the invite.
         try await store.save([header], accountID: account.id, mailboxName: "INBOX")
         try await store.rethread(accountID: account.id)
-        let again = try await store.thread(id: XCTUnwrap(summaries.first?.id))
+        let again = try await store.thread(id: XCTUnwrap(summaries.first?.id), accountID: account.id)
         XCTAssertEqual(again?.messages.first?.invite, parsed)
     }
 

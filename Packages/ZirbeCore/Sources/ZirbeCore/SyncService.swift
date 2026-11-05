@@ -151,7 +151,7 @@ public actor SyncService {
                     )
                     for (id, body) in fetched { bodies[id] = FetchedBody(body) }
                 }
-                try await store.storeBodies(bodies)
+                try await store.storeBodies(bodies, accountID: account.id)
                 // An invitation threads by its meeting's UID, which is only known
                 // once its body is read, so a sync that fetched one rethreads to
                 // fold it in with the meeting's earlier messages. Ordinary bodies
@@ -159,7 +159,7 @@ public actor SyncService {
                 if bodies.values.contains(where: { $0.invite != nil }) {
                     try await store.rethread(accountID: account.id)
                 } else {
-                    try await store.refreshThreadSnippets(fromLatestMessages: Array(bodies.keys))
+                    try await store.refreshThreadSnippets(fromLatestMessages: Array(bodies.keys), accountID: account.id)
                 }
             }
         } catch {
@@ -196,7 +196,7 @@ public actor SyncService {
     /// The password is per call for the same reason as `syncInbox`: it lives in
     /// the Keychain (M4) or the in-memory session, never on this service.
     public func loadConversation(id: String, password: String) async throws -> Thread? {
-        let targets = try await store.messagesNeedingBodies(threadID: id)
+        let targets = try await store.messagesNeedingBodies(threadID: id, accountID: account.id)
         var threadID = id
         if !targets.isEmpty {
             try await engine.connect(username: account.username, password: password)
@@ -208,17 +208,17 @@ public actor SyncService {
                 )
                 for (id, body) in fetched { bodies[id] = FetchedBody(body) }
             }
-            try await store.storeBodies(bodies)
+            try await store.storeBodies(bodies, accountID: account.id)
             // A newly read invitation may fold this thread into its meeting's
             // conversation under another id; follow one of its messages there.
             if bodies.values.contains(where: { $0.invite != nil }) {
                 try await store.rethread(accountID: account.id)
-                if let anyMessage = targets.first?.id, let moved = try await store.threadID(ofMessage: anyMessage) {
+                if let anyMessage = targets.first?.id, let moved = try await store.threadID(ofMessage: anyMessage, accountID: account.id) {
                     threadID = moved
                 }
             }
         }
-        return try await store.thread(id: threadID)
+        return try await store.thread(id: threadID, accountID: account.id)
     }
 
     /// Fetch one message's HTML for the Web View, by message id, with its inline
@@ -227,7 +227,7 @@ public actor SyncService {
     /// warm session. Returns nil when the message is unknown, purely local, or
     /// carries no HTML. The password is per call, as elsewhere.
     public func fetchHTMLBody(messageID: String, password: String) async throws -> WebViewBody? {
-        guard let ref = try await store.messageRef(id: messageID) else { return nil }
+        guard let ref = try await store.messageRef(id: messageID, accountID: account.id) else { return nil }
         try await engine.connect(username: account.username, password: password)
         guard let body = try await engine.fetchHTMLBody(in: ref.mailbox, uid: ref.uid) else { return nil }
         return WebViewBody(
@@ -245,7 +245,7 @@ public actor SyncService {
     /// missing part or undecodable bytes throw from the engine. The password is per
     /// call, as elsewhere.
     public func fetchAttachment(messageID: String, partID: String, password: String) async throws -> Data? {
-        guard let ref = try await store.messageRef(id: messageID) else { return nil }
+        guard let ref = try await store.messageRef(id: messageID, accountID: account.id) else { return nil }
         try await engine.connect(username: account.username, password: password)
         return try await engine.fetchAttachment(in: ref.mailbox, uid: ref.uid, partID: partID)
     }
@@ -333,7 +333,7 @@ public actor SyncService {
     /// UID when the server reported one, else nil.
     @discardableResult
     public func saveDraft(_ draft: OutgoingDraft, password: String) async throws -> UInt32? {
-        let priorUID = try await store.messageRef(id: draft.localMessage.id)?.uid
+        let priorUID = try await store.messageRef(id: draft.localMessage.id, accountID: account.id)?.uid
 
         try await engine.connect(username: account.username, password: password)
         let newUID = try await engine.saveToDrafts(draft.outgoingMessage, replacing: priorUID)
@@ -356,7 +356,7 @@ public actor SyncService {
     /// this filter is a guard against a future thread bridging Drafts with another
     /// folder, not a change in behavior.
     public func deleteDraft(threadID: String, password: String) async throws {
-        let draftRefs = try await store.messageRefs(threadIDs: [threadID])
+        let draftRefs = try await store.messageRefs(threadIDs: [threadID], accountID: account.id)
             .filter { $0.mailbox == Self.localDraftsMailbox }
         if !draftRefs.isEmpty {
             try await engine.connect(username: account.username, password: password)
@@ -364,7 +364,7 @@ public actor SyncService {
                 try await engine.removeDraft(uid: ref.uid)
             }
         }
-        try await store.deleteThreads(threadIDs: [threadID])
+        try await store.deleteThreads(threadIDs: [threadID], accountID: account.id)
         try await store.rethread(accountID: account.id)
     }
 
@@ -377,7 +377,7 @@ public actor SyncService {
         try await applyToServer(threadIDs: threadIDs, password: password) { mailbox, uids in
             try await self.engine.setSeen(seen, in: mailbox, uids: uids)
         }
-        try await store.setSeen(seen, threadIDs: threadIDs)
+        try await store.setSeen(seen, threadIDs: threadIDs, accountID: account.id)
         try await store.rethread(accountID: account.id)
     }
 
@@ -386,7 +386,7 @@ public actor SyncService {
         try await applyToServer(threadIDs: threadIDs, password: password) { mailbox, uids in
             try await self.engine.setFlagged(flagged, in: mailbox, uids: uids)
         }
-        try await store.setFlagged(flagged, threadIDs: threadIDs)
+        try await store.setFlagged(flagged, threadIDs: threadIDs, accountID: account.id)
         try await store.rethread(accountID: account.id)
     }
 
@@ -395,7 +395,7 @@ public actor SyncService {
         password: String,
         _ operation: (_ mailbox: String, _ uids: [UInt32]) async throws -> Void
     ) async throws {
-        let refs = try await store.messageRefs(threadIDs: threadIDs)
+        let refs = try await store.messageRefs(threadIDs: threadIDs, accountID: account.id)
         guard !refs.isEmpty else { return }
         try await engine.connect(username: account.username, password: password)
         for (mailbox, group) in Dictionary(grouping: refs, by: \.mailbox) {
@@ -452,7 +452,7 @@ public actor SyncService {
         password: String,
         _ move: (_ mailbox: String, _ uids: [UInt32]) async throws -> Void
     ) async throws {
-        let refs = try await store.messageRefs(threadIDs: threadIDs)
+        let refs = try await store.messageRefs(threadIDs: threadIDs, accountID: account.id)
         var accepted: [String] = []
         var refusal: Error?
         if !refs.isEmpty {
@@ -467,9 +467,9 @@ public actor SyncService {
             }
         }
         if refusal == nil {
-            try await store.deleteThreads(threadIDs: threadIDs)
+            try await store.deleteThreads(threadIDs: threadIDs, accountID: account.id)
         } else {
-            try await store.deleteMessages(ids: accepted)
+            try await store.deleteMessages(ids: accepted, accountID: account.id)
         }
         try await store.rethread(accountID: account.id)
         if let refusal { throw refusal }
@@ -483,7 +483,7 @@ public actor SyncService {
         let refs = try await store.blockedInboxRefs(accountID: account.id)
         guard !refs.isEmpty else { return }
         try await engine.markJunk(in: Self.inboxMailbox, uids: refs.map(\.uid))
-        try await store.deleteMessages(ids: refs.map(\.id))
+        try await store.deleteMessages(ids: refs.map(\.id), accountID: account.id)
     }
 
     /// Begin watching the inbox for server-side changes, yielding once per change

@@ -315,9 +315,24 @@ surface.
 
 Below the line: more than one account, and the auth tracks that widen reach.
 
-- **Multiple accounts and an integrated inbox.** Connect more than one account
-  and read them together. The Keychain and session layer is already keyed per
-  account, so this generalizes cleanly.
+- **Multiple accounts.** Connect more than one account and switch between
+  them, each working as the single account does today. The store keys
+  messages, threads, and the search index by account and id, since mail sent
+  to two of the user's addresses arrives in both with one Message-ID. What
+  remains: `AppSession` holds a model per account, restores every account, and
+  removing one deletes only its rows and Keychain item (the last one still
+  wipes the store); the background poll syncs each account and badges the
+  summed inbox unread count; a notification carries its account so a tap opens
+  the right one; Add Account reuses the onboarding form; each account has a
+  user-set label and colour; the folder switcher gains an account level; and
+  new mail is sent from the account being viewed, changeable in a From picker,
+  while a reply always comes from the thread's account. Settings stay app-wide,
+  and "me" stays per account, so mail between two of the user's own accounts
+  reads as received in each.
+- **Integrated inbox.** After multiple accounts has been in daily use: one
+  INBOX list across accounts, each row marked with its account's label and
+  colour, every action routed to that account's model, and an IDLE watch per
+  account while the list is showing.
 - **Microsoft OAuth.** The tractable half of OAuth: MSAL public client plus PKCE
   feeding SwiftMail's XOAUTH2, no embedded secret and no audit gate. App-password
   sign-in is being deprecated for M365, so eventually Microsoft accounts stop

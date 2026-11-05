@@ -39,7 +39,7 @@ final class MailStoreSnippetTests: XCTestCase {
         var summaries = try await store.threadSummaries(accountID: acct.id)
         XCTAssertNil(summaries.first?.preview, "a synced header carries no body to preview")
 
-        try await store.storeBodies([one.id: (text: "Shall we say one o'clock?", hasHTML: false, attachments: [])])
+        try await store.storeBodies([one.id: (text: "Shall we say one o'clock?", hasHTML: false, attachments: [])], accountID: acct.id)
         try await store.rethread(accountID: acct.id)
         summaries = try await store.threadSummaries(accountID: acct.id)
         XCTAssertEqual(summaries.first?.preview, "Shall we say one o'clock?")
@@ -57,7 +57,7 @@ final class MailStoreSnippetTests: XCTestCase {
         try await store.storeBodies([
             first.id: (text: "Shall we say one o'clock?", hasHTML: false, attachments: []),
             second.id: (text: "One works.", hasHTML: false, attachments: []),
-        ])
+        ], accountID: acct.id)
         try await store.rethread(accountID: acct.id)
 
         let summaries = try await store.threadSummaries(accountID: acct.id)
@@ -77,7 +77,7 @@ final class MailStoreSnippetTests: XCTestCase {
         try await store.storeBodies([
             real.id: (text: "Shall we say one o'clock?", hasHTML: false, attachments: []),
             tapback.id: (text: "Reacted 👍 to \"Shall we say one o'clock?\"", hasHTML: false, attachments: []),
-        ])
+        ], accountID: acct.id)
         try await store.rethread(accountID: acct.id)
 
         let summaries = try await store.threadSummaries(accountID: acct.id)
@@ -94,7 +94,7 @@ final class MailStoreSnippetTests: XCTestCase {
 
         let one = msg(id: "<a@x>", from: "p@x.com", minutes: 1)
         try await store.save([one], accountID: acct.id, mailboxName: "INBOX")
-        try await store.storeBodies([one.id: (text: "Shall we say one o'clock?", hasHTML: false, attachments: [])])
+        try await store.storeBodies([one.id: (text: "Shall we say one o'clock?", hasHTML: false, attachments: [])], accountID: acct.id)
         try await store.rethread(accountID: acct.id)
         var summaries = try await store.threadSummaries(accountID: acct.id)
         XCTAssertEqual(summaries.first?.preview, "Shall we say one o'clock?")
@@ -118,7 +118,7 @@ final class MailStoreSnippetTests: XCTestCase {
         var one = msg(id: "<a@x>", from: "p@x.com", minutes: 1)
         one.flags = []
         try await store.save([one], accountID: acct.id, mailboxName: "INBOX")
-        try await store.storeBodies([one.id: (text: "Shall we say one o'clock?", hasHTML: false, attachments: [])])
+        try await store.storeBodies([one.id: (text: "Shall we say one o'clock?", hasHTML: false, attachments: [])], accountID: acct.id)
         try await store.rethread(accountID: acct.id)
 
         var summaries = try await store.threadSummaries(accountID: acct.id)
@@ -156,8 +156,8 @@ final class MailStoreSnippetTests: XCTestCase {
         let needing = try await store.latestMessagesNeedingBodies(accountID: acct.id)
         XCTAssertEqual(needing.map(\.id), [latest.id], "the backfill targets the newest message")
 
-        try await store.storeBodies([latest.id: (text: "One works.", hasHTML: false, attachments: [])])
-        try await store.refreshThreadSnippets(fromLatestMessages: [latest.id])
+        try await store.storeBodies([latest.id: (text: "One works.", hasHTML: false, attachments: [])], accountID: acct.id)
+        try await store.refreshThreadSnippets(fromLatestMessages: [latest.id], accountID: acct.id)
 
         summaries = try await store.threadSummaries(accountID: acct.id)
         XCTAssertEqual(summaries.first?.preview, "One works.")
@@ -175,9 +175,9 @@ final class MailStoreSnippetTests: XCTestCase {
         try await store.storeBodies([
             mine.id: (text: "One works.", hasHTML: false, attachments: []),
             other.id: (text: "Different conversation.", hasHTML: false, attachments: []),
-        ])
+        ], accountID: acct.id)
         try await store.rethread(accountID: acct.id)
-        try await store.refreshThreadSnippets(fromLatestMessages: [mine.id])
+        try await store.refreshThreadSnippets(fromLatestMessages: [mine.id], accountID: acct.id)
 
         let summaries = try await store.threadSummaries(accountID: acct.id)
         XCTAssertEqual(summaries.count, 2)
@@ -201,7 +201,7 @@ final class MailStoreSnippetTests: XCTestCase {
             text: "One works.\n\nOn Monday, p@x.com wrote:\n> Shall we say one o'clock?\n",
             hasHTML: false,
             attachments: []
-        )])
+        )], accountID: acct.id)
         try await store.rethread(accountID: acct.id)
 
         let summaries = try await store.threadSummaries(accountID: acct.id)

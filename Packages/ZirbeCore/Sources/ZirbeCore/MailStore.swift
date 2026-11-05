@@ -106,7 +106,11 @@ struct MessageRow: Codable, FetchableRecord, PersistableRecord {
     static func headerColumns(in db: Database) throws -> [String] {
         try db.columns(in: databaseTableName)
             .map(\.name)
-            .filter { $0 != "id" && !bodyColumns.contains($0) }
+            .filter { $0 != "id" && $0 != "accountID" && !bodyColumns.contains($0) }
+    }
+
+    static func key(id: String, accountID: String) -> [String: (any DatabaseValueConvertible)?] {
+        ["accountID": accountID, "id": id]
     }
 
     var message: Message {
@@ -323,19 +327,23 @@ enum SearchIndex {
     /// Index a message, replacing whatever was held for it.
     static func index(
         messageID: String,
+        accountID: String,
         subject: String?,
         sender: String,
         participants: String,
         body: String?,
         in db: Database
     ) throws {
-        try db.execute(sql: "DELETE FROM \(tableName) WHERE messageID = ?", arguments: [messageID])
+        try db.execute(
+            sql: "DELETE FROM \(tableName) WHERE accountID = ? AND messageID = ?",
+            arguments: [accountID, messageID]
+        )
         try db.execute(
             sql: """
-                INSERT INTO \(tableName) (messageID, subject, sender, participants, body)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO \(tableName) (accountID, messageID, subject, sender, participants, body)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-            arguments: [messageID, subject, sender, participants, body]
+            arguments: [accountID, messageID, subject, sender, participants, body]
         )
     }
 
@@ -343,6 +351,7 @@ enum SearchIndex {
     static func index(_ row: MessageRow, in db: Database) throws {
         try index(
             messageID: row.id,
+            accountID: row.accountID,
             subject: row.subject,
             sender: senderText(name: row.fromName, address: row.fromAddress),
             participants: participantText(to: row.toParticipants, cc: row.ccParticipants),
@@ -358,12 +367,13 @@ enum SearchIndex {
         try db.execute(
             sql: """
                 UPDATE \(tableName) SET subject = ?, sender = ?, participants = ?
-                WHERE messageID = ?
+                WHERE accountID = ? AND messageID = ?
                 """,
             arguments: [
                 row.subject,
                 senderText(name: row.fromName, address: row.fromAddress),
                 participantText(to: row.toParticipants, cc: row.ccParticipants),
+                row.accountID,
                 row.id,
             ]
         )
@@ -371,10 +381,10 @@ enum SearchIndex {
     }
 
     /// Update the body text of an already-indexed message.
-    static func indexBody(_ body: String, messageID: String, in db: Database) throws {
+    static func indexBody(_ body: String, messageID: String, accountID: String, in db: Database) throws {
         try db.execute(
-            sql: "UPDATE \(tableName) SET body = ? WHERE messageID = ?",
-            arguments: [body, messageID]
+            sql: "UPDATE \(tableName) SET body = ? WHERE accountID = ? AND messageID = ?",
+            arguments: [body, accountID, messageID]
         )
     }
 
@@ -486,7 +496,7 @@ public final class MailStore: @unchecked Sendable {
                 // rather than read out and written straight back. That read was a
                 // whole row per message per sync, decoding the KB-scale bodyText of
                 // every conversation already opened only to hand it back unchanged.
-                if row.bodyText == nil, try MessageRow.exists(db, key: row.id) {
+                if row.bodyText == nil, try MessageRow.exists(db, key: MessageRow.key(id: row.id, accountID: accountID)) {
                     try row.update(db, columns: headerColumns)
                     try SearchIndex.indexHeaders(row, in: db)
                 } else {
@@ -520,7 +530,9 @@ public final class MailStore: @unchecked Sendable {
                 keepingUIDs.contains(row["uid"] as Int64) ? nil : row["id"]
             }
             guard !staleIDs.isEmpty else { return 0 }
-            try MessageRow.filter(staleIDs.contains(Column("id"))).deleteAll(db)
+            try MessageRow
+                .filter(Column("accountID") == accountID && staleIDs.contains(Column("id")))
+                .deleteAll(db)
             return staleIDs.count
         }
     }
@@ -541,13 +553,13 @@ public final class MailStore: @unchecked Sendable {
     /// local id so the sync can drop exactly the rows the server acted on. A
     /// locally-composed copy with no UID is omitted; it has nothing to act on
     /// server-side.
-    public func messageRefs(threadIDs: [String]) async throws -> [(id: String, uid: UInt32, mailbox: String)] {
+    public func messageRefs(threadIDs: [String], accountID: String) async throws -> [(id: String, uid: UInt32, mailbox: String)] {
         guard !threadIDs.isEmpty else { return [] }
         return try await database.read { db in
             try Row.fetchAll(db, sql: """
                 SELECT id, uid, mailboxName FROM message
-                WHERE threadID IN (\(databaseQuestionMarks(count: threadIDs.count))) AND uid IS NOT NULL
-                """, arguments: StatementArguments(threadIDs))
+                WHERE accountID = ? AND threadID IN (\(databaseQuestionMarks(count: threadIDs.count))) AND uid IS NOT NULL
+                """, arguments: StatementArguments([accountID] + threadIDs))
                 .map { (id: $0["id"], uid: UInt32(truncatingIfNeeded: $0["uid"] as Int64), mailbox: $0["mailboxName"]) }
         }
     }
@@ -555,20 +567,22 @@ public final class MailStore: @unchecked Sendable {
     /// Set or clear the `\Seen` flag on every message in the given threads,
     /// locally. The caller rethreads after, so each thread's unread state (derived
     /// from its messages) updates. The server is told separately by the sync.
-    public func setSeen(_ seen: Bool, threadIDs: [String]) async throws {
-        try await setFlag(.seen, seen, threadIDs: threadIDs)
+    public func setSeen(_ seen: Bool, threadIDs: [String], accountID: String) async throws {
+        try await setFlag(.seen, seen, threadIDs: threadIDs, accountID: accountID)
     }
 
     /// Set or clear the `\Flagged` flag on every message in the given threads,
     /// locally, mirroring `setSeen`.
-    public func setFlagged(_ flagged: Bool, threadIDs: [String]) async throws {
-        try await setFlag(.flagged, flagged, threadIDs: threadIDs)
+    public func setFlagged(_ flagged: Bool, threadIDs: [String], accountID: String) async throws {
+        try await setFlag(.flagged, flagged, threadIDs: threadIDs, accountID: accountID)
     }
 
-    private func setFlag(_ flag: Flag, _ on: Bool, threadIDs: [String]) async throws {
+    private func setFlag(_ flag: Flag, _ on: Bool, threadIDs: [String], accountID: String) async throws {
         guard !threadIDs.isEmpty else { return }
         try await database.write { db in
-            let rows = try MessageRow.filter(threadIDs.contains(Column("threadID"))).fetchAll(db)
+            let rows = try MessageRow
+                .filter(Column("accountID") == accountID && threadIDs.contains(Column("threadID")))
+                .fetchAll(db)
             for var row in rows {
                 var flags = Set(row.flags)
                 if on { flags.insert(flag) } else { flags.remove(flag) }
@@ -602,20 +616,24 @@ public final class MailStore: @unchecked Sendable {
     /// conversations are trashed or moved: after the server move, the local copies
     /// go too. The caller rethreads after, which drops the now-empty threads from
     /// the list.
-    public func deleteThreads(threadIDs: [String]) async throws {
+    public func deleteThreads(threadIDs: [String], accountID: String) async throws {
         guard !threadIDs.isEmpty else { return }
         try await database.write { db in
-            _ = try MessageRow.filter(threadIDs.contains(Column("threadID"))).deleteAll(db)
+            _ = try MessageRow
+                .filter(Column("accountID") == accountID && threadIDs.contains(Column("threadID")))
+                .deleteAll(db)
         }
     }
 
     /// Delete specific messages by id, locally. Used after the sync moves a
     /// blocked sender's INBOX mail to Junk on the server: the local copies go
     /// too, so blocked mail leaves the inbox. The caller rethreads after.
-    public func deleteMessages(ids: [String]) async throws {
+    public func deleteMessages(ids: [String], accountID: String) async throws {
         guard !ids.isEmpty else { return }
         try await database.write { db in
-            _ = try MessageRow.filter(ids.contains(Column("id"))).deleteAll(db)
+            _ = try MessageRow
+                .filter(Column("accountID") == accountID && ids.contains(Column("id")))
+                .deleteAll(db)
         }
     }
 
@@ -733,14 +751,17 @@ public final class MailStore: @unchecked Sendable {
     /// path when a conversation is opened, so the bodies are cached and the next
     /// open is offline. Attachments are stored as JSON in the same row, matching
     /// how `MessageRow` reads them back.
-    public func storeBodies(_ bodiesByMessageID: [String: (text: String, hasHTML: Bool, attachments: [MessageAttachment])]) async throws {
-        try await storeBodies(bodiesByMessageID.mapValues { FetchedBody(text: $0.text, hasHTML: $0.hasHTML, attachments: $0.attachments) })
+    public func storeBodies(_ bodiesByMessageID: [String: (text: String, hasHTML: Bool, attachments: [MessageAttachment])], accountID: String) async throws {
+        try await storeBodies(
+            bodiesByMessageID.mapValues { FetchedBody(text: $0.text, hasHTML: $0.hasHTML, attachments: $0.attachments) },
+            accountID: accountID
+        )
     }
 
     /// Persist fetched bodies, keyed by message id. The invitation, when the
     /// message carries one, is stored beside the text as JSON; an invite with no
     /// text takes its preview and its search text from the invitation.
-    public func storeBodies(_ bodiesByMessageID: [String: FetchedBody]) async throws {
+    public func storeBodies(_ bodiesByMessageID: [String: FetchedBody], accountID: String) async throws {
         guard !bodiesByMessageID.isEmpty else { return }
         let encoder = JSONEncoder()
         try await database.write { db in
@@ -748,11 +769,11 @@ public final class MailStore: @unchecked Sendable {
                 let attachmentsJSON = String(decoding: try encoder.encode(body.attachments), as: UTF8.self)
                 let inviteJSON = try body.invite.map { String(decoding: try encoder.encode($0), as: UTF8.self) }
                 try db.execute(
-                    sql: "UPDATE message SET bodyText = ?, hasHTML = ?, attachments = ?, snippet = ?, invite = ? WHERE id = ?",
-                    arguments: [body.text, body.hasHTML, attachmentsJSON, MessageRow.preview(text: body.text, invite: body.invite), inviteJSON, id]
+                    sql: "UPDATE message SET bodyText = ?, hasHTML = ?, attachments = ?, snippet = ?, invite = ? WHERE accountID = ? AND id = ?",
+                    arguments: [body.text, body.hasHTML, attachmentsJSON, MessageRow.preview(text: body.text, invite: body.invite), inviteJSON, accountID, id]
                 )
                 let searchable = body.text.isEmpty ? (body.invite?.searchText ?? "") : body.text
-                try SearchIndex.indexBody(searchable, messageID: id, in: db)
+                try SearchIndex.indexBody(searchable, messageID: id, accountID: accountID, in: db)
             }
         }
     }
@@ -760,9 +781,13 @@ public final class MailStore: @unchecked Sendable {
     /// The thread a message currently belongs to, or nil if unknown. Used after
     /// a rethread merged invitations by UID, so a conversation opened under one
     /// id can be found under the id it moved to.
-    public func threadID(ofMessage id: String) async throws -> String? {
+    public func threadID(ofMessage id: String, accountID: String) async throws -> String? {
         try await database.read { db in
-            try String.fetchOne(db, sql: "SELECT threadID FROM message WHERE id = ?", arguments: [id])
+            try String.fetchOne(
+                db,
+                sql: "SELECT threadID FROM message WHERE accountID = ? AND id = ?",
+                arguments: [accountID, id]
+            )
         }
     }
 
@@ -775,17 +800,18 @@ public final class MailStore: @unchecked Sendable {
     /// sync used to run: a rebuild of every thread in the account to move one
     /// column on a handful of rows. Nothing else the backfill writes reaches a
     /// thread row, so nothing else needs recomputing.
-    public func refreshThreadSnippets(fromLatestMessages ids: [String]) async throws {
+    public func refreshThreadSnippets(fromLatestMessages ids: [String], accountID: String) async throws {
         guard !ids.isEmpty else { return }
         try await database.write { db in
             for id in ids {
                 try db.execute(
                     sql: """
                         UPDATE thread
-                        SET snippet = (SELECT snippet FROM message WHERE id = :id)
-                        WHERE id = (SELECT threadID FROM message WHERE id = :id)
+                        SET snippet = (SELECT snippet FROM message WHERE accountID = :acct AND id = :id)
+                        WHERE accountID = :acct
+                          AND id = (SELECT threadID FROM message WHERE accountID = :acct AND id = :id)
                         """,
-                    arguments: ["id": id]
+                    arguments: ["id": id, "acct": accountID]
                 )
             }
         }
@@ -794,9 +820,10 @@ public final class MailStore: @unchecked Sendable {
     /// The server reference (UID and mailbox) of one message, for the lazy Web
     /// View fetch. Nil when the message is unknown or has no UID (a purely local
     /// copy, which has no server-side HTML to open).
-    public func messageRef(id: String) async throws -> (uid: UInt32, mailbox: String)? {
+    public func messageRef(id: String, accountID: String) async throws -> (uid: UInt32, mailbox: String)? {
         try await database.read { db in
-            guard let row = try MessageRow.fetchOne(db, key: id), let uid = row.uid else { return nil }
+            guard let row = try MessageRow.fetchOne(db, key: MessageRow.key(id: id, accountID: accountID)),
+                  let uid = row.uid else { return nil }
             return (uid: UInt32(truncatingIfNeeded: uid), mailbox: row.mailboxName)
         }
     }
@@ -838,8 +865,8 @@ public final class MailStore: @unchecked Sendable {
             for row in rows where row.threadID != threadByMessage[row.id] {
                 let newID = threadByMessage[row.id]
                 try db.execute(
-                    sql: "UPDATE message SET threadID = ? WHERE id = ?",
-                    arguments: [newID, row.id]
+                    sql: "UPDATE message SET threadID = ? WHERE accountID = ? AND id = ?",
+                    arguments: [newID, accountID, row.id]
                 )
                 if let old = row.threadID, let newID { oldToNew[old] = newID }
             }
@@ -1007,9 +1034,9 @@ public final class MailStore: @unchecked Sendable {
             let threadIDs = try String.fetchSet(db, sql: """
                 SELECT DISTINCT m.threadID
                 FROM \(SearchIndex.tableName) s
-                JOIN message m ON m.id = s.messageID
+                JOIN message m ON m.accountID = s.accountID AND m.id = s.messageID
                 WHERE \(SearchIndex.tableName) MATCH :match
-                  AND m.accountID = :acct
+                  AND s.accountID = :acct
                   AND m.threadID IS NOT NULL
                 """, arguments: ["match": match, "acct": accountID])
             guard !threadIDs.isEmpty else { return [] }
@@ -1026,10 +1053,11 @@ public final class MailStore: @unchecked Sendable {
     /// body and a known server UID. Returns the row id (to cache the fetched
     /// text under), the UID to fetch, and the mailbox to select. An empty result
     /// means the conversation is fully cached and can be shown offline.
-    public func messagesNeedingBodies(threadID: String) async throws -> [(id: String, uid: UInt32, mailbox: String)] {
+    public func messagesNeedingBodies(threadID: String, accountID: String) async throws -> [(id: String, uid: UInt32, mailbox: String)] {
         try await database.read { db in
             try MessageRow
-                .filter(Column("threadID") == threadID && Column("bodyText") == nil && Column("uid") != nil)
+                .filter(Column("accountID") == accountID && Column("threadID") == threadID
+                    && Column("bodyText") == nil && Column("uid") != nil)
                 .fetchAll(db)
                 .compactMap { row in
                     row.uid.map { (id: row.id, uid: UInt32(truncatingIfNeeded: $0), mailbox: row.mailboxName) }
@@ -1066,11 +1094,11 @@ public final class MailStore: @unchecked Sendable {
     }
 
     /// A full conversation: the thread and its messages, oldest first.
-    public func thread(id: String) async throws -> Thread? {
+    public func thread(id: String, accountID: String) async throws -> Thread? {
         try await database.read { db in
-            guard let row = try ThreadRow.fetchOne(db, key: id) else { return nil }
+            guard let row = try ThreadRow.fetchOne(db, key: ["accountID": accountID, "id": id]) else { return nil }
             let messages = try MessageRow
-                .filter(Column("threadID") == id)
+                .filter(Column("accountID") == accountID && Column("threadID") == id)
                 .fetchAll(db)
                 .map(\.message)
                 .chronological()
@@ -1340,13 +1368,18 @@ public final class MailStore: @unchecked Sendable {
                     guard let json: String = row[column], let data = json.data(using: .utf8) else { return [] }
                     return (try? decoder.decode([Participant].self, from: data)) ?? []
                 }
-                try SearchIndex.index(
-                    messageID: row["id"],
-                    subject: row["subject"],
-                    sender: SearchIndex.senderText(name: row["fromName"], address: row["fromAddress"]),
-                    participants: SearchIndex.participantText(to: people("toParticipants"), cc: people("ccParticipants")),
-                    body: row["bodyText"],
-                    in: db
+                try db.execute(
+                    sql: """
+                        INSERT INTO \(SearchIndex.tableName) (messageID, subject, sender, participants, body)
+                        VALUES (?, ?, ?, ?, ?)
+                        """,
+                    arguments: [
+                        row["id"] as String,
+                        row["subject"] as String?,
+                        SearchIndex.senderText(name: row["fromName"], address: row["fromAddress"]),
+                        SearchIndex.participantText(to: people("toParticipants"), cc: people("ccParticipants")),
+                        row["bodyText"] as String?,
+                    ]
                 )
             }
         }
@@ -1355,6 +1388,82 @@ public final class MailStore: @unchecked Sendable {
             try db.alter(table: "message") { t in
                 t.add(column: "invite", .text)
             }
+        }
+        migrator.registerMigration("v20-account-scoped-keys") { db in
+            try db.execute(sql: """
+                DROP TRIGGER message_search_delete;
+
+                CREATE VIRTUAL TABLE messageSearch_v20 USING fts5(
+                    accountID UNINDEXED,
+                    messageID UNINDEXED,
+                    subject,
+                    sender,
+                    participants,
+                    body,
+                    tokenize = 'unicode61 remove_diacritics 2'
+                );
+                INSERT INTO messageSearch_v20 (accountID, messageID, subject, sender, participants, body)
+                    SELECT m.accountID, s.messageID, s.subject, s.sender, s.participants, s.body
+                    FROM messageSearch s JOIN message m ON m.id = s.messageID;
+                DROP TABLE messageSearch;
+                ALTER TABLE messageSearch_v20 RENAME TO messageSearch;
+
+                CREATE TABLE message_v20 (
+                    id TEXT NOT NULL,
+                    accountID TEXT NOT NULL,
+                    mailboxName TEXT NOT NULL,
+                    uid INTEGER,
+                    messageID TEXT,
+                    inReplyTo TEXT,
+                    referenceIDs TEXT NOT NULL,
+                    subject TEXT,
+                    fromAddress TEXT,
+                    fromName TEXT,
+                    toParticipants TEXT NOT NULL,
+                    date DATETIME,
+                    flags TEXT NOT NULL,
+                    bodyText TEXT,
+                    threadID TEXT,
+                    ccParticipants TEXT NOT NULL DEFAULT '[]',
+                    hasHTML BOOLEAN NOT NULL DEFAULT 0,
+                    attachments TEXT NOT NULL DEFAULT '[]',
+                    sendState TEXT NOT NULL DEFAULT 'sent',
+                    reaction TEXT,
+                    snippet TEXT,
+                    invite TEXT,
+                    PRIMARY KEY (accountID, id)
+                );
+                INSERT INTO message_v20 SELECT
+                    id, accountID, mailboxName, uid, messageID, inReplyTo, referenceIDs, subject,
+                    fromAddress, fromName, toParticipants, date, flags, bodyText, threadID,
+                    ccParticipants, hasHTML, attachments, sendState, reaction, snippet, invite
+                    FROM message;
+                DROP TABLE message;
+                ALTER TABLE message_v20 RENAME TO message;
+                CREATE INDEX message_on_account_thread ON message (accountID, threadID);
+                CREATE INDEX message_on_account_mailbox_uid ON message (accountID, mailboxName, uid);
+                CREATE TRIGGER message_search_delete AFTER DELETE ON message BEGIN
+                    DELETE FROM messageSearch WHERE accountID = old.accountID AND messageID = old.id;
+                END;
+
+                CREATE TABLE thread_v20 (
+                    id TEXT NOT NULL,
+                    accountID TEXT NOT NULL,
+                    subject TEXT NOT NULL,
+                    lastActivity DATETIME,
+                    isUnread BOOLEAN NOT NULL,
+                    messageCount INTEGER NOT NULL,
+                    participants TEXT NOT NULL,
+                    snippet TEXT,
+                    isFlagged BOOLEAN NOT NULL DEFAULT 0,
+                    PRIMARY KEY (accountID, id)
+                );
+                INSERT INTO thread_v20 SELECT
+                    id, accountID, subject, lastActivity, isUnread, messageCount, participants, snippet, isFlagged
+                    FROM thread;
+                DROP TABLE thread;
+                ALTER TABLE thread_v20 RENAME TO thread;
+                """)
         }
         return migrator
     }()

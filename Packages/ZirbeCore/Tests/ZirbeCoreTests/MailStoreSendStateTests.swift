@@ -31,7 +31,7 @@ final class MailStoreSendStateTests: XCTestCase {
     private func storedMessage(in store: MailStore, accountID: String) async throws -> Message? {
         let summaries = try await store.threadSummaries(accountID: accountID)
         guard let id = summaries.first?.id else { return nil }
-        return try await store.thread(id: id)?.messages.first
+        return try await store.thread(id: id, accountID: accountID)?.messages.first
     }
 
     func testFailedStateSurvivesARoundTrip() async throws {

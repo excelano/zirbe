@@ -173,7 +173,7 @@ final class SearchIndexTests: XCTestCase {
         let before = try await store.searchThreads(accountID: acct.id, query: "tacos")
         XCTAssertTrue(before.isEmpty)
 
-        try await store.storeBodies([one.id: (text: "Want to grab tacos?", hasHTML: false, attachments: [])])
+        try await store.storeBodies([one.id: (text: "Want to grab tacos?", hasHTML: false, attachments: [])], accountID: acct.id)
         let hits = try await store.searchThreads(accountID: acct.id, query: "tacos")
         XCTAssertEqual(hits.map(\.subject), ["Lunch"])
     }
@@ -186,7 +186,7 @@ final class SearchIndexTests: XCTestCase {
         try await store.upsert(acct)
         var one = msg(id: "<a@x>", subject: "Lunch", from: "p@x.com", minutes: 1)
         try await store.save([one], accountID: acct.id, mailboxName: "INBOX")
-        try await store.storeBodies([one.id: (text: "Want to grab tacos?", hasHTML: false, attachments: [])])
+        try await store.storeBodies([one.id: (text: "Want to grab tacos?", hasHTML: false, attachments: [])], accountID: acct.id)
         try await store.rethread(accountID: acct.id)
 
         one.subject = "Dinner"
@@ -213,7 +213,7 @@ final class SearchIndexTests: XCTestCase {
 
         let summaries = try await store.threadSummaries(accountID: acct.id)
         let threadID = try XCTUnwrap(summaries.first?.id)
-        try await store.deleteThreads(threadIDs: [threadID])
+        try await store.deleteThreads(threadIDs: [threadID], accountID: acct.id)
 
         XCTAssertEqual(try indexedRows(at: dbPath), 0, "the index doesn't keep trashed mail")
         let gone = try await store.searchThreads(accountID: acct.id, query: "tacos")

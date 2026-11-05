@@ -160,7 +160,7 @@ final class ReactionTests: XCTestCase {
         try await store.rethread(accountID: acct.id)
 
         // The reaction round-trips its emoji and threads onto the base as a badge.
-        let loaded = try await store.thread(id: "mid:<a@x>")
+        let loaded = try await store.thread(id: "mid:<a@x>", accountID: acct.id)
         XCTAssertEqual(loaded?.reactions(forMessageID: "<a@x>").first?.emoji, "👍")
         XCTAssertEqual(loaded?.conversationMessages.count, 1)
 

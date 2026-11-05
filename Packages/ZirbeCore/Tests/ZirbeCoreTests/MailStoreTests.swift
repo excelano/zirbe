@@ -91,7 +91,7 @@ final class MailStoreTests: XCTestCase {
         XCTAssertEqual(refs.map(\.id), [blocked.id])
 
         // Dropping those locally clears the refs; the Archive copy still stands.
-        try await store.deleteMessages(ids: refs.map(\.id))
+        try await store.deleteMessages(ids: refs.map(\.id), accountID: acct.id)
         refs = try await store.blockedInboxRefs(accountID: acct.id)
         XCTAssertTrue(refs.isEmpty)
 
@@ -122,7 +122,7 @@ final class MailStoreTests: XCTestCase {
         XCTAssertEqual(lunch.messageCount, 2)
         XCTAssertEqual(Set(lunch.participants.map(\.address)), ["p@x.com", "q@x.com"])
 
-        let convo = try await store.thread(id: lunch.id)
+        let convo = try await store.thread(id: lunch.id, accountID: acct.id)
         XCTAssertEqual(convo?.messages.map(\.messageID), ["<a@x>", "<b@x>"])
     }
 
@@ -253,7 +253,7 @@ final class MailStoreTests: XCTestCase {
         let threadID = try XCTUnwrap(summaries.first?.id)
 
         // It reports needing a body, with the UID and mailbox to fetch from.
-        let needs = try await store.messagesNeedingBodies(threadID: threadID)
+        let needs = try await store.messagesNeedingBodies(threadID: threadID, accountID: acct.id)
         XCTAssertEqual(needs.map(\.uid), [42])
         XCTAssertEqual(needs.first?.mailbox, "INBOX")
 
@@ -261,10 +261,10 @@ final class MailStoreTests: XCTestCase {
         // shows it, with the HTML-original flag and the attachments recorded
         // alongside the text.
         let attachment = MessageAttachment(filename: "report.pdf", mimeType: "application/pdf", partID: "2")
-        try await store.storeBodies([header.id: (text: "Hello there", hasHTML: true, attachments: [attachment])])
-        let afterCache = try await store.messagesNeedingBodies(threadID: threadID)
+        try await store.storeBodies([header.id: (text: "Hello there", hasHTML: true, attachments: [attachment])], accountID: acct.id)
+        let afterCache = try await store.messagesNeedingBodies(threadID: threadID, accountID: acct.id)
         XCTAssertTrue(afterCache.isEmpty)
-        var convo = try await store.thread(id: threadID)
+        var convo = try await store.thread(id: threadID, accountID: acct.id)
         XCTAssertEqual(convo?.messages.first?.bodyText, "Hello there")
         XCTAssertEqual(convo?.messages.first?.hasHTML, true)
         XCTAssertEqual(convo?.messages.first?.attachments, [attachment])
@@ -273,7 +273,7 @@ final class MailStoreTests: XCTestCase {
         // and its attachments must all survive it, not reset to nil/false/empty.
         try await store.save([header], accountID: acct.id, mailboxName: "INBOX")
         try await store.rethread(accountID: acct.id)
-        convo = try await store.thread(id: threadID)
+        convo = try await store.thread(id: threadID, accountID: acct.id)
         XCTAssertEqual(convo?.messages.first?.bodyText, "Hello there")
         XCTAssertEqual(convo?.messages.first?.hasHTML, true)
         XCTAssertEqual(convo?.messages.first?.attachments, [attachment])
@@ -290,14 +290,14 @@ final class MailStoreTests: XCTestCase {
         try await store.save([server], accountID: acct.id, mailboxName: "INBOX")
         try await store.save([local], accountID: acct.id, mailboxName: "Sent")
 
-        let ref = try await store.messageRef(id: server.id)
+        let ref = try await store.messageRef(id: server.id, accountID: acct.id)
         XCTAssertEqual(ref?.uid, 88)
         XCTAssertEqual(ref?.mailbox, "INBOX")
 
-        let localRef = try await store.messageRef(id: local.id)
+        let localRef = try await store.messageRef(id: local.id, accountID: acct.id)
         XCTAssertNil(localRef)
 
-        let unknownRef = try await store.messageRef(id: "mid:<nope@x>")
+        let unknownRef = try await store.messageRef(id: "mid:<nope@x>", accountID: acct.id)
         XCTAssertNil(unknownRef)
     }
 
@@ -397,12 +397,12 @@ final class MailStoreTests: XCTestCase {
         let initial = try await store.threadSummaries(accountID: acct.id)
         let threadID = try XCTUnwrap(initial.first?.id)
 
-        try await store.setSeen(true, threadIDs: [threadID])
+        try await store.setSeen(true, threadIDs: [threadID], accountID: acct.id)
         try await store.rethread(accountID: acct.id)
         var summaries = try await store.threadSummaries(accountID: acct.id)
         XCTAssertEqual(summaries.first?.isUnread, false)
 
-        try await store.setSeen(false, threadIDs: [threadID])
+        try await store.setSeen(false, threadIDs: [threadID], accountID: acct.id)
         try await store.rethread(accountID: acct.id)
         summaries = try await store.threadSummaries(accountID: acct.id)
         XCTAssertEqual(summaries.first?.isUnread, true)
@@ -420,12 +420,12 @@ final class MailStoreTests: XCTestCase {
         let threadID = try XCTUnwrap(initial.first?.id)
         XCTAssertEqual(initial.first?.isFlagged, false)
 
-        try await store.setFlagged(true, threadIDs: [threadID])
+        try await store.setFlagged(true, threadIDs: [threadID], accountID: acct.id)
         try await store.rethread(accountID: acct.id)
         var summaries = try await store.threadSummaries(accountID: acct.id)
         XCTAssertEqual(summaries.first?.isFlagged, true)
 
-        try await store.setFlagged(false, threadIDs: [threadID])
+        try await store.setFlagged(false, threadIDs: [threadID], accountID: acct.id)
         try await store.rethread(accountID: acct.id)
         summaries = try await store.threadSummaries(accountID: acct.id)
         XCTAssertEqual(summaries.first?.isFlagged, false)
@@ -444,13 +444,13 @@ final class MailStoreTests: XCTestCase {
         let initial = try await store.threadSummaries(accountID: acct.id)
         let threadID = try XCTUnwrap(initial.first?.id)
 
-        try await store.setFlagged(true, threadIDs: [threadID])
+        try await store.setFlagged(true, threadIDs: [threadID], accountID: acct.id)
         try await store.rethread(accountID: acct.id)
         let flagged = try await store.threadSummaries(accountID: acct.id)
         XCTAssertEqual(flagged.first?.isFlagged, true)
         XCTAssertEqual(flagged.first?.isUnread, false)
 
-        try await store.setSeen(false, threadIDs: [threadID])
+        try await store.setSeen(false, threadIDs: [threadID], accountID: acct.id)
         try await store.rethread(accountID: acct.id)
         let unread = try await store.threadSummaries(accountID: acct.id)
         XCTAssertEqual(unread.first?.isUnread, true)
@@ -469,8 +469,8 @@ final class MailStoreTests: XCTestCase {
         let summaries = try await store.threadSummaries(accountID: acct.id)
         let threadID = try XCTUnwrap(summaries.first?.id)
 
-        try await store.setFlagged(true, threadIDs: [threadID])
-        let loaded = try await store.thread(id: threadID)
+        try await store.setFlagged(true, threadIDs: [threadID], accountID: acct.id)
+        let loaded = try await store.thread(id: threadID, accountID: acct.id)
         let thread = try XCTUnwrap(loaded)
         XCTAssertEqual(thread.messages.count, 2)
         XCTAssertTrue(thread.messages.allSatisfy(\.isFlagged))
@@ -489,7 +489,7 @@ final class MailStoreTests: XCTestCase {
         let beforeDelete = try await store.threadSummaries(accountID: acct.id)
         let dropID = try XCTUnwrap(beforeDelete.first { $0.subject == "Drop" }?.id)
 
-        try await store.deleteThreads(threadIDs: [dropID])
+        try await store.deleteThreads(threadIDs: [dropID], accountID: acct.id)
         try await store.rethread(accountID: acct.id)
 
         let subjects = try await store.threadSummaries(accountID: acct.id).map(\.subject)
@@ -518,7 +518,7 @@ final class MailStoreTests: XCTestCase {
         let threaded = try await store.threadSummaries(accountID: acct.id)
         let threadID = try XCTUnwrap(threaded.first?.id)
 
-        let refs = try await store.messageRefs(threadIDs: [threadID])
+        let refs = try await store.messageRefs(threadIDs: [threadID], accountID: acct.id)
         XCTAssertEqual(refs.count, 1)
         XCTAssertEqual(refs.first?.uid, 7)
         XCTAssertEqual(refs.first?.mailbox, "INBOX")
@@ -567,7 +567,7 @@ final class MailStoreTests: XCTestCase {
         // Cc survives the store round-trip, kept distinct from To.
         let summaries = try await store.threadSummaries(accountID: acct.id)
         let threadID = try XCTUnwrap(summaries.first?.id)
-        let convo = try await store.thread(id: threadID)
+        let convo = try await store.thread(id: threadID, accountID: acct.id)
         let stored = try XCTUnwrap(convo?.messages.first)
         XCTAssertEqual(stored.to.map(\.address), ["q@x.com"])
         XCTAssertEqual(stored.cc.map(\.address), ["r@x.com", "s@x.com"])
