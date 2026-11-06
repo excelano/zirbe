@@ -18,6 +18,7 @@ struct InboxView: View {
     /// Drives live refresh: the inbox watches the server (IMAP IDLE) only while
     /// the app is in the foreground, and pauses when it backgrounds.
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var isComposing = false
     /// A saved draft loaded for editing, presented as the prefilled composer.
     /// Held as an Identifiable request so `.sheet(item:)` drives it.
@@ -238,6 +239,14 @@ struct InboxView: View {
         hasSeveralAccounts && model.isViewingInbox ? model.account.title : model.currentMailbox.displayName
     }
 
+    /// The toolbar lays items out at their ideal width and moves whatever doesn't
+    /// fit into an overflow menu, so a long account title would push Select and
+    /// Settings out of sight. The split view's sidebar column also carries the
+    /// sidebar toggle, leaving the title less room than the iPhone's full width.
+    private var folderSelectorMaxWidth: CGFloat {
+        horizontalSizeClass == .regular ? 130 : 200
+    }
+
     private var navigationTitle: String {
         selection.isEmpty ? "Select" : "\(selection.count) Selected"
     }
@@ -331,7 +340,7 @@ struct InboxView: View {
                             .foregroundStyle(.secondary)
                             .fixedSize()
                     }
-                    .frame(maxWidth: 200, alignment: .leading)
+                    .frame(maxWidth: folderSelectorMaxWidth, alignment: .leading)
                 }
                 .accessibilityLabel(hasSeveralAccounts
                     ? "Switch folder, currently \(model.currentMailbox.displayName) in \(model.account.title)"
