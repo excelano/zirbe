@@ -7,5 +7,5 @@
 // Do not re-declare either key in the target's build settings: a target-level
 // value shadows this file and the surfaces silently drift apart.
 
-MARKETING_VERSION = 1.5.0
-CURRENT_PROJECT_VERSION = 9
+MARKETING_VERSION = 1.5.1
+CURRENT_PROJECT_VERSION = 10
