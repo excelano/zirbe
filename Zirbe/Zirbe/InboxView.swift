@@ -324,11 +324,14 @@ struct InboxView: View {
                             .font(.headline)
                             .foregroundStyle(.primary)
                             .lineLimit(1)
+                            .truncationMode(.middle)
                             .minimumScaleFactor(0.75)
                         Image(systemName: "chevron.down")
                             .font(.caption2.weight(.semibold))
                             .foregroundStyle(.secondary)
+                            .fixedSize()
                     }
+                    .frame(maxWidth: 200, alignment: .leading)
                 }
                 .accessibilityLabel(hasSeveralAccounts
                     ? "Switch folder, currently \(model.currentMailbox.displayName) in \(model.account.title)"

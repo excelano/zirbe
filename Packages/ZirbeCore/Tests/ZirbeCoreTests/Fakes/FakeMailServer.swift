@@ -76,6 +76,8 @@ actor FakeMailServer: IMAPTransport {
     private var rejectsPassword = false
     private var holdingMailboxState = false
     private var heldMailboxState: CheckedContinuation<Void, Never>?
+    private var holdingStopIdle = false
+    private var heldStopIdle: CheckedContinuation<Void, Never>?
 
     /// A server with the standard special-use folders present and empty. The
     /// UIDVALIDITY seeds differ per folder so a test can't confuse them.
@@ -106,9 +108,15 @@ actor FakeMailServer: IMAPTransport {
 
     var isHoldingSync: Bool { heldMailboxState != nil }
 
+    func holdNextStopIdle() { holdingStopIdle = true }
+
+    var isHoldingStopIdle: Bool { heldStopIdle != nil }
+
     func release() {
         heldMailboxState?.resume()
         heldMailboxState = nil
+        heldStopIdle?.resume()
+        heldStopIdle = nil
     }
 
     /// Clear a standing failure.
@@ -286,6 +294,10 @@ actor FakeMailServer: IMAPTransport {
 
     func stopIdle() async {
         calls.append(.stopIdle)
+        if holdingStopIdle {
+            holdingStopIdle = false
+            await withCheckedContinuation { heldStopIdle = $0 }
+        }
         idle?.finish()
         idle = nil
     }

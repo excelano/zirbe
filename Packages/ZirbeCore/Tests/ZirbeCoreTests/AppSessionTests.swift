@@ -38,6 +38,14 @@ final class AppSessionTests: XCTestCase {
         MailEnvelope(subject: subject, from: "Pat <pat@x.com>", to: [to], date: Date(timeIntervalSince1970: 60), messageID: id)
     }
 
+    private func eventually(_ condition: () async -> Bool) async -> Bool {
+        for _ in 0..<200 {
+            if await condition() { return true }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        return await condition()
+    }
+
     private func connectBoth(_ session: AppSession) async throws {
         _ = await servers[work.id]!.add(envelope("Standup", id: "<w@x>", to: work.emailAddress))
         _ = await servers[home.id]!.add(envelope("Dinner", id: "<h@x>", to: home.emailAddress))
@@ -63,6 +71,20 @@ final class AppSessionTests: XCTestCase {
 
         XCTAssertEqual(session.model?.account.id, work.id)
         XCTAssertEqual(session.model?.summaries.map(\.subject), ["Standup"])
+    }
+
+    func testSwitchingDoesNotWaitForTheOldWatchToClose() async throws {
+        let session = makeSession()
+        try await connectBoth(session)
+        await servers[home.id]!.holdNextStopIdle()
+
+        let switching = Task { await session.select(work.id) }
+        let held = await eventually { await self.servers[self.home.id]!.isHoldingStopIdle }
+
+        XCTAssertTrue(held)
+        XCTAssertEqual(session.model?.account.id, work.id)
+        await servers[home.id]!.release()
+        await switching.value
     }
 
     func testRestoreResumesEveryAccountAndReturnsToTheLastViewed() async throws {

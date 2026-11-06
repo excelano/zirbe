@@ -173,10 +173,9 @@ struct MailboxesView: View {
         switch mode {
         case .browse:
             Task {
+                if account !== model { await session?.select(account.account.id) }
                 await account.selectMailbox(mailbox)
-                guard account !== model else { return }
-                await session?.select(account.account.id)
-                if account.isViewingInbox { await account.refresh() }
+                if account !== model, account.isViewingInbox { await account.refresh() }
             }
         case .move(let threadIDs):
             Task { await model.move(threadIDs: threadIDs, to: mailbox.name) }

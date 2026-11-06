@@ -150,11 +150,12 @@ public final class AppSession {
 
     public func select(_ accountID: String) async {
         guard models.contains(where: { $0.account.id == accountID }) else { return }
-        if let previous = model, previous.account.id != accountID {
-            await previous.stopLiveRefresh()
-        }
+        let previous = model
         currentAccountID = accountID
         defaults.set(accountID, forKey: Self.currentAccountKey)
+        if let previous, previous.account.id != accountID {
+            await previous.stopLiveRefresh()
+        }
     }
 
     public func remove(_ accountID: String) async {
