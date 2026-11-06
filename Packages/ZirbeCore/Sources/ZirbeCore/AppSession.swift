@@ -16,6 +16,7 @@ import Observation
 public final class AppSession {
     public private(set) var models: [InboxModel] = []
     public private(set) var currentAccountID: String?
+    public private(set) var isViewingAllInboxes = false
     /// The last restore/connect error, in a form a view can show.
     public private(set) var errorMessage: String?
     /// True until the first restore attempt finishes, so the UI can hold a
@@ -59,6 +60,13 @@ public final class AppSession {
 
     public var isConnected: Bool { model?.isConnected == true }
 
+    public var scope: InboxScope? {
+        let connected = models.filter(\.isConnected)
+        if isViewingAllInboxes, connected.count > 1 { return .allInboxes(connected) }
+        guard let model, model.isConnected else { return nil }
+        return .account(model)
+    }
+
     /// An account found persisted but not connected: no stored password, or the
     /// server rejected it. The onboarding screen prefills from it so the user
     /// only re-enters the password.
@@ -98,6 +106,7 @@ public final class AppSession {
             }
             let remembered = defaults.string(forKey: Self.currentAccountKey)
             currentAccountID = models.contains { $0.account.id == remembered } ? remembered : models.first?.account.id
+            isViewingAllInboxes = models.count > 1
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -150,12 +159,27 @@ public final class AppSession {
 
     public func select(_ accountID: String) async {
         guard models.contains(where: { $0.account.id == accountID }) else { return }
-        let previous = model
+        isViewingAllInboxes = false
+        remember(accountID)
+        for other in models where other.account.id != accountID {
+            await other.stopLiveRefresh()
+        }
+    }
+
+    public func selectAllInboxes() async {
+        guard models.count > 1 else { return }
+        isViewingAllInboxes = true
+        for model in models { await model.showInbox() }
+    }
+
+    public func noteSent(from accountID: String) {
+        guard isViewingAllInboxes else { return }
+        remember(accountID)
+    }
+
+    private func remember(_ accountID: String) {
         currentAccountID = accountID
         defaults.set(accountID, forKey: Self.currentAccountKey)
-        if let previous, previous.account.id != accountID {
-            await previous.stopLiveRefresh()
-        }
     }
 
     public func remove(_ accountID: String) async {
@@ -170,6 +194,7 @@ public final class AppSession {
         } else {
             try? await store?.eraseAccount(accountID)
         }
+        if models.count < 2 { isViewingAllInboxes = false }
         if currentAccountID == accountID {
             currentAccountID = models.first?.account.id
             defaults.set(currentAccountID, forKey: Self.currentAccountKey)

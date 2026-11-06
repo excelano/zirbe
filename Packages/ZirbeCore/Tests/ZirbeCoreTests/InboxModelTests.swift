@@ -716,6 +716,30 @@ final class InboxModelTests: XCTestCase {
         XCTAssertEqual(callsAfter, callsBefore, "search never touches the server")
     }
 
+    func testServerSearchQueriesTheCurrentFolderAndReturnsItsConversations() async throws {
+        await server.add(incoming("Plan", id: "<a@x>"))
+        try await model.signIn(password: "pw")
+        await server.add(incoming("Budget", id: "<b@x>", minutes: 1))
+
+        let hits = await model.searchServer(" budget ")
+
+        XCTAssertEqual(hits?.map(\.subject), ["Budget"])
+        XCTAssertEqual(model.summaries.map(\.subject), ["Budget", "Plan"], "the hit is cached into its folder")
+        let calls = await server.calls(.searchEnvelopes)
+        XCTAssertEqual(calls, [.searchEnvelopes(mailbox: "INBOX", text: "budget", limit: 50)])
+    }
+
+    func testServerSearchFailureReportsAndReturnsNil() async throws {
+        try await model.signIn(password: "pw")
+        await server.fail(.searchEnvelopes)
+
+        let hits = await model.searchServer("budget")
+
+        XCTAssertNil(hits)
+        XCTAssertNotNil(model.errorMessage)
+        XCTAssertTrue(model.isConnected)
+    }
+
     // MARK: Web View and attachments
 
     func testHTMLAndAttachmentFetchesNeedAConnectionAndReportFailures() async throws {

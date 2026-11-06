@@ -9,7 +9,7 @@ import SwiftUI
 import ZirbeCore
 
 struct InboxView: View {
-    let model: InboxModel
+    let scope: InboxScope
     let session: AppSession
     let onRemoveAccount: (String) -> Void
     /// The conversation open beside the list in the split view. Nil on compact
@@ -35,8 +35,8 @@ struct InboxView: View {
     @State private var moveRequest: MoveRequest?
     /// When set, the list shows only conversations with unread mail.
     @State private var showUnreadOnly = false
-    /// The conversations picked in selection mode, by thread id.
-    @State private var selection = Set<String>()
+    /// The conversations picked in selection mode, by account and thread.
+    @State private var selection = Set<ThreadKey>()
     /// Drives selection mode: `.active` shows the per-row circles and the bulk
     /// action bar, and turns row taps into selection rather than navigation.
     @State private var editMode: EditMode = .inactive
@@ -45,6 +45,9 @@ struct InboxView: View {
     /// Results for the current query, most recent first. Held separately from the
     /// inbox summaries so search never disturbs the cached list.
     @State private var searchResults: [ThreadSummary] = []
+    @State private var serverSearchQuery: String?
+    @State private var isSearchingServer = false
+    @State private var serverSearchFailed = false
 
     private var isSelecting: Bool { editMode == .active }
 
@@ -58,8 +61,16 @@ struct InboxView: View {
     /// was walking the list for the fiftieth time.
     private var allSelectedFlagged: Bool {
         guard !selection.isEmpty else { return false }
-        let flagged = Set(model.summaries.lazy.filter(\.isFlagged).map(\.id))
+        let flagged = Set(scope.summaries.lazy.filter(\.isFlagged).map(\.key))
         return selection.isSubset(of: flagged)
+    }
+
+    private var accountModel: InboxModel? {
+        if case .account(let model) = scope { model } else { nil }
+    }
+
+    private var selectedSummaries: [ThreadSummary] {
+        visibleSummaries.filter { selection.contains($0.key) }
     }
 
     /// Whether a search is active (the query has non-whitespace content).
@@ -71,21 +82,24 @@ struct InboxView: View {
     /// inbox narrowed to unread when the filter is on.
     private var visibleSummaries: [ThreadSummary] {
         if isSearching { return searchResults }
-        return showUnreadOnly ? model.summaries.filter(\.isUnread) : model.summaries
+        return showUnreadOnly ? scope.summaries.filter(\.isUnread) : scope.summaries
     }
 
     var body: some View {
         List(selection: $selection) {
-            ForEach(visibleSummaries) { summary in
+            ForEach(visibleSummaries, id: \.key) { summary in
                 row(for: summary)
                     .modifier(RowActions(
-                        model: model,
+                        model: scope.model(for: summary),
                         summary: summary,
                         enabled: !isSearching,
-                        onMove: { moveRequest = MoveRequest(threadIDs: [$0]) },
+                        onMove: { moveRequest = MoveRequest(model: $0, summaries: [$1]) },
                         onRemove: { close([$0]) }
                     ))
                     .listRowBackground(isOpened(summary) ? Color.accentColor.opacity(0.15) : Color.zirbeCanvas)
+            }
+            if offersServerSearch {
+                serverSearchRow
             }
         }
         .listStyle(.plain)
@@ -103,22 +117,24 @@ struct InboxView: View {
         }
         #endif
         .sheet(isPresented: $isComposing) {
-            ComposeView(model: model, accounts: session.models)
+            ComposeView(model: accountModel ?? session.model ?? scope.models[0], accounts: session.models) { account in
+                session.noteSent(from: account.id)
+            }
         }
         .sheet(item: $draftEditRequest) { request in
-            ComposeView(model: model, editing: request.edit)
+            ComposeView(model: request.model, editing: request.edit)
         }
         .sheet(isPresented: $showingSettings) {
             SettingsView(session: session, onRemoveAccount: onRemoveAccount)
         }
         .sheet(isPresented: $showingMailboxes) {
-            MailboxesView(model: model, mode: .browse, session: session)
+            MailboxesView(model: accountModel ?? session.model ?? scope.models[0], mode: .browse, session: session)
         }
         .sheet(item: $moveRequest) { request in
             MailboxesView(
-                model: model,
-                mode: .move(threadIDs: request.threadIDs),
-                onMoved: { close(request.threadIDs) }
+                model: request.model,
+                mode: .move(threadIDs: request.summaries.map(\.id)),
+                onMoved: { close(request.summaries) }
             )
         }
         .overlay { emptyState }
@@ -129,16 +145,16 @@ struct InboxView: View {
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
             }
         }
-        .refreshable { await model.refresh() }
+        .refreshable { await scope.refresh() }
         .task {
-            await model.loadCached()
-            if !model.hasSynced {
-                await model.refresh()
+            await scope.loadCached()
+            if !scope.hasSynced {
+                await scope.refresh()
             }
             // The first foreground doesn't fire `onChange(of: scenePhase)`, so
             // start the live watch here; later background/foreground transitions
             // are handled below.
-            model.startLiveRefresh()
+            scope.startLiveRefresh()
         }
         .task(id: searchText) { await runSearch() }
         .onChange(of: scenePhase) { _, phase in
@@ -147,8 +163,8 @@ struct InboxView: View {
                 // Returning to the foreground: catch up on anything missed while
                 // the watch was paused, then resume it.
                 Task {
-                    await model.refresh()
-                    model.startLiveRefresh()
+                    await scope.refresh()
+                    scope.startLiveRefresh()
                 }
             case .background:
                 // No foreground connection in the background, so end the live
@@ -156,7 +172,7 @@ struct InboxView: View {
                 // request iOS can run while we're suspended. `.inactive` is a
                 // brief transitional state and is left alone to avoid needless
                 // connection churn.
-                Task { await model.stopLiveRefresh() }
+                Task { await scope.stopLiveRefresh() }
                 BackgroundRefreshScheduler.schedule()
             case .inactive:
                 break
@@ -169,7 +185,7 @@ struct InboxView: View {
     /// Whether the Drafts folder is on screen, where a tapped row resumes editing
     /// in the composer rather than opening the read-only conversation view.
     private var isViewingDrafts: Bool {
-        model.currentMailbox.role == .drafts
+        accountModel?.currentMailbox.role == .drafts
     }
 
     /// One conversation row. In the Drafts folder (and not mid-selection) a tap
@@ -179,7 +195,12 @@ struct InboxView: View {
     /// and bulk actions work in Drafts too.
     @ViewBuilder
     private func row(for summary: ThreadSummary) -> some View {
-        let label = ThreadRow(summary: summary, selfAddress: model.account.emailAddress)
+        let account = scope.model(for: summary)?.account
+        let label = ThreadRow(
+            summary: summary,
+            selfAddress: account?.emailAddress ?? "",
+            account: scope.isAllInboxes ? account : nil
+        )
         if isViewingDrafts && !isSelecting {
             Button { openDraft(summary) } label: { label }
                 .buttonStyle(.plain)
@@ -197,13 +218,14 @@ struct InboxView: View {
 
     /// Whether this row's conversation is the one open beside the list.
     private func isOpened(_ summary: ThreadSummary) -> Bool {
-        openedThread?.wrappedValue?.id == summary.id
+        openedThread?.wrappedValue?.key == summary.key
     }
 
     /// Empty the split view's detail column when its conversation is among those
     /// leaving the list.
-    private func close(_ threadIDs: [String]) {
-        guard let openedThread, let id = openedThread.wrappedValue?.id, threadIDs.contains(id) else { return }
+    private func close(_ summaries: [ThreadSummary]) {
+        guard let openedThread, let key = openedThread.wrappedValue?.key,
+              summaries.contains(where: { $0.key == key }) else { return }
         openedThread.wrappedValue = nil
     }
 
@@ -211,11 +233,12 @@ struct InboxView: View {
     /// bytes) over the server session, then present it in the composer. A draft
     /// that no longer resolves (already sent or expunged) is left alone.
     private func openDraft(_ summary: ThreadSummary) {
+        guard let model = scope.model(for: summary) else { return }
         openingDraft = true
         Task {
             let edit = await model.loadDraft(threadID: summary.id)
             openingDraft = false
-            if let edit { draftEditRequest = DraftEditRequest(edit: edit) }
+            if let edit { draftEditRequest = DraftEditRequest(model: model, edit: edit) }
         }
     }
 
@@ -225,10 +248,55 @@ struct InboxView: View {
     /// newer results, and the previous results stay on screen until the new ones
     /// land (no flash to empty mid-typing).
     private func runSearch() async {
+        serverSearchFailed = false
         guard isSearching else { searchResults = []; return }
         try? await Task.sleep(for: .milliseconds(150))
         guard !Task.isCancelled else { return }
-        searchResults = await model.search(searchText)
+        searchResults = await scope.search(searchText)
+    }
+
+    private var offersServerSearch: Bool {
+        isSearching && !scope.models.contains(where: \.isDemo) && serverSearchQuery != searchText
+    }
+
+    private var serverSearchRow: some View {
+        Button(action: searchServer) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Label(serverSearchTitle, systemImage: "magnifyingglass")
+                    if serverSearchFailed {
+                        Text(scope.errorMessage ?? "The server didn’t answer.")
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                    }
+                }
+                Spacer()
+                if isSearchingServer { ProgressView() }
+            }
+        }
+        .disabled(isSearchingServer)
+        .listRowBackground(Color.zirbeCanvas)
+    }
+
+    private var serverSearchTitle: String {
+        guard let accountModel else { return "Search Inboxes on Server" }
+        return "Search \(accountModel.currentMailbox.displayName) on Server"
+    }
+
+    private func searchServer() {
+        let query = searchText
+        isSearchingServer = true
+        serverSearchFailed = false
+        Task {
+            let hits = await scope.searchServer(query)
+            isSearchingServer = false
+            guard searchText == query else { return }
+            guard let hits else { serverSearchFailed = true; return }
+            serverSearchQuery = query
+            let shown = Set(searchResults.map(\.key))
+            searchResults = (searchResults + hits.filter { !shown.contains($0.key) })
+                .sorted { ($0.lastActivity ?? .distantPast) > ($1.lastActivity ?? .distantPast) }
+        }
     }
 
     /// The centered title while picking conversations; the title bar otherwise
@@ -236,7 +304,19 @@ struct InboxView: View {
     private var hasSeveralAccounts: Bool { session.models.count > 1 }
 
     private var folderTitle: String {
-        hasSeveralAccounts && model.isViewingInbox ? model.account.title : model.currentMailbox.displayName
+        guard let accountModel else { return "All Inboxes" }
+        return hasSeveralAccounts && accountModel.isViewingInbox ? accountModel.account.title : accountModel.currentMailbox.displayName
+    }
+
+    private var folderAccessibilityLabel: String {
+        guard let accountModel else { return "Switch folder, currently All Inboxes" }
+        return hasSeveralAccounts
+            ? "Switch folder, currently \(accountModel.currentMailbox.displayName) in \(accountModel.account.title)"
+            : "Switch folder, currently \(accountModel.currentMailbox.displayName)"
+    }
+
+    private var selectionSpansAccounts: Bool {
+        Set(selectedSummaries.map(\.accountID)).count > 1
     }
 
     /// The toolbar lays items out at their ideal width and moves whatever doesn't
@@ -308,6 +388,7 @@ struct InboxView: View {
                     } label: {
                         Label("Move to…", systemImage: "folder")
                     }
+                    .disabled(selectionSpansAccounts)
                     Button(role: .destructive) {
                         Task { await bulkJunk() }
                     } label: {
@@ -326,8 +407,8 @@ struct InboxView: View {
                     showingMailboxes = true
                 } label: {
                     HStack(spacing: 4) {
-                        if hasSeveralAccounts {
-                            AccountDot(color: model.account.color)
+                        if hasSeveralAccounts, let accountModel {
+                            AccountDot(color: accountModel.account.color)
                         }
                         Text(folderTitle)
                             .font(.headline)
@@ -342,9 +423,7 @@ struct InboxView: View {
                     }
                     .frame(maxWidth: folderSelectorMaxWidth, alignment: .leading)
                 }
-                .accessibilityLabel(hasSeveralAccounts
-                    ? "Switch folder, currently \(model.currentMailbox.displayName) in \(model.account.title)"
-                    : "Switch folder, currently \(model.currentMailbox.displayName)")
+                .accessibilityLabel(folderAccessibilityLabel)
             }
             // Top right pairs Select with Settings, the gear sitting at the far
             // edge: Mail's one deliberately overloaded corner, kept to two.
@@ -354,7 +433,7 @@ struct InboxView: View {
                 } label: {
                     Image(systemName: "checkmark.circle")
                 }
-                .disabled(model.summaries.isEmpty)
+                .disabled(scope.summaries.isEmpty)
                 .accessibilityLabel("Select Conversations")
             }
             ToolbarItem(placement: .topBarTrailing) {
@@ -394,17 +473,17 @@ struct InboxView: View {
     @ViewBuilder
     private var emptyState: some View {
         if isSearching {
-            if searchResults.isEmpty {
+            if searchResults.isEmpty && !offersServerSearch {
                 ContentUnavailableView.search(text: searchText)
             }
-        } else if model.summaries.isEmpty {
-            if model.isSyncing {
+        } else if scope.summaries.isEmpty {
+            if scope.isSyncing {
                 ProgressView("Syncing…")
             } else {
                 ContentUnavailableView(
                     "No conversations",
                     systemImage: "tray",
-                    description: Text(model.errorMessage ?? "Pull down to refresh.")
+                    description: Text(scope.errorMessage ?? "Pull down to refresh.")
                 )
             }
         } else if showUnreadOnly && visibleSummaries.isEmpty {
@@ -422,54 +501,44 @@ struct InboxView: View {
         selection.removeAll()
     }
 
-    /// Mark the selected conversations read or unread, then leave selection mode.
-    /// The ids are captured before exiting so clearing the selection can't race
-    /// the server work.
     private func bulkRead(_ read: Bool) async {
-        let ids = Array(selection)
+        let picked = selectedSummaries
         endSelecting()
-        await model.markRead(threadIDs: ids, read: read)
+        await scope.perform(on: picked) { model, ids in await model.markRead(threadIDs: ids, read: read) }
     }
 
-    /// Flag or unflag the selected conversations, then leave selection mode. The
-    /// ids are captured before exiting so clearing the selection can't race the
-    /// server work.
     private func bulkFlag(_ flagged: Bool) async {
-        let ids = Array(selection)
+        let picked = selectedSummaries
         endSelecting()
-        await model.markFlagged(threadIDs: ids, flagged: flagged)
+        await scope.perform(on: picked) { model, ids in await model.markFlagged(threadIDs: ids, flagged: flagged) }
     }
 
-    /// Trash the selected conversations, then leave selection mode.
     private func bulkTrash() async {
-        let ids = Array(selection)
+        let picked = selectedSummaries
         endSelecting()
-        close(ids)
-        await model.trash(threadIDs: ids)
+        close(picked)
+        await scope.perform(on: picked) { model, ids in await model.trash(threadIDs: ids) }
     }
 
-    /// Archive the selected conversations, preserving their read state, then
-    /// leave selection mode.
     private func bulkArchive() async {
-        let ids = Array(selection)
+        let picked = selectedSummaries
         endSelecting()
-        close(ids)
-        await model.archive(threadIDs: ids)
+        close(picked)
+        await scope.perform(on: picked) { model, ids in await model.archive(threadIDs: ids) }
     }
 
-    /// Mark the selected conversations as junk, then leave selection mode.
     private func bulkJunk() async {
-        let ids = Array(selection)
+        let picked = selectedSummaries
         endSelecting()
-        close(ids)
-        await model.junk(threadIDs: ids)
+        close(picked)
+        await scope.perform(on: picked) { model, ids in await model.junk(threadIDs: ids) }
     }
 
-    /// Present the move-destination picker for the selected conversations. The ids
-    /// are captured into the request before selection mode ends, so the move runs
-    /// against the right conversations once a folder is picked.
     private func bulkMove() {
-        moveRequest = MoveRequest(threadIDs: Array(selection))
+        let picked = selectedSummaries
+        if let model = picked.first.flatMap(scope.model(for:)) {
+            moveRequest = MoveRequest(model: model, summaries: picked)
+        }
         endSelecting()
     }
 }
@@ -478,13 +547,15 @@ struct InboxView: View {
 /// drive the destination picker and the ids survive the selection clearing.
 private struct MoveRequest: Identifiable {
     let id = UUID()
-    let threadIDs: [String]
+    let model: InboxModel
+    let summaries: [ThreadSummary]
 }
 
 /// A saved draft loaded for editing, wrapped so `.sheet(item:)` can present the
 /// prefilled composer.
 private struct DraftEditRequest: Identifiable {
     let id = UUID()
+    let model: InboxModel
     let edit: DraftEdit
 }
 
@@ -493,27 +564,27 @@ private struct DraftEditRequest: Identifiable {
 /// searching, where results are navigate-only so a mutation can't leave the
 /// result list stale.
 private struct RowActions: ViewModifier {
-    let model: InboxModel
+    let model: InboxModel?
     let summary: ThreadSummary
     let enabled: Bool
     /// Opens the move-destination picker for this conversation.
-    let onMove: (String) -> Void
-    /// Called with the conversation's id as a swipe or menu action takes it out of
+    let onMove: (InboxModel, ThreadSummary) -> Void
+    /// Called with the conversation as a swipe or menu action takes it out of
     /// the list.
-    let onRemove: (String) -> Void
+    let onRemove: (ThreadSummary) -> Void
 
     func body(content: Content) -> some View {
-        if enabled {
+        if enabled, let model {
             content
                 .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                     Button(role: .destructive) {
-                        onRemove(summary.id)
+                        onRemove(summary)
                         Task { await model.trash(summary) }
                     } label: {
                         Label("Trash", systemImage: "trash")
                     }
                     Button {
-                        onRemove(summary.id)
+                        onRemove(summary)
                         Task { await model.archive(summary) }
                     } label: {
                         Label("Archive", systemImage: "archivebox")
@@ -530,18 +601,18 @@ private struct RowActions: ViewModifier {
                         )
                     }
                     Button {
-                        onRemove(summary.id)
+                        onRemove(summary)
                         Task { await model.archive(summary) }
                     } label: {
                         Label("Archive", systemImage: "archivebox")
                     }
                     Button {
-                        onMove(summary.id)
+                        onMove(model, summary)
                     } label: {
                         Label("Move to…", systemImage: "folder")
                     }
                     Button(role: .destructive) {
-                        onRemove(summary.id)
+                        onRemove(summary)
                         Task { await model.junk(summary) }
                     } label: {
                         Label("Move to Junk", systemImage: "xmark.bin")
@@ -589,6 +660,7 @@ private struct ThreadRow: View {
     /// The account's own address, so an unnamed chat is titled by the other
     /// people rather than by the viewer.
     let selfAddress: String
+    var account: Account?
     /// How many preview lines to show under the subject (0 hides the preview).
     @AppStorage(SettingsKeys.previewLineCount) private var previewLineCount = 2
 
@@ -628,7 +700,7 @@ private struct ThreadRow: View {
                 // Beneath the subject: a named chat's participants on the left, the
                 // timestamp on the right; an unnamed chat's title already names the
                 // people, so the timestamp stands alone.
-                if isNamed || summary.lastActivity != nil {
+                if isNamed || summary.lastActivity != nil || account != nil {
                     HStack(alignment: .firstTextBaseline) {
                         if isNamed {
                             Text(participantText)
@@ -637,6 +709,9 @@ private struct ThreadRow: View {
                                 .lineLimit(1)
                         }
                         Spacer(minLength: 8)
+                        if let account {
+                            AccountDot(color: account.color, size: 7)
+                        }
                         if let date = summary.lastActivity {
                             Text(date, format: .relative(presentation: .named))
                                 .font(.caption)

@@ -13,9 +13,9 @@ import SwiftUI
 import ZirbeCore
 
 struct OnboardingView: View {
-    /// Prefilled when an account is known but couldn't auto-connect, so the user
-    /// only re-enters the password.
-    let prefillEmail: String
+    /// A stored account whose password needs re-entering: its address and
+    /// servers are prefilled, so the user only types the password.
+    let prefill: Account?
     /// Signs in and persists the credential. Throwing keeps the user here on
     /// failure, e.g. a wrong password.
     let onConnect: (Account, String) async throws -> Void
@@ -75,9 +75,7 @@ struct OnboardingView: View {
                 ProgressView().controlSize(.large)
             }
         }
-        .onAppear {
-            if email.isEmpty { email = prefillEmail }
-        }
+        .onAppear(perform: applyPrefill)
         .onChange(of: email) { _, _ in applyPresetIfDomainChanged() }
     }
 
@@ -196,6 +194,16 @@ struct OnboardingView: View {
         smtpHost = resolved.smtpHost
         smtpPort = String(resolved.smtpPort)
         serversExpanded = (resolved.displayName == nil)  // open for unknown providers
+    }
+
+    private func applyPrefill() {
+        guard let prefill, email.isEmpty else { return }
+        appliedDomain = prefill.emailAddress.split(separator: "@").last.map(String.init)?.lowercased()
+        email = prefill.emailAddress
+        imapHost = prefill.imapHost
+        imapPort = String(prefill.imapPort)
+        smtpHost = prefill.smtpHost
+        smtpPort = String(prefill.smtpPort)
     }
 
     private func connect() {

@@ -114,6 +114,18 @@ public actor MailEngine {
         }
     }
 
+    public func searchEnvelopes(in mailbox: String, text: String, limit: Int) async throws -> [MailEnvelope] {
+        try await perform {
+            _ = try await self.server.selectMailbox(mailbox)
+            let result: ExtendedSearchResult<UID> = try await self.server.extendedSearch(criteria: [.text(text)])
+            let matches = (result.all ?? result.partial?.results)?.toArray() ?? []
+            let newest = matches.sorted { $0.value < $1.value }.suffix(limit)
+            guard !newest.isEmpty else { return [] }
+            let infos = try await self.server.fetchMessageInfosBulk(using: UIDSet(Array(newest)))
+            return infos.map(MailEnvelope.init)
+        }
+    }
+
     /// List the server's folders, over the warm session, as Zirbe-owned values
     /// with each folder's special-use role resolved from its RFC 6154 attributes.
     /// The full set is returned, including non-selectable container folders (the

@@ -204,4 +204,88 @@ final class AppSessionTests: XCTestCase {
 
         XCTAssertEqual(session.inboxUnreadCount, 2)
     }
+
+    // MARK: All Inboxes
+
+    func testRestoringSeveralAccountsOpensAllInboxesMergedByRecency() async throws {
+        _ = await servers[work.id]!.add(MailEnvelope(subject: "Standup", from: "Pat <pat@x.com>", to: [work.emailAddress],
+                                                     date: Date(timeIntervalSince1970: 120), messageID: "<w@x>"))
+        _ = await servers[home.id]!.add(envelope("Dinner", id: "<h@x>", to: home.emailAddress))
+        let first = makeSession()
+        try await first.connect(account: work, password: "work-pw")
+        try await first.connect(account: home, password: "home-pw")
+        XCTAssertFalse(first.isViewingAllInboxes, "adding an account shows that account")
+
+        let restored = makeSession()
+        await restored.restore()
+
+        let scope = try XCTUnwrap(restored.scope)
+        XCTAssertTrue(scope.isAllInboxes)
+        XCTAssertEqual(scope.summaries.map(\.subject), ["Standup", "Dinner"])
+        XCTAssertEqual(scope.summaries.map(\.accountID), [work.id, home.id])
+    }
+
+    func testOneAccountNeverOpensAllInboxes() async throws {
+        let session = makeSession()
+        try await session.connect(account: work, password: "work-pw")
+
+        await session.selectAllInboxes()
+
+        XCTAssertFalse(session.isViewingAllInboxes)
+        XCTAssertEqual(session.scope?.isAllInboxes, false)
+    }
+
+    func testAllInboxesReturnsEveryAccountToItsInboxAndSelectingOneLeaves() async throws {
+        let session = makeSession()
+        try await connectBoth(session)
+        await session.model?.selectMailbox(Mailbox(accountID: home.id, name: "Archive", role: .archive))
+
+        await session.selectAllInboxes()
+
+        XCTAssertTrue(session.models.allSatisfy(\.isViewingInbox))
+        XCTAssertEqual(session.scope?.summaries.count, 2)
+        await session.select(work.id)
+        XCTAssertFalse(session.isViewingAllInboxes)
+        XCTAssertEqual(session.scope?.summaries.map(\.subject), ["Standup"])
+    }
+
+    func testAnActionOnMergedRowsReachesEachRowsOwnAccount() async throws {
+        let session = makeSession()
+        try await connectBoth(session)
+        await session.selectAllInboxes()
+        let scope = try XCTUnwrap(session.scope)
+
+        await scope.perform(on: scope.summaries) { model, ids in await model.trash(threadIDs: ids) }
+
+        let workTrash = await servers[work.id]!.calls(.trash)
+        let homeTrash = await servers[home.id]!.calls(.trash)
+        XCTAssertEqual(workTrash.count, 1)
+        XCTAssertEqual(homeTrash.count, 1)
+        XCTAssertTrue(scope.summaries.isEmpty)
+    }
+
+    func testSendingFromAllInboxesMakesThatAccountTheNextDefault() async throws {
+        let session = makeSession()
+        try await connectBoth(session)
+        await session.selectAllInboxes()
+
+        session.noteSent(from: work.id)
+
+        XCTAssertEqual(session.currentAccountID, work.id)
+        XCTAssertTrue(session.isViewingAllInboxes)
+        await session.select(home.id)
+        session.noteSent(from: work.id)
+        XCTAssertEqual(session.currentAccountID, home.id, "a single account's view stays put")
+    }
+
+    func testRemovingDownToOneAccountLeavesAllInboxes() async throws {
+        let session = makeSession()
+        try await connectBoth(session)
+        await session.selectAllInboxes()
+
+        await session.remove(home.id)
+
+        XCTAssertFalse(session.isViewingAllInboxes)
+        XCTAssertEqual(session.scope?.isAllInboxes, false)
+    }
 }

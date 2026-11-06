@@ -27,7 +27,7 @@ actor FakeMailServer: IMAPTransport {
 
     /// The operations a test can fail, and the log records.
     enum Operation: Hashable {
-        case connect, fetchRecentEnvelopes, mailboxState, listMailboxes, fetchTextBodies
+        case connect, fetchRecentEnvelopes, mailboxState, searchEnvelopes, listMailboxes, fetchTextBodies
         case fetchHTMLBody, fetchAttachment, saveToSent, saveToDrafts, removeDraft
         case setSeen, setFlagged, idleChanges, trash, move, archive, markJunk
     }
@@ -37,6 +37,7 @@ actor FakeMailServer: IMAPTransport {
         case connect(username: String)
         case fetchRecentEnvelopes(mailbox: String, limit: Int)
         case mailboxState(mailbox: String)
+        case searchEnvelopes(mailbox: String, text: String, limit: Int)
         case listMailboxes
         case fetchTextBodies(mailbox: String, uids: [UInt32])
         case fetchHTMLBody(mailbox: String, uid: UInt32)
@@ -216,6 +217,18 @@ actor FakeMailServer: IMAPTransport {
         try check(.mailboxState)
         let folder = try folder(mailbox)
         return MailboxState(uidValidity: folder.uidValidity, uids: Set(folder.messages.keys))
+    }
+
+    func searchEnvelopes(in mailbox: String, text: String, limit: Int) async throws -> [MailEnvelope] {
+        calls.append(.searchEnvelopes(mailbox: mailbox, text: text, limit: limit))
+        try check(.searchEnvelopes)
+        let folder = try folder(mailbox)
+        let matches = messages(in: mailbox).filter { envelope in
+            let body = envelope.uid.flatMap { folder.bodies[$0]?.text } ?? ""
+            let haystack = ([envelope.subject, envelope.from, body].compactMap { $0 } + envelope.to + envelope.cc)
+            return haystack.contains { $0.localizedCaseInsensitiveContains(text) }
+        }
+        return Array(matches.suffix(limit))
     }
 
     func listMailboxes() async throws -> [MailboxInfo] {
@@ -415,6 +428,7 @@ extension FakeMailServer.Call {
         case .connect: .connect
         case .fetchRecentEnvelopes: .fetchRecentEnvelopes
         case .mailboxState: .mailboxState
+        case .searchEnvelopes: .searchEnvelopes
         case .listMailboxes: .listMailboxes
         case .fetchTextBodies: .fetchTextBodies
         case .fetchHTMLBody: .fetchHTMLBody

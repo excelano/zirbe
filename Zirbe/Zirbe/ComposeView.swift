@@ -18,6 +18,7 @@ import ZirbeCore
 
 struct ComposeView: View {
     let accounts: [InboxModel]
+    var onSent: ((Account) -> Void)?
     @State private var sender: InboxModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
@@ -48,8 +49,9 @@ struct ComposeView: View {
     /// A fresh new-conversation composer, or one prefilled from a saved draft. A
     /// saved draft carries no Bcc (the blind list is never written to the draft
     /// copy), so an edited draft opens with an empty Bcc field.
-    init(model: InboxModel, accounts: [InboxModel] = [], editing: DraftEdit? = nil) {
+    init(model: InboxModel, accounts: [InboxModel] = [], editing: DraftEdit? = nil, onSent: ((Account) -> Void)? = nil) {
         self.accounts = accounts
+        self.onSent = onSent
         _sender = State(initialValue: model)
         let to = editing.map { Self.recipientText($0.to) } ?? ""
         let cc = editing.map { Self.recipientText($0.cc) } ?? ""
@@ -328,7 +330,10 @@ struct ComposeView: View {
                 discardingDraft: draftContext
             )
             isSending = false
-            if sent { dismiss() }
+            if sent {
+                onSent?(sender.account)
+                dismiss()
+            }
         }
     }
 

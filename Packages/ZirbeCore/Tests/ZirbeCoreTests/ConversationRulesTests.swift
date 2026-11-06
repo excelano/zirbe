@@ -75,13 +75,13 @@ final class ConversationRulesTests: XCTestCase {
 
     func testTheSummaryFallbackPicksTheFirstOtherParticipant() {
         let summary = ThreadSummary(
-            id: "t", subject: "Plan", participants: [me, pat, sam], lastActivity: nil,
+            id: "t", accountID: "me@x.com", subject: "Plan", participants: [me, pat, sam], lastActivity: nil,
             isUnread: false, isFlagged: false, isPinned: false, messageCount: 3, preview: nil
         )
         XCTAssertEqual(summary.blockableSender(as: account)?.address, "pat@x.com")
 
         let alone = ThreadSummary(
-            id: "t", subject: "Note", participants: [me], lastActivity: nil,
+            id: "t", accountID: "me@x.com", subject: "Note", participants: [me], lastActivity: nil,
             isUnread: false, isFlagged: false, isPinned: false, messageCount: 1, preview: nil
         )
         XCTAssertNil(alone.blockableSender(as: account))

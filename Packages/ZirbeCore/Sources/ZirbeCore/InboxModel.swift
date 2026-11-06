@@ -290,6 +290,11 @@ public final class InboxModel {
         isSyncing = false
     }
 
+    public func showInbox() async {
+        guard !isViewingInbox else { return }
+        await selectMailbox(Mailbox(accountID: account.id, name: "INBOX", role: .inbox))
+    }
+
     /// The live-refresh monitor, running while the inbox is foreground and on
     /// screen. Holds an IMAP IDLE watch that ticks on each server-side change and
     /// re-syncs in response. nil when live refresh is off.
@@ -351,6 +356,23 @@ public final class InboxModel {
             errorMessage = error.localizedDescription
             return []
         }
+    }
+
+    public func searchServer(_ query: String) async -> [ThreadSummary]? {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !isDemo, let password else { return nil }
+        do {
+            return try await exclusively {
+                let ids = try await sync.searchServer(trimmed, in: currentMailbox.name, password: password)
+                try await reloadList()
+                return try await store.threadSummaries(containingMessages: ids, accountID: account.id)
+            }
+        } catch MailEngineError.authenticationRejected {
+            credentialRejected()
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+        return nil
     }
 
     /// A conversation as the store holds it, with no network: whatever bodies are

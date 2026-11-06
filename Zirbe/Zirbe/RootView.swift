@@ -24,9 +24,10 @@ struct RootView: View {
         Group {
             if session.isRestoring {
                 launch
-            } else if let model = session.model, model.isConnected {
-                navigation(model: model)
-                .id(model.account.id)
+            } else if let scope = session.scope {
+                navigation(scope: scope)
+                .id(scopeID)
+                .onChange(of: scopeID) { path.removeAll() }
                 .task(id: session.inboxUnreadCount) {
                     await notifier.updateBadge(unreadCount: session.inboxUnreadCount)
                 }
@@ -44,7 +45,7 @@ struct RootView: View {
                 .task {
                     guard DemoMode.opensTopConversation, path.isEmpty else { return }
                     let wanted = DemoMode.openSubject
-                    guard let target = model.summaries.first(where: { summary in
+                    guard let target = scope.summaries.first(where: { summary in
                         wanted.map { summary.subject.localizedCaseInsensitiveContains($0) } ?? true
                     }) else { return }
                     path = [target]
@@ -58,7 +59,7 @@ struct RootView: View {
                 }
             } else {
                 OnboardingView(
-                    prefillEmail: session.restoredAccount?.emailAddress ?? "",
+                    prefill: session.restoredAccount,
                     onConnect: { account, password in
                         try await session.connect(account: account, password: password)
                     },
@@ -75,31 +76,37 @@ struct RootView: View {
     /// The push stack on compact width; on regular width the conversation list
     /// beside the open conversation.
     @ViewBuilder
-    private func navigation(model: InboxModel) -> some View {
+    private func navigation(scope: InboxScope) -> some View {
         if horizontalSizeClass == .regular {
             NavigationSplitView {
-                InboxView(model: model, session: session, onRemoveAccount: removeAccount, openedThread: openedThread)
+                InboxView(scope: scope, session: session, onRemoveAccount: removeAccount, openedThread: openedThread)
             } detail: {
-                if let summary = path.last {
+                if let summary = path.last, let model = scope.model(for: summary) {
                     ConversationView(model: model, summary: summary, onClose: closeConversation)
-                        .id(summary.id)
+                        .id(summary.key)
                 } else {
                     Color.zirbeCanvas.ignoresSafeArea()
                 }
             }
-            .onChange(of: model.currentMailbox) { path.removeAll() }
+            .onChange(of: session.model?.currentMailbox) { path.removeAll() }
         } else {
             NavigationStack(path: $path) {
-                InboxView(model: model, session: session, onRemoveAccount: removeAccount)
+                InboxView(scope: scope, session: session, onRemoveAccount: removeAccount)
                     .navigationDestination(for: ThreadSummary.self) { summary in
-                        ConversationView(model: model, summary: summary, showsBack: true, onClose: closeConversation)
+                        if let model = scope.model(for: summary) {
+                            ConversationView(model: model, summary: summary, showsBack: true, onClose: closeConversation)
+                        }
                     }
             }
         }
     }
 
+    private var scopeID: String {
+        session.scope?.isAllInboxes == true ? "all-inboxes" : session.model?.account.id ?? ""
+    }
+
     private func removeAccount(_ accountID: String) {
-        if accountID == session.model?.account.id { path.removeAll() }
+        if path.contains(where: { $0.accountID == accountID }) { path.removeAll() }
         Task { await session.remove(accountID) }
     }
 
@@ -115,11 +122,12 @@ struct RootView: View {
     /// Open a notification's conversation. A message that arrived after the last
     /// sync isn't in the list yet, so a miss syncs once and looks again.
     private func open(_ target: NewMailNotifier.Target) async {
-        if session.currentAccountID != target.accountID {
+        let inView = session.scope?.models.contains { $0.account.id == target.accountID } == true
+        if !inView {
             path.removeAll()
             await session.select(target.accountID)
         }
-        guard let model = session.model, model.account.id == target.accountID else { return }
+        guard let model = session.scope?.models.first(where: { $0.account.id == target.accountID }) else { return }
         func summary() -> ThreadSummary? { model.summaries.first { $0.id == target.threadID } }
         if summary() == nil { await model.refresh() }
         if let found = summary() { path = [found] }

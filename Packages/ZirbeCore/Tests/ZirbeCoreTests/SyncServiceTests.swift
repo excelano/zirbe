@@ -589,6 +589,36 @@ final class SyncServiceTests: XCTestCase {
         XCTAssertTrue(summaries.isEmpty)
     }
 
+    // MARK: Server search
+
+    func testServerSearchCachesMatchesOlderThanTheSyncedWindow() async throws {
+        await server.add(incoming("Budget", id: "<old@x>", minutes: 0), body: MessageBody(text: "Q3 numbers", hasHTML: false))
+        await server.add(incoming("Plan", id: "<new@x>", minutes: 5))
+        try await sync.syncInbox(password: password, limit: 1)
+        let before = try await inboxSummaries()
+        XCTAssertEqual(before.map(\.subject), ["Plan"], "the older message sits outside the window")
+
+        let ids = try await sync.searchServer("q3", in: "INBOX", password: password)
+
+        XCTAssertEqual(ids, ["mid:<old@x>"])
+        let hits = try await store.threadSummaries(containingMessages: ids, accountID: account.id)
+        XCTAssertEqual(hits.map(\.subject), ["Budget"])
+        XCTAssertEqual(hits.first?.preview, "Q3 numbers", "the hit's body is fetched for its preview")
+        let calls = await server.calls(.searchEnvelopes)
+        XCTAssertEqual(calls, [.searchEnvelopes(mailbox: "INBOX", text: "q3", limit: 50)])
+    }
+
+    func testServerSearchWithNoMatchesLeavesTheStoreAlone() async throws {
+        await server.add(incoming("Plan", id: "<a@x>"))
+        try await sync.syncInbox(password: password)
+
+        let ids = try await sync.searchServer("budget", in: "INBOX", password: password)
+
+        XCTAssertTrue(ids.isEmpty)
+        let summaries = try await allSummaries()
+        XCTAssertEqual(summaries.map(\.subject), ["Plan"])
+    }
+
     // MARK: Watching
 
     func testWatchInboxYieldsOnServerChangesAndEndsWhenStopped() async throws {

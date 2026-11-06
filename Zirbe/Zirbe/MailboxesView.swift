@@ -34,6 +34,7 @@ struct MailboxesView: View {
         NavigationStack {
             List {
                 if let accounts = browsedAccounts {
+                    allInboxesRow
                     ForEach(accounts, id: \.account.id) { account in
                         Section {
                             folderRows(in: account)
@@ -67,6 +68,43 @@ struct MailboxesView: View {
     private var browsedAccounts: [InboxModel]? {
         guard case .browse = mode, let session, session.models.count > 1 else { return nil }
         return session.models
+    }
+
+    private var isViewingAllInboxes: Bool { session?.scope?.isAllInboxes == true }
+
+    private var allInboxesRow: some View {
+        Button(action: pickAllInboxes) {
+            HStack(spacing: 12) {
+                Image(systemName: "tray.2")
+                    .foregroundStyle(.tint)
+                    .frame(width: 24)
+                Text("All Inboxes")
+                    .foregroundStyle(.primary)
+                Spacer()
+                if let count = session?.inboxUnreadCount, count > 0 {
+                    Text("\(count)")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                if isViewingAllInboxes {
+                    Image(systemName: "checkmark")
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(.tint)
+                }
+            }
+            .contentShape(Rectangle())
+            .padding(.vertical, 2)
+        }
+        .buttonStyle(.plain)
+        .listRowBackground(Color.zirbeCanvas)
+    }
+
+    private func pickAllInboxes() {
+        Task {
+            await session?.selectAllInboxes()
+            await session?.scope?.refresh()
+        }
+        dismiss()
     }
 
     private var isEmpty: Bool {
@@ -138,7 +176,7 @@ struct MailboxesView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
-            if case .browse = mode, account === model, mailbox.name == account.currentMailbox.name {
+            if case .browse = mode, !isViewingAllInboxes, account === model, mailbox.name == account.currentMailbox.name {
                 Image(systemName: "checkmark")
                     .font(.body.weight(.semibold))
                     .foregroundStyle(.tint)
@@ -172,10 +210,11 @@ struct MailboxesView: View {
     private func pick(_ mailbox: Mailbox, in account: InboxModel) {
         switch mode {
         case .browse:
+            let switching = isViewingAllInboxes || account !== model
             Task {
-                if account !== model { await session?.select(account.account.id) }
+                if switching { await session?.select(account.account.id) }
                 await account.selectMailbox(mailbox)
-                if account !== model, account.isViewingInbox { await account.refresh() }
+                if switching, account.isViewingInbox { await account.refresh() }
             }
         case .move(let threadIDs):
             Task { await model.move(threadIDs: threadIDs, to: mailbox.name) }

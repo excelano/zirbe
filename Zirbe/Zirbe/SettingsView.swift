@@ -126,7 +126,7 @@ struct SettingsView: View {
             }
             .sheet(isPresented: $addingAccount) {
                 OnboardingView(
-                    prefillEmail: "",
+                    prefill: nil,
                     onConnect: { account, password in
                         try await session.connect(account: account, password: password)
                         addingAccount = false
@@ -240,7 +240,7 @@ private struct AccountSettingsView: View {
         .task { await model.loadBlockedSenders() }
         .sheet(isPresented: $reentering) {
             OnboardingView(
-                prefillEmail: account.emailAddress,
+                prefill: account,
                 onConnect: { account, password in
                     try await session.connect(account: account, password: password)
                     reentering = false

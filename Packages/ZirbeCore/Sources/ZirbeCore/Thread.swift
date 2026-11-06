@@ -118,6 +118,7 @@ public struct Thread: Sendable, Hashable, Identifiable {
 /// when a conversation is opened.
 public struct ThreadSummary: Sendable, Hashable, Identifiable {
     public var id: String
+    public var accountID: String
     public var subject: String
     public var participants: [Participant]
     public var lastActivity: Date?
@@ -136,6 +137,7 @@ public struct ThreadSummary: Sendable, Hashable, Identifiable {
 
     public init(
         id: String,
+        accountID: String,
         subject: String,
         participants: [Participant],
         lastActivity: Date?,
@@ -146,6 +148,7 @@ public struct ThreadSummary: Sendable, Hashable, Identifiable {
         preview: String? = nil
     ) {
         self.id = id
+        self.accountID = accountID
         self.subject = subject
         self.participants = participants
         self.lastActivity = lastActivity
@@ -155,4 +158,11 @@ public struct ThreadSummary: Sendable, Hashable, Identifiable {
         self.messageCount = messageCount
         self.preview = preview
     }
+
+    public var key: ThreadKey { ThreadKey(accountID: accountID, threadID: id) }
+}
+
+public struct ThreadKey: Sendable, Hashable {
+    public var accountID: String
+    public var threadID: String
 }

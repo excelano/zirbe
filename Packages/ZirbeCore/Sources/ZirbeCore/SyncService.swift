@@ -132,14 +132,26 @@ public actor SyncService {
             try await enforceBlocklist()
         }
         try await store.rethread(accountID: account.id)
+        await backfillLatestBodies()
+    }
 
-        // Backfill each thread's newest message body so the inbox row shows a
-        // preview snippet. Only threads whose latest message isn't already cached
-        // are fetched, grouped by mailbox over the warm session; each fetched body
-        // then moves its own thread's snippet into place. This also makes the first
-        // open of those threads instant, since the body is now cached. Best effort:
-        // a fetch failure here leaves the snippet empty rather than failing the
-        // whole sync, so the inbox still updates.
+    public func searchServer(_ query: String, in mailbox: String, password: String, limit: Int = 50) async throws -> [String] {
+        try await engine.connect(username: account.username, password: password)
+        let messages = try await engine.searchEnvelopes(in: mailbox, text: query, limit: limit).map(Message.init)
+        guard !messages.isEmpty else { return [] }
+        try await store.save(messages, accountID: account.id, mailboxName: mailbox)
+        try await store.rethread(accountID: account.id)
+        await backfillLatestBodies()
+        return messages.map(\.id)
+    }
+
+    /// Fetch each thread's newest message body so its row shows a preview
+    /// snippet. Only threads whose latest message isn't already cached are
+    /// fetched, grouped by mailbox over the warm session; each fetched body then
+    /// moves its own thread's snippet into place, and the first open of those
+    /// threads is instant. Best effort: a failure leaves the snippet empty rather
+    /// than failing the sync or search that called it.
+    private func backfillLatestBodies() async {
         do {
             let needing = try await store.latestMessagesNeedingBodies(accountID: account.id)
             if !needing.isEmpty {
@@ -162,10 +174,7 @@ public actor SyncService {
                     try await store.refreshThreadSnippets(fromLatestMessages: Array(bodies.keys), accountID: account.id)
                 }
             }
-        } catch {
-            // Snippets are a convenience; a failure to backfill them must not
-            // sink a sync that already reconciled the inbox.
-        }
+        } catch {}
     }
 
     /// List the server's folders and cache them, so the mailbox switcher has names

@@ -242,6 +242,7 @@ struct ThreadRow: Codable, FetchableRecord, PersistableRecord {
     var summary: ThreadSummary {
         ThreadSummary(
             id: id,
+            accountID: accountID,
             subject: subject,
             participants: participants,
             lastActivity: lastActivity,
@@ -1081,13 +1082,26 @@ public final class MailStore: @unchecked Sendable {
                   AND s.accountID = :acct
                   AND m.threadID IS NOT NULL
                 """, arguments: ["match": match, "acct": accountID])
-            guard !threadIDs.isEmpty else { return [] }
-            return try ThreadRow
-                .filter(Column("accountID") == accountID && threadIDs.contains(Column("id")))
-                .order(Column("lastActivity").desc)
-                .fetchAll(db)
-                .map(\.summary)
+            return try Self.summaries(threadIDs: threadIDs, accountID: accountID, db)
         }
+    }
+
+    public func threadSummaries(containingMessages messageIDs: [String], accountID: String) async throws -> [ThreadSummary] {
+        try await database.read { db in
+            let threadIDs = try String.fetchSet(db, MessageRow
+                .select(Column("threadID"))
+                .filter(Column("accountID") == accountID && messageIDs.contains(Column("id")) && Column("threadID") != nil))
+            return try Self.summaries(threadIDs: threadIDs, accountID: accountID, db)
+        }
+    }
+
+    private static func summaries(threadIDs: Set<String>, accountID: String, _ db: Database) throws -> [ThreadSummary] {
+        guard !threadIDs.isEmpty else { return [] }
+        return try ThreadRow
+            .filter(Column("accountID") == accountID && threadIDs.contains(Column("id")))
+            .order(Column("lastActivity").desc)
+            .fetchAll(db)
+            .map(\.summary)
     }
 
 
