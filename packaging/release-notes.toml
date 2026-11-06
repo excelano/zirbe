@@ -6,46 +6,27 @@ version = "1.4.0"
 
 [locales."en-us"]
 whats-new = """
-Zirbe now holds more than one email account. Add another from Settings, then \
-switch between them from the folder list, where each account's folders sit \
-under its own name. Every account works the way your first one always has.
+Zirbe now holds more than one email account. Add one from Settings, give each \
+a label and a color, and switch between them from the folder list. A new \
+conversation is sent from the account you're viewing, or pick another on the \
+From line, and a reply comes from the conversation's own account. \
+Notifications and the app badge cover every account.
 
-Give each account a label and a color, such as Work in blue and Home in green. \
-The color and label sit at the top of the inbox, so you always know which \
-account you're reading.
+With more than one account, Zirbe opens to All Inboxes: every inbox in one \
+list, each conversation marked with its account's color.
 
-A new conversation is sent from the account you're viewing, and you can pick \
-another from the From line before you send. A reply always comes from the \
-account the conversation is in.
+Search can now reach older mail. A button below your results searches the \
+whole folder on your mail server, not only what's on your device.
 
-New mail notifications cover every account, a tap opens the conversation in \
-the right one, and the app badge counts unread mail across all of them.
+Zirbe now runs on iPad, with your conversations in a list beside the one \
+you're reading.
 
-Removing an account deletes its downloaded mail from your device and leaves \
-your other accounts as they were.
+Zirbe opens faster, showing your inbox from what's already on your device \
+while it catches up, and deleting or archiving several conversations in a row \
+keeps up.
 
-With more than one account, Zirbe opens to All Inboxes: every account's inbox \
-in one list, each conversation marked with its account's color. Reply, archive, \
-or delete from there and it happens in the right account. Pick a single \
-account's folder from the folder list to see just that account.
-
-Search can now reach older mail. A button below your results looks through \
-the whole folder on your mail server, not only what's already on your device, \
-and what it finds stays on your device, ready to open.
-
-Zirbe now runs on iPad. Your conversations sit in a list down the side, and the \
-one you open fills the rest of the screen beside it, so you can move from \
-thread to thread without going back. In Slide Over or a narrow window it works \
-the way it does on iPhone.
-
-Zirbe opens faster, showing your inbox straight from what's already on your \
-device while it catches up with the server. Conversations open at once, and \
-deleting, archiving, or moving several in a row keeps up, each leaving the list \
-the moment you tap. Long threads scroll and take replies more smoothly.
-
-If your password changes, Zirbe asks for it again instead of showing an error, \
-with your mail server settings already filled in. Opening the app without a \
-connection shows your inbox rather than the sign-in screen.
+If your password changes, Zirbe asks for it again with your mail server \
+settings already filled in.
 
 As always, Zirbe talks only to your own mail servers. No backend, no analytics, \
 no third-party SDKs.
