@@ -18,7 +18,6 @@ struct InboxView: View {
     /// Drives live refresh: the inbox watches the server (IMAP IDLE) only while
     /// the app is in the foreground, and pauses when it backgrounds.
     @Environment(\.scenePhase) private var scenePhase
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @State private var isComposing = false
     /// A saved draft loaded for editing, presented as the prefilled composer.
     /// Held as an Identifiable request so `.sheet(item:)` drives it.
@@ -319,12 +318,13 @@ struct InboxView: View {
         Set(selectedSummaries.map(\.accountID)).count > 1
     }
 
-    /// The toolbar lays items out at their ideal width and moves whatever doesn't
-    /// fit into an overflow menu, so a long account title would push Select and
-    /// Settings out of sight. The split view's sidebar column also carries the
+    /// The toolbar sizes this button from its full title text, ignoring any
+    /// frame, and moves whatever doesn't fit into an overflow menu, so a long
+    /// account title would push Select and Settings out of sight. The text itself
+    /// is shortened instead. The split view's sidebar column also carries the
     /// sidebar toggle, leaving the title less room than the iPhone's full width.
-    private var folderSelectorMaxWidth: CGFloat {
-        horizontalSizeClass == .regular ? 130 : 200
+    private var folderTitleLimit: Int {
+        openedThread == nil ? 16 : 14
     }
 
     private var navigationTitle: String {
@@ -410,18 +410,15 @@ struct InboxView: View {
                         if hasSeveralAccounts, let accountModel {
                             AccountDot(color: accountModel.account.color)
                         }
-                        Text(folderTitle)
+                        Text(folderTitle.middleTruncated(to: folderTitleLimit))
                             .font(.headline)
                             .foregroundStyle(.primary)
                             .lineLimit(1)
-                            .truncationMode(.middle)
-                            .minimumScaleFactor(0.75)
                         Image(systemName: "chevron.down")
                             .font(.caption2.weight(.semibold))
                             .foregroundStyle(.secondary)
                             .fixedSize()
                     }
-                    .frame(maxWidth: folderSelectorMaxWidth, alignment: .leading)
                 }
                 .accessibilityLabel(folderAccessibilityLabel)
             }
@@ -784,5 +781,13 @@ private struct ThreadAvatar: View {
         } else {
             SenderAvatar(participant: others.first ?? fallback, size: size)
         }
+    }
+}
+
+private extension String {
+    func middleTruncated(to limit: Int) -> String {
+        guard count > limit else { return self }
+        let head = (limit - 1) / 2
+        return "\(prefix(head))…\(suffix(limit - 1 - head))"
     }
 }

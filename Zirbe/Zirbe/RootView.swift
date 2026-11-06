@@ -80,6 +80,7 @@ struct RootView: View {
         if horizontalSizeClass == .regular {
             NavigationSplitView {
                 InboxView(scope: scope, session: session, onRemoveAccount: removeAccount, openedThread: openedThread)
+                    .navigationSplitViewColumnWidth(min: 320, ideal: 400, max: 480)
             } detail: {
                 if let summary = path.last, let model = scope.model(for: summary) {
                     ConversationView(model: model, summary: summary, onClose: closeConversation)
