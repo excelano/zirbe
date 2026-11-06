@@ -28,6 +28,7 @@ struct InboxView: View {
     @State private var showingSettings = false
     /// Presents the mailbox switcher (browse mode) from the title.
     @State private var showingMailboxes = false
+    @State private var columnWidth: CGFloat = 0
     /// When set, presents the mailbox switcher in move mode for these
     /// conversations. Held as an Identifiable request so `.sheet(item:)` drives it
     /// and the ids are captured before any selection clears.
@@ -106,6 +107,7 @@ struct InboxView: View {
         .background(Color.zirbeCanvas)
         .environment(\.editMode, $editMode)
         .navigationBarTitleDisplayMode(.inline)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { columnWidth = $0 }
         .toolbar { toolbarContent }
         .searchable(text: $searchText, prompt: "Search chats")
         #if DEBUG
@@ -319,12 +321,11 @@ struct InboxView: View {
     }
 
     /// The toolbar sizes this button from its full title text, ignoring any
-    /// frame, and moves whatever doesn't fit into an overflow menu, so a long
-    /// account title would push Select and Settings out of sight. The text itself
-    /// is shortened instead. The split view's sidebar column also carries the
-    /// sidebar toggle, leaving the title less room than the iPhone's full width.
-    private var folderTitleLimit: Int {
-        openedThread == nil ? 16 : 14
+    /// frame, and moves whatever doesn't fit into an overflow menu. The text is
+    /// shortened to the room the column leaves beside the trailing buttons,
+    /// which on iPad include the sidebar toggle.
+    private var folderTitleWidth: CGFloat {
+        max(columnWidth - 260, 80)
     }
 
     private var navigationTitle: String {
@@ -410,7 +411,7 @@ struct InboxView: View {
                         if hasSeveralAccounts, let accountModel {
                             AccountDot(color: accountModel.account.color)
                         }
-                        Text(folderTitle.middleTruncated(to: folderTitleLimit))
+                        Text(folderTitle.middleTruncated(toFit: folderTitleWidth, font: .preferredFont(forTextStyle: .headline)))
                             .font(.headline)
                             .foregroundStyle(.primary)
                             .lineLimit(1)
@@ -428,18 +429,16 @@ struct InboxView: View {
                 Button {
                     editMode = .active
                 } label: {
-                    Image(systemName: "checkmark.circle")
+                    Label("Select Conversations", systemImage: "checkmark.circle")
                 }
                 .disabled(scope.summaries.isEmpty)
-                .accessibilityLabel("Select Conversations")
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     showingSettings = true
                 } label: {
-                    Image(systemName: "gearshape")
+                    Label("Settings", systemImage: "gearshape")
                 }
-                .accessibilityLabel("Settings")
             }
             // Bottom bar in the Mail idiom: filter at the leading edge, the system
             // search field centered, compose at the trailing edge.
@@ -447,11 +446,13 @@ struct InboxView: View {
                 Button {
                     showUnreadOnly.toggle()
                 } label: {
-                    Image(systemName: showUnreadOnly
-                        ? "line.3.horizontal.decrease.circle.fill"
-                        : "line.3.horizontal.decrease.circle")
+                    Label(
+                        showUnreadOnly ? "Show All Conversations" : "Show Unread Only",
+                        systemImage: showUnreadOnly
+                            ? "line.3.horizontal.decrease.circle.fill"
+                            : "line.3.horizontal.decrease.circle"
+                    )
                 }
-                .accessibilityLabel(showUnreadOnly ? "Show all conversations" : "Show unread only")
             }
             ToolbarSpacer(.flexible, placement: .bottomBar)
             DefaultToolbarItem(kind: .search, placement: .bottomBar)
@@ -460,9 +461,8 @@ struct InboxView: View {
                 Button {
                     isComposing = true
                 } label: {
-                    Image(systemName: "square.and.pencil")
+                    Label("New Conversation", systemImage: "square.and.pencil")
                 }
-                .accessibilityLabel("New Conversation")
             }
         }
     }
@@ -785,9 +785,18 @@ private struct ThreadAvatar: View {
 }
 
 private extension String {
-    func middleTruncated(to limit: Int) -> String {
-        guard count > limit else { return self }
-        let head = (limit - 1) / 2
-        return "\(prefix(head))…\(suffix(limit - 1 - head))"
+    func middleTruncated(toFit width: CGFloat, font: UIFont) -> String {
+        func fits(_ text: String) -> Bool {
+            (text as NSString).size(withAttributes: [.font: font]).width <= width
+        }
+        guard !fits(self) else { return self }
+        var limit = count - 1
+        while limit > 2 {
+            let head = (limit - 1) / 2
+            let candidate = "\(prefix(head))…\(suffix(limit - 1 - head))"
+            if fits(candidate) { return candidate }
+            limit -= 1
+        }
+        return "\(prefix(1))…"
     }
 }

@@ -25,12 +25,15 @@ public enum MailEngineError: Error {
     /// The server turned the username and password away at login, as opposed to
     /// being unreachable, so the caller can ask for the password again.
     case authenticationRejected
+    /// The server stopped answering partway through connecting or signing in.
+    case timedOut
 }
 
 extension MailEngineError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .authenticationRejected: "The mail server didn’t accept that password."
+        case .timedOut: "The mail server stopped answering. Try again in a moment."
         case .notConnected, .partNotFound, .decodeFailed: nil
         }
     }
@@ -56,6 +59,8 @@ public actor MailEngine {
     /// The dedicated IDLE session watching a mailbox while live refresh is on.
     /// Held so `stopIdle()` can tear it down; nil when not watching.
     private var idleSession: IMAPIdleSession?
+
+    static let signInDeadline: Duration = .seconds(30)
 
     public init(config: MailServerConfig, logger: Logger = Logger(label: "zirbe.mail")) {
         self.logger = logger
@@ -566,19 +571,25 @@ public actor MailEngine {
     private func ensureSession() async throws {
         guard let credentials else { throw MailEngineError.notConnected }
         if isLoggedIn, await server.isConnected { return }
-        if await !server.isConnected {
-            try await server.connect()
-        }
+        let server = self.server
         do {
-            switch credentials.login {
-            case .password(let password):
-                try await server.login(username: credentials.username, password: password)
-            case .accessToken(let token):
-                try await server.authenticateXOAUTH2(email: credentials.username, accessToken: try await token())
-                await server.setXOAUTH2AccessTokenProvider(email: credentials.username, accessTokenProvider: token)
+            try await withDeadline(Self.signInDeadline) {
+                if await !server.isConnected {
+                    try await server.connect()
+                }
+                switch credentials.login {
+                case .password(let password):
+                    try await server.login(username: credentials.username, password: password)
+                case .accessToken(let token):
+                    try await server.authenticateXOAUTH2(email: credentials.username, accessToken: try await token())
+                    await server.setXOAUTH2AccessTokenProvider(email: credentials.username, accessTokenProvider: token)
+                }
             }
         } catch IMAPError.loginFailed, IMAPError.authFailed {
             throw MailEngineError.authenticationRejected
+        } catch MailEngineError.timedOut {
+            try? await server.disconnect()
+            throw MailEngineError.timedOut
         }
         isLoggedIn = true
         logger.debug("session ready for \(LogRedaction.address(credentials.username))")

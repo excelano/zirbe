@@ -277,13 +277,17 @@ struct OnboardingView: View {
     private func connect() {
         passwordFocused = false
         let account = formAccount
-        run { try await session.connect(account: account, password: password) }
+        run {
+            try ensureNotAlreadyAdded(account)
+            try await session.connect(account: account, password: password)
+        }
     }
 
     private func signIn(with provider: OAuthProvider) {
         let account = formAccount
         let authorization = OAuthAuthorization(provider: provider, loginHint: account.emailAddress)
         run {
+            try ensureNotAlreadyAdded(account)
             let callback = try await webAuthenticationSession.authenticate(
                 using: authorization.url,
                 callbackURLScheme: provider.callbackScheme,
@@ -291,6 +295,11 @@ struct OnboardingView: View {
             )
             try await session.connect(account: account, authorization: authorization, callback: callback)
         }
+    }
+
+    private func ensureNotAlreadyAdded(_ account: Account) throws {
+        guard account.id != prefill?.id, session.accounts.contains(where: { $0.id == account.id }) else { return }
+        throw AlreadyAdded(address: account.emailAddress)
     }
 
     private func run(_ attempt: @escaping () async throws -> Void) {
@@ -307,6 +316,12 @@ struct OnboardingView: View {
             isConnecting = false
         }
     }
+}
+
+private struct AlreadyAdded: LocalizedError {
+    let address: String
+
+    var errorDescription: String? { "\(address) is already in Zirbe." }
 }
 
 private extension String {
