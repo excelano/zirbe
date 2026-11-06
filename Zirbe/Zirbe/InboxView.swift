@@ -10,8 +10,8 @@ import ZirbeCore
 
 struct InboxView: View {
     let model: InboxModel
-    /// Routes a full sign-out up to the session (forget credential + wipe cache).
-    let onSignOut: () -> Void
+    let session: AppSession
+    let onRemoveAccount: (String) -> Void
     /// The conversation open beside the list in the split view. Nil on compact
     /// width, where a row pushes its conversation instead.
     var openedThread: Binding<ThreadSummary?>? = nil
@@ -102,16 +102,16 @@ struct InboxView: View {
         }
         #endif
         .sheet(isPresented: $isComposing) {
-            ComposeView(model: model)
+            ComposeView(model: model, accounts: session.models)
         }
         .sheet(item: $draftEditRequest) { request in
             ComposeView(model: model, editing: request.edit)
         }
         .sheet(isPresented: $showingSettings) {
-            SettingsView(account: model.account, model: model, onSignOut: onSignOut)
+            SettingsView(session: session, onRemoveAccount: onRemoveAccount)
         }
         .sheet(isPresented: $showingMailboxes) {
-            MailboxesView(model: model, mode: .browse)
+            MailboxesView(model: model, mode: .browse, session: session)
         }
         .sheet(item: $moveRequest) { request in
             MailboxesView(
@@ -232,6 +232,12 @@ struct InboxView: View {
 
     /// The centered title while picking conversations; the title bar otherwise
     /// shows the mailbox switcher, so this is read only in selection mode.
+    private var hasSeveralAccounts: Bool { session.models.count > 1 }
+
+    private var folderTitle: String {
+        hasSeveralAccounts && model.isViewingInbox ? model.account.title : model.currentMailbox.displayName
+    }
+
     private var navigationTitle: String {
         selection.isEmpty ? "Select" : "\(selection.count) Selected"
     }
@@ -311,7 +317,10 @@ struct InboxView: View {
                     showingMailboxes = true
                 } label: {
                     HStack(spacing: 4) {
-                        Text(model.currentMailbox.displayName)
+                        if hasSeveralAccounts {
+                            AccountDot(color: model.account.color)
+                        }
+                        Text(folderTitle)
                             .font(.headline)
                             .foregroundStyle(.primary)
                             .lineLimit(1)
@@ -321,7 +330,9 @@ struct InboxView: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                .accessibilityLabel("Switch folder, currently \(model.currentMailbox.displayName)")
+                .accessibilityLabel(hasSeveralAccounts
+                    ? "Switch folder, currently \(model.currentMailbox.displayName) in \(model.account.title)"
+                    : "Switch folder, currently \(model.currentMailbox.displayName)")
             }
             // Top right pairs Select with Settings, the gear sitting at the far
             // edge: Mail's one deliberately overloaded corner, kept to two.

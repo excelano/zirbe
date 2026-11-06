@@ -38,6 +38,11 @@ enum AttachmentCache {
         return try? Data(contentsOf: url)
     }
 
+    static func removeAll() {
+        guard let directory = try? directory() else { return }
+        try? FileManager.default.removeItem(at: directory)
+    }
+
     static func save(_ data: Data, messageID: String, filename: String) {
         guard let url = try? fileURL(messageID: messageID, filename: filename) else { return }
         try? data.write(to: url, options: .atomic)

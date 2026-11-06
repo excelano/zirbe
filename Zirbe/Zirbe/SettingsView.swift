@@ -1,9 +1,5 @@
 // Author: David M. Anderson
 // Built with AI assistance (Claude, Anthropic)
-//
-// The settings sheet, reached from the gear in the inbox. It shows the signed-in
-// account and, for now, a single action: Sign Out. The structure (a sectioned
-// Form) is deliberately laid out to grow as more settings arrive.
 
 import SwiftUI
 import UIKit
@@ -28,15 +24,11 @@ enum SettingsKeys {
 }
 
 struct SettingsView: View {
-    let account: Account
-    /// The inbox model, for the blocked-sender list this sheet manages.
-    let model: InboxModel
-    /// Full sign-out: forget the credential and wipe the local copy. Routed up to
-    /// the session, which swaps the UI back to onboarding.
-    let onSignOut: () -> Void
+    let session: AppSession
+    let onRemoveAccount: (String) -> Void
 
     @Environment(\.dismiss) private var dismiss
-    @State private var confirmingSignOut = false
+    @State private var addingAccount = false
     /// True when the system permission has been denied, so the toggle can't take
     /// effect and we point the user to the system Settings instead.
     @State private var notificationsDenied = false
@@ -51,8 +43,15 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("Account") {
-                    LabeledContent("Email", value: account.emailAddress)
+                Section("Accounts") {
+                    ForEach(session.models, id: \.account.id) { model in
+                        NavigationLink {
+                            AccountSettingsView(session: session, model: model, onRemove: onRemoveAccount)
+                        } label: {
+                            accountRow(model)
+                        }
+                    }
+                    Button("Add Account") { addingAccount = true }
                 }
 
                 Section {
@@ -102,28 +101,6 @@ struct SettingsView: View {
                     Text("Zirbe shows the plain-text version as a chat bubble by default. The Email View renders the full HTML message. Loading remote images can let a sender know you opened the message and roughly where you are, so it stays off unless you turn it on.")
                 }
 
-                Section {
-                    NavigationLink {
-                        BlockedSendersView(model: model)
-                    } label: {
-                        LabeledContent("Blocked Senders") {
-                            Text(model.blockedSenders.isEmpty ? "None" : "\(model.blockedSenders.count)")
-                        }
-                    }
-                } header: {
-                    Text("Privacy")
-                } footer: {
-                    Text("A blocked sender's mail is moved to your Junk folder as it arrives, and their existing mail is moved there when you block them.")
-                }
-
-                Section {
-                    Button("Sign Out", role: .destructive) {
-                        confirmingSignOut = true
-                    }
-                } footer: {
-                    Text("Signing out removes this account and its downloaded mail from this device.")
-                }
-
                 #if DEBUG
                 Section {
                     Toggle("Demo mode", isOn: $demoMode)
@@ -141,26 +118,155 @@ struct SettingsView: View {
             .task {
                 let settings = await UNUserNotificationCenter.current().notificationSettings()
                 notificationsDenied = settings.authorizationStatus == .denied
-                await model.loadBlockedSenders()
             }
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                 }
             }
-            .confirmationDialog(
-                "Sign out of \(account.emailAddress)?",
-                isPresented: $confirmingSignOut,
-                titleVisibility: .visible
-            ) {
-                Button("Sign Out", role: .destructive) {
-                    dismiss()
-                    onSignOut()
-                }
-            } message: {
-                Text("This removes the account and its downloaded mail from this device.")
+            .sheet(isPresented: $addingAccount) {
+                OnboardingView(
+                    prefillEmail: "",
+                    onConnect: { account, password in
+                        try await session.connect(account: account, password: password)
+                        addingAccount = false
+                    },
+                    onCancel: { addingAccount = false }
+                )
             }
         }
+    }
+
+    private func accountRow(_ model: InboxModel) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            AccountLabel(account: model.account)
+            if model.account.label?.isEmpty == false {
+                Text(model.account.emailAddress)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+            if !model.isConnected {
+                Text("Password needed")
+                    .font(.footnote)
+                    .foregroundStyle(.red)
+            }
+        }
+    }
+}
+
+private struct AccountSettingsView: View {
+    let session: AppSession
+    let model: InboxModel
+    let onRemove: (String) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var label = ""
+    @State private var confirmingRemove = false
+    @State private var reentering = false
+
+    private var account: Account { model.account }
+
+    var body: some View {
+        Form {
+            Section {
+                TextField("Label", text: $label, prompt: Text(account.emailAddress))
+                    .textInputAutocapitalization(.words)
+                    .onSubmit(saveLabel)
+                LabeledContent("Email", value: account.emailAddress)
+            } footer: {
+                Text("The label names this account in the folder list and the inbox title.")
+            }
+
+            Section("Color") {
+                HStack {
+                    ForEach(AccountColor.allCases, id: \.self) { color in
+                        Button {
+                            Task { await session.setAppearance(label: account.label, color: color, accountID: account.id) }
+                        } label: {
+                            ZStack {
+                                AccountDot(color: color, size: 28)
+                                if color == account.color {
+                                    Image(systemName: "checkmark")
+                                        .font(.caption.weight(.bold))
+                                        .foregroundStyle(.white)
+                                }
+                            }
+                            .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(color.name)
+                        .accessibilityAddTraits(color == account.color ? .isSelected : [])
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+
+            if !model.isConnected {
+                Section {
+                    Button("Enter Password") { reentering = true }
+                } footer: {
+                    Text("Zirbe has no working password for this account, so it isn't syncing.")
+                }
+            }
+
+            Section {
+                NavigationLink {
+                    BlockedSendersView(model: model)
+                } label: {
+                    LabeledContent("Blocked Senders") {
+                        Text(model.blockedSenders.isEmpty ? "None" : "\(model.blockedSenders.count)")
+                    }
+                }
+            } header: {
+                Text("Privacy")
+            } footer: {
+                Text("A blocked sender's mail is moved to your Junk folder as it arrives, and their existing mail is moved there when you block them.")
+            }
+
+            Section {
+                Button("Remove Account", role: .destructive) {
+                    confirmingRemove = true
+                }
+            } footer: {
+                Text("Removing an account deletes its downloaded mail from this device.")
+            }
+        }
+        .scrollContentBackground(.hidden)
+        .background(Color.zirbeCanvas)
+        .navigationTitle(account.title)
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear { label = account.label ?? "" }
+        .onDisappear(perform: saveLabel)
+        .task { await model.loadBlockedSenders() }
+        .sheet(isPresented: $reentering) {
+            OnboardingView(
+                prefillEmail: account.emailAddress,
+                onConnect: { account, password in
+                    try await session.connect(account: account, password: password)
+                    reentering = false
+                },
+                onCancel: { reentering = false }
+            )
+        }
+        .confirmationDialog(
+            "Remove \(account.emailAddress)?",
+            isPresented: $confirmingRemove,
+            titleVisibility: .visible
+        ) {
+            Button("Remove Account", role: .destructive) {
+                dismiss()
+                onRemove(account.id)
+            }
+        } message: {
+            Text("This removes the account and its downloaded mail from this device.")
+        }
+    }
+
+    private func saveLabel() {
+        let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        let newLabel = trimmed.isEmpty ? nil : trimmed
+        guard newLabel != account.label else { return }
+        Task { await session.setAppearance(label: newLabel, color: account.color, accountID: account.id) }
     }
 }
 

@@ -19,6 +19,8 @@ public struct Account: Sendable, Hashable, Identifiable, Codable {
     public var smtpHost: String
     public var smtpPort: Int
     public var username: String
+    public var label: String?
+    public var color: AccountColor
 
     public init(
         id: String? = nil,
@@ -28,7 +30,9 @@ public struct Account: Sendable, Hashable, Identifiable, Codable {
         imapPort: Int = 993,
         smtpHost: String,
         smtpPort: Int = 587,
-        username: String? = nil
+        username: String? = nil,
+        label: String? = nil,
+        color: AccountColor = .blue
     ) {
         let address = emailAddress.lowercased()
         self.id = id ?? address
@@ -39,6 +43,13 @@ public struct Account: Sendable, Hashable, Identifiable, Codable {
         self.smtpHost = smtpHost
         self.smtpPort = smtpPort
         self.username = username ?? address
+        self.label = label
+        self.color = color
+    }
+
+    public var title: String {
+        let trimmed = label?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? emailAddress : trimmed
     }
 
     /// This account as a conversation participant, the sender of anything Zirbe
@@ -46,6 +57,10 @@ public struct Account: Sendable, Hashable, Identifiable, Codable {
     public var selfParticipant: Participant {
         Participant(address: emailAddress, displayName: displayName)
     }
+}
+
+public enum AccountColor: String, Sendable, Hashable, Codable, CaseIterable {
+    case blue, green, orange, pink, purple, teal, red, yellow
 }
 
 /// The well-known purpose of a mailbox, when we can determine it from IMAP

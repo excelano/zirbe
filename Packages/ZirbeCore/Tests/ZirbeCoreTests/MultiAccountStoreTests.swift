@@ -118,7 +118,7 @@ final class MultiAccountStoreTests: XCTestCase {
             let legacy = try DatabaseQueue(path: dbPath)
             try MailStore.migrator.migrate(legacy, upTo: "v19-message-invite")
             try await legacy.write { [work] db in
-                try work.save(db)
+                try work.insertIntoLegacySchema(db)
                 try db.execute(
                     sql: """
                         INSERT INTO message
@@ -159,6 +159,9 @@ final class MultiAccountStoreTests: XCTestCase {
         XCTAssertEqual(thread?.messages.first?.bodyText, "Tacos at noon?")
         let hits = try await upgraded.searchThreads(accountID: work.id, query: "tacos")
         XCTAssertEqual(hits.count, 1)
+        let accounts = try await upgraded.accounts()
+        XCTAssertEqual(accounts.map(\.color), [.blue])
+        XCTAssertNil(accounts.first?.label)
 
         try await upgraded.deleteThreads(threadIDs: ["mid:<lunch@x>"], accountID: work.id)
         try await upgraded.rethread(accountID: work.id)

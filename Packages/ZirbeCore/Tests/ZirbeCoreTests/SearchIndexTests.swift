@@ -269,7 +269,7 @@ final class SearchIndexTests: XCTestCase {
             let legacy = try DatabaseQueue(path: dbPath)
             try MailStore.migrator.migrate(legacy, upTo: "v17-message-snippet")
             try await legacy.write { db in
-                try acct.save(db)
+                try acct.insertIntoLegacySchema(db)
                 try db.execute(
                     sql: """
                         INSERT INTO message

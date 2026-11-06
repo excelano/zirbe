@@ -66,6 +66,10 @@ public final class AppSession {
         model.flatMap { $0.isConnected ? nil : $0.account }
     }
 
+    public var firstConnectedAccountID: String? {
+        models.first(where: \.isConnected)?.account.id
+    }
+
     public var inboxUnreadCount: Int {
         models.reduce(0) { $0 + ($1.unreadCounts["INBOX"] ?? 0) }
     }
@@ -105,6 +109,13 @@ public final class AppSession {
     /// written to the Keychain unless the sign-in succeeds.
     public func connect(account: Account, password: String) async throws {
         let store = try ensureStore()
+        var account = account
+        if let existing = models.first(where: { $0.account.id == account.id })?.account {
+            account.label = existing.label
+            account.color = existing.color
+        } else {
+            account.color = nextColor()
+        }
         let candidate = makeModel(account, store)
         try await candidate.signIn(password: password)
         try credentials.save(password: password, for: account.id)
@@ -118,6 +129,23 @@ public final class AppSession {
             models.append(candidate)
         }
         await select(account.id)
+    }
+
+    public func setAppearance(label: String?, color: AccountColor, accountID: String) async {
+        guard let model = models.first(where: { $0.account.id == accountID }) else { return }
+        do {
+            try await store?.setAppearance(label: label, color: color, accountID: accountID)
+            model.account.label = label
+            model.account.color = color
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func nextColor() -> AccountColor {
+        let used = Set(models.map(\.account.color))
+        return AccountColor.allCases.first { !used.contains($0) }
+            ?? AccountColor.allCases[models.count % AccountColor.allCases.count]
     }
 
     public func select(_ accountID: String) async {
@@ -135,6 +163,7 @@ public final class AppSession {
         await removed.stopLiveRefresh()
         removed.signOut()
         try? credentials.delete(for: accountID)
+        AttachmentCache.removeAll()
         if models.isEmpty {
             try? await store?.eraseAll()
         } else {

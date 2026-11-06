@@ -26,16 +26,23 @@ struct MailboxesView: View {
     /// can pop itself once its thread has left the folder. Unused in browse mode
     /// and by the inbox, where the list just refreshes in place.
     var onMoved: (() -> Void)?
+    var session: AppSession?
 
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
             List {
-                ForEach(sortedMailboxes) { mailbox in
-                    Button { pick(mailbox) } label: { row(mailbox) }
-                        .buttonStyle(.plain)
-                        .listRowBackground(Color.zirbeCanvas)
+                if let accounts = browsedAccounts {
+                    ForEach(accounts, id: \.account.id) { account in
+                        Section {
+                            folderRows(in: account)
+                        } header: {
+                            accountHeader(account)
+                        }
+                    }
+                } else {
+                    folderRows(in: model)
                 }
             }
             .listStyle(.plain)
@@ -48,12 +55,43 @@ struct MailboxesView: View {
                     Button("Cancel") { dismiss() }
                 }
             }
-            .overlay { if sortedMailboxes.isEmpty { emptyState } }
+            .overlay { if isEmpty { emptyState } }
         }
         .task {
-            await model.loadMailboxes()
-            await model.discoverFolders()
+            let accounts = browsedAccounts ?? [model]
+            for account in accounts { await account.loadMailboxes() }
+            for account in accounts { await account.discoverFolders() }
         }
+    }
+
+    private var browsedAccounts: [InboxModel]? {
+        guard case .browse = mode, let session, session.models.count > 1 else { return nil }
+        return session.models
+    }
+
+    private var isEmpty: Bool {
+        (browsedAccounts ?? [model]).allSatisfy { sortedMailboxes(in: $0).isEmpty }
+    }
+
+    private func folderRows(in account: InboxModel) -> some View {
+        ForEach(sortedMailboxes(in: account)) { mailbox in
+            Button { pick(mailbox, in: account) } label: { row(mailbox, in: account) }
+                .buttonStyle(.plain)
+                .listRowBackground(Color.zirbeCanvas)
+        }
+    }
+
+    private func accountHeader(_ account: InboxModel) -> some View {
+        HStack {
+            AccountLabel(account: account.account)
+            Spacer()
+            if !account.isConnected {
+                Text("Password needed")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .font(.subheadline.weight(.semibold))
+        .textCase(nil)
     }
 
     private var title: String {
@@ -66,13 +104,13 @@ struct MailboxesView: View {
     /// The destinations a move offers, or every folder in browse mode. Moving a
     /// conversation into the folder it already sits in is a no-op, so the current
     /// folder is dropped from the move list.
-    private var sortedMailboxes: [Mailbox] {
+    private func sortedMailboxes(in account: InboxModel) -> [Mailbox] {
         let folders: [Mailbox]
         switch mode {
         case .browse:
-            folders = model.mailboxes
+            folders = account.mailboxes
         case .move:
-            folders = model.mailboxes.filter { $0.name != model.currentMailbox.name }
+            folders = account.mailboxes.filter { $0.name != account.currentMailbox.name }
         }
         return folders.sorted { sortKey($0) < sortKey($1) }
     }
@@ -87,7 +125,7 @@ struct MailboxesView: View {
     }
 
     @ViewBuilder
-    private func row(_ mailbox: Mailbox) -> some View {
+    private func row(_ mailbox: Mailbox, in account: InboxModel) -> some View {
         HStack(spacing: 12) {
             Image(systemName: symbol(for: mailbox))
                 .foregroundStyle(.tint)
@@ -95,12 +133,12 @@ struct MailboxesView: View {
             Text(mailbox.displayName)
                 .foregroundStyle(.primary)
             Spacer()
-            if let count = model.unreadCounts[mailbox.name], count > 0 {
+            if let count = account.unreadCounts[mailbox.name], count > 0 {
                 Text("\(count)")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
-            if case .browse = mode, mailbox.name == model.currentMailbox.name {
+            if case .browse = mode, account === model, mailbox.name == account.currentMailbox.name {
                 Image(systemName: "checkmark")
                     .font(.body.weight(.semibold))
                     .foregroundStyle(.tint)
@@ -131,10 +169,13 @@ struct MailboxesView: View {
         }
     }
 
-    private func pick(_ mailbox: Mailbox) {
+    private func pick(_ mailbox: Mailbox, in account: InboxModel) {
         switch mode {
         case .browse:
-            Task { await model.selectMailbox(mailbox) }
+            Task {
+                await account.selectMailbox(mailbox)
+                if account !== model { await session?.select(account.account.id) }
+            }
         case .move(let threadIDs):
             Task { await model.move(threadIDs: threadIDs, to: mailbox.name) }
             onMoved?()

@@ -40,7 +40,7 @@ public final class InboxModel {
     /// Normalized and sorted; loaded on demand and updated on block/unblock.
     public private(set) var blockedSenders: [String] = []
 
-    public let account: Account
+    public internal(set) var account: Account
     private let store: MailStore
     private let sync: SyncService
     /// The app-specific password for this session, in memory only. Cleared on

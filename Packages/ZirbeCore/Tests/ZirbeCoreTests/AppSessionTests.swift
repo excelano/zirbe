@@ -134,6 +134,48 @@ final class AppSessionTests: XCTestCase {
         XCTAssertTrue(accounts.isEmpty)
     }
 
+    func testEachNewAccountGetsAColourNotYetInUse() async throws {
+        let session = makeSession()
+        try await connectBoth(session)
+
+        XCTAssertEqual(session.accounts.map(\.color), [.blue, .green])
+    }
+
+    func testALabelAndColourSurviveASyncAndARestore() async throws {
+        let session = makeSession()
+        try await connectBoth(session)
+
+        await session.setAppearance(label: "Work", color: .purple, accountID: work.id)
+        await session.select(work.id)
+        await session.model?.refresh()
+
+        XCTAssertEqual(session.model?.account.title, "Work")
+        let restored = makeSession()
+        await restored.restore()
+        let account = restored.accounts.first { $0.id == work.id }
+        XCTAssertEqual(account?.label, "Work")
+        XCTAssertEqual(account?.color, .purple)
+    }
+
+    func testReconnectingKeepsTheLabelAndColour() async throws {
+        let session = makeSession()
+        try await connectBoth(session)
+        await session.setAppearance(label: "Work", color: .purple, accountID: work.id)
+
+        try await session.connect(account: work, password: "new-pw")
+
+        let account = session.accounts.first { $0.id == work.id }
+        XCTAssertEqual(account?.label, "Work")
+        XCTAssertEqual(account?.color, .purple)
+    }
+
+    func testAnUnlabelledAccountIsTitledByItsAddress() {
+        XCTAssertEqual(work.title, "me@work.com")
+        var labelled = work
+        labelled.label = "  "
+        XCTAssertEqual(labelled.title, "me@work.com")
+    }
+
     func testTheInboxUnreadCountSumsEveryAccount() async throws {
         let session = makeSession()
         try await connectBoth(session)

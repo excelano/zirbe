@@ -17,7 +17,8 @@ import SwiftUI
 import ZirbeCore
 
 struct ComposeView: View {
-    let model: InboxModel
+    let accounts: [InboxModel]
+    @State private var sender: InboxModel
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
 
@@ -47,8 +48,9 @@ struct ComposeView: View {
     /// A fresh new-conversation composer, or one prefilled from a saved draft. A
     /// saved draft carries no Bcc (the blind list is never written to the draft
     /// copy), so an edited draft opens with an empty Bcc field.
-    init(model: InboxModel, editing: DraftEdit? = nil) {
-        self.model = model
+    init(model: InboxModel, accounts: [InboxModel] = [], editing: DraftEdit? = nil) {
+        self.accounts = accounts
+        _sender = State(initialValue: model)
         let to = editing.map { Self.recipientText($0.to) } ?? ""
         let cc = editing.map { Self.recipientText($0.cc) } ?? ""
         let subject = editing?.subject ?? ""
@@ -77,6 +79,11 @@ struct ComposeView: View {
                 .padding(.horizontal)
                 .padding(.bottom, 12)
 
+            if accounts.count > 1 {
+                fromRow
+                divider
+            }
+
             // The "To" label doubles as the Cc/Bcc disclosure; the chevron hints
             // it's tappable and flips when the rows are open.
             recipientRow("To", text: $toText, field: .to, showsDisclosure: true,
@@ -91,7 +98,7 @@ struct ComposeView: View {
                 divider
             }
 
-            if let error = model.errorMessage {
+            if let error = sender.errorMessage {
                 Text(error)
                     .font(.callout)
                     .foregroundStyle(.red)
@@ -232,6 +239,39 @@ struct ComposeView: View {
         }
     }
 
+    private var fromRow: some View {
+        HStack(spacing: 6) {
+            Text("From")
+                .foregroundStyle(.secondary)
+            Menu {
+                ForEach(accounts, id: \.account.id) { account in
+                    Button {
+                        sender = account
+                    } label: {
+                        if account === sender {
+                            Label(account.account.title, systemImage: "checkmark")
+                        } else {
+                            Text(account.account.title)
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    AccountLabel(account: sender.account)
+                        .foregroundStyle(.primary)
+                    Image(systemName: "chevron.up.chevron.down")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .disabled(draftContext != nil)
+            .accessibilityLabel("From \(sender.account.title)")
+            Spacer()
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 11)
+    }
+
     private var divider: some View {
         Divider().padding(.leading)
     }
@@ -278,7 +318,7 @@ struct ComposeView: View {
     private func send() {
         isSending = true
         Task {
-            let sent = await model.sendNew(
+            let sent = await sender.sendNew(
                 to: RecipientParsing.parse(toText),
                 cc: RecipientParsing.parse(ccText),
                 bcc: RecipientParsing.parse(bccText),
@@ -307,7 +347,7 @@ struct ComposeView: View {
     /// dirty.
     private func saveDraft() async {
         let saved = Self.snapshot(to: toText, cc: ccText, bcc: bccText, subject: subject, body: messageBody, attachments: attachments)
-        let context = await model.saveDraft(
+        let context = await sender.saveDraft(
             to: RecipientParsing.parse(toText),
             cc: RecipientParsing.parse(ccText),
             subject: subject,

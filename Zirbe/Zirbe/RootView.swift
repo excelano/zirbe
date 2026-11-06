@@ -61,8 +61,12 @@ struct RootView: View {
                     prefillEmail: session.restoredAccount?.emailAddress ?? "",
                     onConnect: { account, password in
                         try await session.connect(account: account, password: password)
+                    },
+                    onCancel: session.firstConnectedAccountID.map { accountID in
+                        { Task { await session.select(accountID) } }
                     }
                 )
+                .id(session.currentAccountID)
             }
         }
         .task { await session.restore() }
@@ -74,7 +78,7 @@ struct RootView: View {
     private func navigation(model: InboxModel) -> some View {
         if horizontalSizeClass == .regular {
             NavigationSplitView {
-                InboxView(model: model, onSignOut: signOut, openedThread: openedThread)
+                InboxView(model: model, session: session, onRemoveAccount: removeAccount, openedThread: openedThread)
             } detail: {
                 if let summary = path.last {
                     ConversationView(model: model, summary: summary, onClose: closeConversation)
@@ -86,7 +90,7 @@ struct RootView: View {
             .onChange(of: model.currentMailbox) { path.removeAll() }
         } else {
             NavigationStack(path: $path) {
-                InboxView(model: model, onSignOut: signOut)
+                InboxView(model: model, session: session, onRemoveAccount: removeAccount)
                     .navigationDestination(for: ThreadSummary.self) { summary in
                         ConversationView(model: model, summary: summary, showsBack: true, onClose: closeConversation)
                     }
@@ -94,9 +98,8 @@ struct RootView: View {
         }
     }
 
-    private func signOut() {
-        guard let accountID = session.model?.account.id else { return }
-        path.removeAll()
+    private func removeAccount(_ accountID: String) {
+        if accountID == session.model?.account.id { path.removeAll() }
         Task { await session.remove(accountID) }
     }
 

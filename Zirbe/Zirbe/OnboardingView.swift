@@ -19,6 +19,7 @@ struct OnboardingView: View {
     /// Signs in and persists the credential. Throwing keeps the user here on
     /// failure, e.g. a wrong password.
     let onConnect: (Account, String) async throws -> Void
+    var onCancel: (() -> Void)?
 
     @State private var email = ""
     @State private var password = ""
@@ -62,6 +63,13 @@ struct OnboardingView: View {
         }
         .scrollDismissesKeyboard(.interactively)
         .background(Color.zirbeCanvas.ignoresSafeArea())
+        .overlay(alignment: .topLeading) {
+            if let onCancel {
+                Button("Cancel", action: onCancel)
+                    .padding()
+                    .disabled(isConnecting)
+            }
+        }
         .overlay {
             if isConnecting {
                 ProgressView().controlSize(.large)

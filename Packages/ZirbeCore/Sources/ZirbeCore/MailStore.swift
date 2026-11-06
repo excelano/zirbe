@@ -445,7 +445,36 @@ public final class MailStore: @unchecked Sendable {
     // MARK: Writes
 
     public func upsert(_ account: Account) async throws {
-        try await database.write { db in try account.save(db) }
+        try await database.write { db in
+            try db.execute(
+                sql: """
+                    INSERT INTO account
+                        (id, emailAddress, displayName, imapHost, imapPort, smtpHost, smtpPort, username, label, color)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(id) DO UPDATE SET
+                        emailAddress = excluded.emailAddress,
+                        displayName = excluded.displayName,
+                        imapHost = excluded.imapHost,
+                        imapPort = excluded.imapPort,
+                        smtpHost = excluded.smtpHost,
+                        smtpPort = excluded.smtpPort,
+                        username = excluded.username
+                    """,
+                arguments: [
+                    account.id, account.emailAddress, account.displayName, account.imapHost, account.imapPort,
+                    account.smtpHost, account.smtpPort, account.username, account.label, account.color.rawValue,
+                ]
+            )
+        }
+    }
+
+    public func setAppearance(label: String?, color: AccountColor, accountID: String) async throws {
+        try await database.write { db in
+            try db.execute(
+                sql: "UPDATE account SET label = ?, color = ? WHERE id = ?",
+                arguments: [label, color.rawValue, accountID]
+            )
+        }
     }
 
     /// Every persisted account, in the order they were added, for restoring the
@@ -1477,6 +1506,12 @@ public final class MailStore: @unchecked Sendable {
                 DROP TABLE thread;
                 ALTER TABLE thread_v20 RENAME TO thread;
                 """)
+        }
+        migrator.registerMigration("v21-account-appearance") { db in
+            try db.alter(table: "account") { t in
+                t.add(column: "label", .text)
+                t.add(column: "color", .text).notNull().defaults(to: AccountColor.blue.rawValue)
+            }
         }
         return migrator
     }()
