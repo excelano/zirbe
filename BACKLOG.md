@@ -16,6 +16,20 @@ and the integrated inbox came next; the auth tracks wait below that line.
 
 ## Shipped
 
+- **Sign in with Microsoft.** Authorization code with PKCE through
+  `ASWebAuthenticationSession` in an ephemeral browser session, in our own code
+  (`OAuth.swift`) with no vendor SDK, against the multitenant Entra app
+  `1e5b498b-2c00-4466-9028-b3841124ed78` (personal and work accounts). Tokens
+  sit in the device-bound Keychain beside the password items; a token source
+  renews the access token before expiry, shares one refresh among concurrent
+  callers, and saves Microsoft's rotated refresh tokens. SwiftMail's XOAUTH2
+  carries the token to IMAP, IDLE reconnects, and SMTP. A revoked grant reads
+  as a rejected sign-in and routes to Sign In Again. Outlook.com domains and
+  any account on `outlook.office365.com` get the Microsoft button; an unknown
+  domain gets a Microsoft 365 or Google Workspace prompt. Exchange Online's
+  SMTP AUTH basic-auth retirement (off by default for existing tenants at the
+  end of December 2026) no longer touches these accounts. Verified on device.
+
 - **All Inboxes.** With two or more connected accounts, the folder sheet
   leads with an All Inboxes row, and the app opens to it on launch: every
   connected account's INBOX in one list, pinned first, then by recency, each
@@ -353,22 +367,8 @@ surface.
 
 ## The multi-account line
 
-Below the line: the auth tracks that widen reach.
+Below the line: the auth track that widens reach.
 
-- **Microsoft OAuth.** Microsoft accounts largely cannot connect today, so this
-  is a present gap rather than a future clock. Personal Outlook.com, Hotmail,
-  Live, and MSN accounts are reported to have lost basic auth for IMAP on
-  2024-09-16, with app passwords rejected for mail, and Exchange Online ended
-  basic auth for IMAP in 2022. SMTP AUTH basic auth in Exchange Online is the
-  part still running: Microsoft's 2026-01-27 update keeps it through December
-  2026, turns it off by default for existing tenants at the end of December
-  2026, leaves it unavailable on tenants created after that, and names the
-  final removal date in the second half of 2027. The Outlook preset sends
-  through `smtp.office365.com` for every Microsoft domain, while Microsoft
-  documents `smtp-mail.outlook.com` for personal accounts; check which one a
-  personal account accepts once OAuth can sign in. SwiftMail already speaks
-  XOAUTH2 to both IMAP and SMTP, so the work is the token flow, with no audit
-  gate.
 - **Google OAuth.** Gmail's `https://mail.google.com/` scope is restricted, so a
   public release needs Google's restricted-scope verification and an annual CASA
   security assessment. Personal Gmail still accepts app passwords with 2-Step
