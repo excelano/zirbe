@@ -11,9 +11,24 @@ One strategic line runs through the order: before Zirbe takes on a second
 account, it earns the right to be someone's only mail app. Everything above the
 multi-account line builds Zirbe into a full Apple Mail replacement for a single
 IMAP account, as chat-native as the Messages metaphor allows. Multiple accounts
-and the integrated inbox wait below that line.
+came next, and the integrated inbox waits below that line.
 
 ## Shipped
+
+- **Multiple accounts.** Add accounts from Settings and switch between them
+  from the folder sheet, where each account's folders sit under its own
+  header; each works as a single account does, with its own live watch while
+  it is on screen. An account carries a user-set label and one of eight
+  colours, shown as a dot and the label in the inbox title, and new mail is
+  sent from the account being viewed, changeable in a From picker that locks
+  once a draft is saved; a reply comes from the thread's account. The store
+  keys messages, threads, and the search index by account and id, since mail
+  sent to two of the user's addresses arrives in both with one Message-ID.
+  The background poll syncs every account, the badge sums their inboxes, and
+  a notification opens its own account. Removing an account deletes its rows,
+  Keychain item, and the attachment cache; removing the last wipes the store.
+  Settings stay app-wide, and "me" stays per account, so mail between two of
+  the user's own accounts reads as received in each. Verified on device.
 
 - **iPad split view.** The app is universal again. On regular width the
   conversation list sits in a `NavigationSplitView` sidebar with the open
@@ -313,22 +328,8 @@ surface.
 
 ## The multi-account line
 
-Below the line: more than one account, and the auth tracks that widen reach.
+Below the line: reading accounts together, and the auth tracks that widen reach.
 
-- **Multiple accounts.** Connect more than one account and switch between
-  them, each working as the single account does today. The store keys
-  messages, threads, and the search index by account and id, since mail sent
-  to two of the user's addresses arrives in both with one Message-ID. What
-  remains: `AppSession` holds a model per account, restores every account, and
-  removing one deletes only its rows and Keychain item (the last one still
-  wipes the store); the background poll syncs each account and badges the
-  summed inbox unread count; a notification carries its account so a tap opens
-  the right one; Add Account reuses the onboarding form; each account has a
-  user-set label and colour; the folder switcher gains an account level; and
-  new mail is sent from the account being viewed, changeable in a From picker,
-  while a reply always comes from the thread's account. Settings stay app-wide,
-  and "me" stays per account, so mail between two of the user's own accounts
-  reads as received in each.
 - **Integrated inbox.** After multiple accounts has been in daily use: one
   INBOX list across accounts, each row marked with its account's label and
   colour, every action routed to that account's model, and an IDLE watch per
