@@ -11,9 +11,33 @@ One strategic line runs through the order: before Zirbe takes on a second
 account, it earns the right to be someone's only mail app. Everything above the
 multi-account line builds Zirbe into a full Apple Mail replacement for a single
 IMAP account, as chat-native as the Messages metaphor allows. Multiple accounts
-came next, and the integrated inbox waits below that line.
+and the integrated inbox came next; the auth tracks wait below that line.
 
 ## Shipped
+
+- **All Inboxes.** With two or more connected accounts, the folder sheet
+  leads with an All Inboxes row, and the app opens to it on launch: every
+  connected account's INBOX in one list, pinned first, then by recency, each
+  row marked with its account's colour dot. A summary carries its account,
+  and `InboxScope` merges the accounts' lists or routes an action, a bulk
+  selection, a search, or an opened conversation to the row's own account.
+  Bulk Move is disabled when a selection spans accounts, since folders belong
+  to one. Every account keeps an IDLE watch while the list is showing. A new
+  conversation comes from the last account viewed or sent from, and a
+  notification opens its thread without leaving the merged list. Picking one
+  account's folder leaves it; an account waiting on its password stays out
+  until it is re-entered. Verified on device.
+
+- **Server-side search.** While searching, a row under the local results asks
+  the server for the viewed folder's newest 50 matches (UID `SEARCH TEXT`), or
+  every account's INBOX in All Inboxes. The hits are saved into the store and
+  their latest bodies backfilled, so they open and search locally afterwards;
+  sync's prune keeps them, since the server still holds them, which also
+  means an old hit stays in its folder's list at its date. Verified on device.
+
+- **Password re-entry keeps the servers.** The sign-in form shown for a stored
+  account prefills its address, hosts, and ports rather than deriving them from
+  the provider table. Verified on device.
 
 - **Multiple accounts.** Add accounts from Settings and switch between them
   from the folder sheet, where each account's folders sit under its own
@@ -328,12 +352,8 @@ surface.
 
 ## The multi-account line
 
-Below the line: reading accounts together, and the auth tracks that widen reach.
+Below the line: the auth tracks that widen reach.
 
-- **Integrated inbox.** After multiple accounts has been in daily use: one
-  INBOX list across accounts, each row marked with its account's label and
-  colour, every action routed to that account's model, and an IDLE watch per
-  account while the list is showing.
 - **Microsoft OAuth.** The tractable half of OAuth: MSAL public client plus PKCE
   feeding SwiftMail's XOAUTH2, no embedded secret and no audit gate. App-password
   sign-in is being deprecated for M365, so eventually Microsoft accounts stop
@@ -363,11 +383,6 @@ Below the line: reading accounts together, and the auth tracks that widen reach.
   write-only sheet "Add to Calendar" needs. The first invite cut asks for
   nothing; revisit if users ask, and if so make it opt-in from the invite card
   rather than a launch prompt.
-- **Server-side search.** Local search (shipped) covers only mail already synced
-  into the store. A "search everything" pass over IMAP SEARCH/ESEARCH would reach
-  older mail still on the server. SwiftMail provides it; the work is merging server
-  hits with local results and fetching the matches. Pull this up when the synced
-  window proves too small in practice.
 - **Signature surfacing.** Keep the trailing signature that the quote fold
   currently discards and show it dimmed or collapsible, reusing Klartext's parsed
   `signature`. Cheap but mild — polish, not a gap.
@@ -392,12 +407,6 @@ Below the line: reading accounts together, and the auth tracks that widen reach.
   Rare, since nearly all mail carries a Message-ID. The fix is to put the
   mailbox in the fallback id, which changes how a message filed in two folders
   is keyed, so it wants its own migration and tests.
-- **Password re-entry asks for the servers again.** When an account needs its
-  password re-entered (from Settings or the launch screen), the sign-in form
-  prefills only the address and derives the servers from the provider table,
-  not from the stored account. An account on a custom server has to type its
-  IMAP and SMTP hosts again. Prefilling the form from the stored account would
-  close it.
 
 ## Out of scope (privacy posture)
 
