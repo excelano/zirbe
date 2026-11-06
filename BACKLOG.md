@@ -365,6 +365,22 @@ file: a full single-account Apple Mail replacement, as chat-native as the
 Messages metaphor allows. New single-account feature requests land here as they
 surface.
 
+- **Say why Microsoft refuses to send.** A Microsoft 365 tenant with
+  Authenticated SMTP turned off answers an OAuth send with `535 5.7.139`, which
+  Zirbe shows as the raw server text. New tenants ship with it off; it was seen
+  on 2026-11-06 with a fresh `onmicrosoft.com` tenant. Map that code to a message
+  saying the organization's admin needs to turn on Authenticated SMTP for the
+  mailbox (Microsoft 365 admin center, user, Mail, Manage email apps). Sending
+  through Microsoft Graph instead would add `graph.microsoft.com` as a network
+  destination and stays out unless users hit this often.
+- **SwiftNIO "EventLoop already shut down" errors around IDLE teardown.** Seen
+  three times on 2026-11-06, in the same second that an account's IDLE watch was
+  stopped while another account signed in. Nothing visibly failed. A task
+  scheduled on a shut-down loop is dropped silently, so a future waiting on it
+  never completes; the sign-in deadline in `MailEngine` bounds that for connect
+  and sign-in only. Reproduce with SwiftMail's trace logging, find which
+  connection's group is shut down, and report it upstream if it is SwiftMail's.
+
 ## The multi-account line
 
 Below the line: the auth track that widens reach.
