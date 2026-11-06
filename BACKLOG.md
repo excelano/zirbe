@@ -385,6 +385,20 @@ Below the line: reading accounts together, and the auth tracks that widen reach.
   attachment isn't hidden. Today the trailing segment is usually empty, so this is
   a correctness edge, not a common loss.
 
+- **Message-ID-less mail collides across folders.** A message's id is its
+  Message-ID, falling back to `uid:<n>` when the header is missing. UIDs are
+  unique only within a folder, so two such messages with the same UID in, say,
+  INBOX and Archive share one row and the second sync overwrites the first.
+  Rare, since nearly all mail carries a Message-ID. The fix is to put the
+  mailbox in the fallback id, which changes how a message filed in two folders
+  is keyed, so it wants its own migration and tests.
+- **Password re-entry asks for the servers again.** When an account needs its
+  password re-entered (from Settings or the launch screen), the sign-in form
+  prefills only the address and derives the servers from the provider table,
+  not from the stored account. An account on a custom server has to type its
+  IMAP and SMTP hosts again. Prefilling the form from the stored account would
+  close it.
+
 ## Out of scope (privacy posture)
 
 These can't be built without breaking the no-backend, no-third-party rule, so
