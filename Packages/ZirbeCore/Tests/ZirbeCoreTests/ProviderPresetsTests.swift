@@ -12,6 +12,13 @@ final class ProviderPresetsTests: XCTestCase {
         XCTAssertNotNil(p?.passwordHint)
     }
 
+    func testOAuthProviderFollowsTheIMAPHostSoCustomDomainsMatch() {
+        XCTAssertEqual(ProviderPresets.oauthProvider(forIMAPHost: " Outlook.Office365.com "), .microsoft)
+        XCTAssertEqual(ProviderPresets.oauthProvider(forIMAPHost: "imap.gmail.com"), .google)
+        XCTAssertNil(ProviderPresets.oauthProvider(forIMAPHost: "imap.fastmail.com"))
+        XCTAssertEqual(ProviderPresets.servers(for: .google).smtpHost, "smtp.gmail.com")
+    }
+
     func testProviderAliasesShareSettings() {
         let icloud = ProviderPresets.preset(forEmail: "a@icloud.com")
         let me = ProviderPresets.preset(forEmail: "a@me.com")

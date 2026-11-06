@@ -71,6 +71,21 @@ public enum ProviderPresets {
         preset(forEmail: email) ?? suggestion(forEmail: email)
     }
 
+    public static func oauthProvider(forIMAPHost host: String) -> OAuthProvider.ID? {
+        switch host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case outlook.imapHost: .microsoft
+        case gmail.imapHost: .google
+        default: nil
+        }
+    }
+
+    public static func servers(for provider: OAuthProvider.ID) -> ProviderPreset {
+        switch provider {
+        case .microsoft: outlook
+        case .google: gmail
+        }
+    }
+
     /// The lowercased domain of an email, or nil if there isn't exactly one `@`
     /// with non-empty parts on both sides.
     private static func domain(of email: String) -> String? {
@@ -101,7 +116,7 @@ public enum ProviderPresets {
         displayName: "Gmail",
         imapHost: "imap.gmail.com",
         smtpHost: "smtp.gmail.com",
-        passwordHint: "Gmail needs an app password (requires 2-Step Verification). Native Google sign-in comes in a later release."
+        passwordHint: "A Gmail app password needs 2-Step Verification on the account."
     )
 
     private static let yahoo = ProviderPreset(
@@ -122,7 +137,7 @@ public enum ProviderPresets {
         displayName: "Outlook",
         imapHost: "outlook.office365.com",
         smtpHost: "smtp.office365.com",
-        passwordHint: "Many Microsoft accounts no longer allow password sign-in and need OAuth, which Zirbe adds in a later release. If yours requires it, this may fail until then."
+        passwordHint: "Most Microsoft accounts no longer accept app passwords for mail. Sign in with Microsoft instead."
     )
 
     private static let byDomain: [String: ProviderPreset] = [

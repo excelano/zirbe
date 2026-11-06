@@ -3,7 +3,7 @@
 //
 // The headless background poll. iOS occasionally wakes the app (BGTaskScheduler
 // app-refresh) and runs this with no UI on screen: open the store, find the
-// saved account and its device-bound Keychain password, and run one inbox sync.
+// saved accounts and their device-bound Keychain credentials, and run one inbox sync.
 //
 // This is the background ceiling, and deliberately so. There is no instant push:
 // real push needs a server to hold the connection and notify the device, and the
@@ -12,6 +12,7 @@
 // next background poll iOS grants, and on pull-to-refresh. This is the middle one.
 
 import Foundation
+import ZirbeMail
 
 /// The outcome of one background poll, for the caller to act on. `.newMail`
 /// carries the arrivals to notify and the inbox's unread count for the app badge;
@@ -44,21 +45,23 @@ public enum BackgroundRefresh {
     @discardableResult
     public static func run() async -> BackgroundRefreshResult {
         guard let store = try? MailStore(path: StoreLocation.databasePath()) else { return .failed }
-        return await run(store: store, credentials: KeychainStore()) { SyncService(account: $0, store: store) }
+        return await run(store: store, credentials: KeychainStore(), oauth: OAuthClient()) { SyncService(account: $0, store: store) }
     }
 
     static func run(
         store: MailStore,
         credentials: any CredentialStore,
+        oauth: OAuthClient,
         makeSync: (Account) -> SyncService
     ) async -> BackgroundRefreshResult {
         guard let accounts = try? await store.accounts() else { return .failed }
         var arrivals: [NewMailItem] = []
         var anySynced = false
         for account in accounts {
-            guard let password = try? credentials.password(for: account.id) else { continue }
+            guard let credential = try? credentials.credential(for: account.id) else { continue }
+            let login = credential.login(accountID: account.id, store: credentials, client: oauth)
             let sync = makeSync(account)
-            let found = try? await poll(account, password: password, sync: sync, store: store)
+            let found = try? await poll(account, login: login, sync: sync, store: store)
             await sync.disconnect()
             if let found {
                 arrivals += found
@@ -75,11 +78,11 @@ public enum BackgroundRefresh {
 
     private static func poll(
         _ account: Account,
-        password: String,
+        login: MailLogin,
         sync: SyncService,
         store: MailStore
     ) async throws -> [NewMailItem] {
-        try await sync.syncInbox(password: password)
+        try await sync.syncInbox(login: login)
         let arrivals = try await store.unnotifiedInboxArrivals(accountID: account.id)
         try await store.markNotificationWatermark(accountID: account.id)
         return arrivals

@@ -20,7 +20,7 @@ final class BackgroundRefreshTests: XCTestCase {
     }
 
     private func poll(_ credentials: FakeCredentials) async -> BackgroundRefreshResult {
-        await BackgroundRefresh.run(store: store, credentials: credentials) { [store, servers] account in
+        await BackgroundRefresh.run(store: store, credentials: credentials, oauth: OAuthClient()) { [store, servers] account in
             SyncService(account: account, store: store!, engine: servers[account.id]!, sender: FakeMailSender())
         }
     }

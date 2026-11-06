@@ -38,10 +38,15 @@ public actor MailSender {
     /// Send one message: open an authenticated SMTP connection, send, and close
     /// it. The credentials are passed per call and not retained, mirroring the
     /// read path; they are used only for the SMTP login over TLS.
-    public func send(_ outgoing: OutgoingMessage, username: String, password: String) async throws {
+    public func send(_ outgoing: OutgoingMessage, username: String, login: MailLogin) async throws {
         try await server.connect()
         do {
-            try await server.login(username: username, password: password)
+            switch login {
+            case .password(let password):
+                try await server.login(username: username, password: password)
+            case .accessToken(let token):
+                try await server.authenticateXOAUTH2(email: username, accessToken: try await token())
+            }
             try await server.sendEmail(Email(outgoing))
         } catch {
             try? await server.disconnect()

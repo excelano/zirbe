@@ -60,9 +60,7 @@ struct RootView: View {
             } else {
                 OnboardingView(
                     prefill: session.restoredAccount,
-                    onConnect: { account, password in
-                        try await session.connect(account: account, password: password)
-                    },
+                    session: session,
                     onCancel: session.firstConnectedAccountID.map { accountID in
                         { Task { await session.select(accountID) } }
                     }

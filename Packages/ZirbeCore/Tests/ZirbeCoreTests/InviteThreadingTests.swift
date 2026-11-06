@@ -172,7 +172,7 @@ final class InviteThreadingTests: XCTestCase {
             MailEnvelope(subject: "Lunch", from: "Pat <pat@x.com>", to: ["me@x.com"], date: Date(timeIntervalSince1970: 0), messageID: "<a@x>"),
             body: MessageBody(text: "", hasHTML: false, calendar: calendar(sequence: 0, summary: "Lunch"))
         )
-        let firstSync = try await sync.syncInbox(password: "pw")
+        let firstSync = try await sync.syncInbox(login: .password("pw"))
         XCTAssertEqual(firstSync.map(\.preview), ["Invitation: Lunch"])
 
         // The update arrives with no References header, as Outlook sends it.
@@ -180,12 +180,12 @@ final class InviteThreadingTests: XCTestCase {
             MailEnvelope(subject: "Updated invitation: Lunch", from: "Pat <pat@x.com>", to: ["me@x.com"], date: Date(timeIntervalSince1970: 600), messageID: "<b@x>"),
             body: MessageBody(text: "Moved to 1pm", hasHTML: false, calendar: calendar(sequence: 1, summary: "Lunch at 1"))
         )
-        let secondSync = try await sync.syncInbox(password: "pw")
+        let secondSync = try await sync.syncInbox(login: .password("pw"))
 
         XCTAssertEqual(secondSync.count, 1, "the update joined the meeting's conversation")
         XCTAssertEqual(secondSync.first?.id, firstSync.first?.id, "under the same id")
         XCTAssertEqual(secondSync.first?.preview, "Moved to 1pm")
-        let thread = try await sync.loadConversation(id: XCTUnwrap(secondSync.first?.id), password: "pw")
+        let thread = try await sync.loadConversation(id: XCTUnwrap(secondSync.first?.id), login: .password("pw"))
         XCTAssertEqual(thread?.messages.count, 2)
         XCTAssertEqual(thread?.conversationMessages.map(\.messageID), ["<b@x>"], "the first card is superseded")
         XCTAssertEqual(thread?.conversationMessages.first?.invite?.sequence, 1)
@@ -210,13 +210,13 @@ final class InviteThreadingTests: XCTestCase {
             MailEnvelope(subject: "Updated: Lunch", from: "Pat <pat@x.com>", to: ["me@x.com"], date: Date(timeIntervalSince1970: 600), messageID: "<b@x>"),
             body: MessageBody(text: "", hasHTML: false, calendar: calendar(sequence: 1, summary: "Lunch"))
         )
-        let summaries = try await sync.syncInbox(password: "pw")
+        let summaries = try await sync.syncInbox(login: .password("pw"))
         XCTAssertEqual(summaries.count, 1)
 
         // A stale id from before the merge still opens the conversation.
-        let opened = try await sync.loadConversation(id: "mid:<b@x>", password: "pw")
+        let opened = try await sync.loadConversation(id: "mid:<b@x>", login: .password("pw"))
         XCTAssertNil(opened, "the merged thread is not under the update's id")
-        let current = try await sync.loadConversation(id: XCTUnwrap(summaries.first?.id), password: "pw")
+        let current = try await sync.loadConversation(id: XCTUnwrap(summaries.first?.id), login: .password("pw"))
         XCTAssertEqual(current?.messages.count, 2)
     }
 }

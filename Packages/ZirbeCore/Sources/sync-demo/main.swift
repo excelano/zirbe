@@ -34,7 +34,7 @@ let account = Account(
 
 let store = try MailStore()
 let sync = SyncService(account: account, store: store)
-let summaries = try await sync.syncInbox(password: pass, mailbox: mailbox, limit: limit)
+let summaries = try await sync.syncInbox(login: .password(pass), mailbox: mailbox, limit: limit)
 
 let formatter = DateFormatter()
 formatter.dateFormat = "yyyy-MM-dd HH:mm"

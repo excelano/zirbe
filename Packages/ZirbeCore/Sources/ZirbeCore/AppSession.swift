@@ -10,6 +10,7 @@
 
 import Foundation
 import Observation
+import ZirbeMail
 
 @MainActor
 @Observable
@@ -25,6 +26,7 @@ public final class AppSession {
 
     private var store: MailStore?
     private let credentials: any CredentialStore
+    private let oauth: OAuthClient
     private let openStore: () throws -> MailStore
     private let makeModel: (Account, MailStore) -> InboxModel
     private let defaults: UserDefaults
@@ -34,6 +36,7 @@ public final class AppSession {
     public convenience init() {
         self.init(
             credentials: KeychainStore(),
+            oauth: OAuthClient(),
             openStore: { try MailStore(path: StoreLocation.databasePath()) },
             makeModel: { InboxModel(account: $0, store: $1) },
             defaults: .standard
@@ -42,11 +45,13 @@ public final class AppSession {
 
     init(
         credentials: any CredentialStore,
+        oauth: OAuthClient = OAuthClient(),
         openStore: @escaping () throws -> MailStore,
         makeModel: @escaping (Account, MailStore) -> InboxModel,
         defaults: UserDefaults
     ) {
         self.credentials = credentials
+        self.oauth = oauth
         self.openStore = openStore
         self.makeModel = makeModel
         self.defaults = defaults
@@ -96,8 +101,8 @@ public final class AppSession {
             for account in try await store.accounts() {
                 let candidate = makeModel(account, store)
                 do {
-                    if let password = try credentials.password(for: account.id) {
-                        await candidate.resume(password: password)
+                    if let credential = try credentials.credential(for: account.id) {
+                        await candidate.resume(login: login(for: credential, accountID: account.id))
                     }
                 } catch {
                     errorMessage = error.localizedDescription
@@ -112,11 +117,21 @@ public final class AppSession {
         }
     }
 
+    public func connect(account: Account, password: String) async throws {
+        try await connect(account: account, credential: .password(password))
+    }
+
+    public func connect(account: Account, authorization: OAuthAuthorization, callback: URL) async throws {
+        let code = try authorization.code(from: callback)
+        let tokens = try await oauth.redeem(code, for: authorization)
+        try await connect(account: account, credential: .oauth(tokens))
+    }
+
     /// Connect a freshly entered account: sign in (which syncs and persists the
-    /// account row), then save the password to the Keychain so the next launch
+    /// account row), then save the credential to the Keychain so the next launch
     /// is silent. Throws back to the onboarding screen on failure; nothing is
     /// written to the Keychain unless the sign-in succeeds.
-    public func connect(account: Account, password: String) async throws {
+    public func connect(account: Account, credential: Credential) async throws {
         let store = try ensureStore()
         var account = account
         if let existing = models.first(where: { $0.account.id == account.id })?.account {
@@ -126,8 +141,8 @@ public final class AppSession {
             account.color = nextColor()
         }
         let candidate = makeModel(account, store)
-        try await candidate.signIn(password: password)
-        try credentials.save(password: password, for: account.id)
+        try await candidate.signIn(login: login(for: credential, accountID: account.id))
+        try credentials.save(credential, for: account.id)
         errorMessage = nil
         if let index = models.firstIndex(where: { $0.account.id == account.id }) {
             let replaced = models[index]
@@ -138,6 +153,10 @@ public final class AppSession {
             models.append(candidate)
         }
         await select(account.id)
+    }
+
+    private func login(for credential: Credential, accountID: String) -> MailLogin {
+        credential.login(accountID: accountID, store: credentials, client: oauth)
     }
 
     public func setAppearance(label: String?, color: AccountColor, accountID: String) async {

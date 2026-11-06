@@ -3,9 +3,10 @@
 Working backlog for Zirbe. Order reflects current priority, not a commitment,
 and shifts as the app and its users teach us what matters. Two constraints shape
 everything here: the no-backend privacy posture (the only network destinations
-are the user's own IMAP and SMTP servers, so anything needing a server to broker
-it is off the table), and app-password-only auth today (a real adoption ceiling
-until OAuth lands).
+are the user's own IMAP and SMTP servers and, for Microsoft and Google accounts,
+that provider's sign-in, so anything needing a server to broker it is off the
+table), and the reach of sign-in: an app password everywhere, plus OAuth for
+Microsoft and Google.
 
 One strategic line runs through the order: before Zirbe takes on a second
 account, it earns the right to be someone's only mail app. Everything above the
@@ -354,15 +355,31 @@ surface.
 
 Below the line: the auth tracks that widen reach.
 
-- **Microsoft OAuth.** The tractable half of OAuth: MSAL public client plus PKCE
-  feeding SwiftMail's XOAUTH2, no embedded secret and no audit gate. App-password
-  sign-in is being deprecated for M365, so eventually Microsoft accounts stop
-  connecting without it — a real external clock, but adoption-facing, not blocking
-  current dogfooding. Grouped here with Google OAuth so the two token flows get
-  built back to back.
-- **Google OAuth.** The expensive half: gated behind Google's restricted-scope
-  verification and an annual CASA security audit. Contingent on appetite for that
-  audit; Gmail's reach is the only reason to take it on.
+- **Microsoft OAuth.** Microsoft accounts largely cannot connect today, so this
+  is a present gap rather than a future clock. Personal Outlook.com, Hotmail,
+  Live, and MSN accounts are reported to have lost basic auth for IMAP on
+  2024-09-16, with app passwords rejected for mail, and Exchange Online ended
+  basic auth for IMAP in 2022. SMTP AUTH basic auth in Exchange Online is the
+  part still running: Microsoft's 2026-01-27 update keeps it through December
+  2026, turns it off by default for existing tenants at the end of December
+  2026, leaves it unavailable on tenants created after that, and names the
+  final removal date in the second half of 2027. The Outlook preset sends
+  through `smtp.office365.com` for every Microsoft domain, while Microsoft
+  documents `smtp-mail.outlook.com` for personal accounts; check which one a
+  personal account accepts once OAuth can sign in. SwiftMail already speaks
+  XOAUTH2 to both IMAP and SMTP, so the work is the token flow, with no audit
+  gate.
+- **Google OAuth.** Gmail's `https://mail.google.com/` scope is restricted, so a
+  public release needs Google's restricted-scope verification and an annual CASA
+  security assessment. Personal Gmail still accepts app passwords with 2-Step
+  Verification, which is how Zirbe signs in today. Google Workspace ended
+  password sign-in for third-party apps on 2025-05-01, leaving app passwords
+  only where the admin allows them. Some mail-client vendors report a 2026
+  phase-out of app passwords; no Google announcement confirming it was found on
+  2026-11-06. The sign-in flow in `OAuth.swift` already covers Google and stays
+  hidden until `OAuthClientIDs.google` holds a client ID. Registering that client
+  in the Google Cloud console was set aside on 2026-11-06, when its steps did not
+  match the expected flow.
 
 ## Held (unscheduled)
 

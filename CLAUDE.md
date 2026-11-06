@@ -41,11 +41,13 @@ boundary rule below.
 ## Privacy posture (non-negotiable)
 
 No backend, no third-party SDK, no telemetry. The only network destinations are
-the user's own IMAP and SMTP servers. Credentials are device-bound in the
-Keychain and never iCloud-synced. Remote images in HTML mail are blocked by
-default. Bcc is transport-only (it reaches the SMTP envelope, never a stored
-header). Introducing any server, analytics, external destination, or credential
-sync is a hard stop — pause and confirm.
+the user's own IMAP and SMTP servers and, for a Microsoft or Google account, that
+provider's OAuth endpoints (`OAuth.swift`, our own code, no vendor SDK).
+Credentials and tokens are device-bound in the Keychain and never iCloud-synced.
+Remote images in HTML mail are blocked by default. Bcc is transport-only (it
+reaches the SMTP envelope, never a stored header). Introducing any server,
+analytics, external destination, or credential sync is a hard stop — pause and
+confirm.
 
 ## Klartext boundary
 

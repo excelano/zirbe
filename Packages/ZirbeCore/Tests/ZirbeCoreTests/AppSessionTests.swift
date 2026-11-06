@@ -22,9 +22,10 @@ final class AppSessionTests: XCTestCase {
         defaults = UserDefaults(suiteName: "AppSessionTests-\(UUID().uuidString)")
     }
 
-    private func makeSession() -> AppSession {
+    private func makeSession(oauth: OAuthClient = OAuthClient()) -> AppSession {
         AppSession(
             credentials: credentials,
+            oauth: oauth,
             openStore: { [store] in store! },
             makeModel: { [servers] account, store in
                 let sync = SyncService(account: account, store: store, engine: servers[account.id]!, sender: FakeMailSender())
@@ -60,7 +61,7 @@ final class AppSessionTests: XCTestCase {
         XCTAssertEqual(session.accounts.map(\.id), [work.id, home.id])
         XCTAssertEqual(session.model?.account.id, home.id)
         XCTAssertTrue(session.models.allSatisfy(\.isConnected))
-        XCTAssertEqual(credentials.stored, [work.id: "work-pw", home.id: "home-pw"])
+        XCTAssertEqual(credentials.stored, [work.id: .password("work-pw"), home.id: .password("home-pw")])
     }
 
     func testSelectingAnAccountSwitchesTheModel() async throws {
@@ -123,7 +124,7 @@ final class AppSessionTests: XCTestCase {
 
         XCTAssertEqual(session.models.count, 2)
         XCTAssertFalse(session.models.contains { $0 === before })
-        XCTAssertEqual(credentials.stored[work.id], "new-pw")
+        XCTAssertEqual(credentials.stored[work.id], .password("new-pw"))
     }
 
     func testRemovingOneAccountKeepsTheOthersMail() async throws {
@@ -203,6 +204,29 @@ final class AppSessionTests: XCTestCase {
         try await connectBoth(session)
 
         XCTAssertEqual(session.inboxUnreadCount, 2)
+    }
+
+    // MARK: OAuth
+
+    func testAnOAuthSignInSyncsOverTheTokenAndRestoresWithoutTheNetwork() async throws {
+        _ = await servers[work.id]!.add(envelope("Standup", id: "<w@x>", to: work.emailAddress))
+        let http = FakeOAuthHTTP([(200, #"{"access_token":"a1","refresh_token":"r1","expires_in":3600}"#)])
+        let session = makeSession(oauth: OAuthClient(http: http))
+        let authorization = OAuthAuthorization(provider: .microsoft, loginHint: work.emailAddress)
+        let callback = URL(string: "msauth.com.excelano.zirbe://auth?code=c1&state=\(authorization.state)")!
+
+        try await session.connect(account: work, authorization: authorization, callback: callback)
+
+        XCTAssertEqual(session.model?.summaries.map(\.subject), ["Standup"])
+        let secret = await servers[work.id]!.session?.password
+        XCTAssertEqual(secret, "a1", "the IMAP login carried the access token")
+        guard case .oauth(let stored)? = credentials.stored[work.id] else { return XCTFail("tokens not stored") }
+        XCTAssertEqual(stored.refreshToken, "r1")
+
+        let restored = makeSession(oauth: OAuthClient(http: http))
+        await restored.restore()
+        XCTAssertTrue(restored.isConnected)
+        XCTAssertEqual(http.posts.count, 1, "an unexpired token restores without a refresh")
     }
 
     // MARK: All Inboxes

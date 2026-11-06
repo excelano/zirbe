@@ -47,7 +47,7 @@ final class TransportSeamTests: XCTestCase {
         await server.add(incoming("Plan", id: "<a@x>"), body: MessageBody(text: "Lunch?", hasHTML: false))
         await server.add(incoming("Budget", id: "<b@x>"))
 
-        let summaries = try await sync.syncInbox(password: "pw")
+        let summaries = try await sync.syncInbox(login: .password("pw"))
 
         XCTAssertEqual(summaries.map(\.subject).sorted(), ["Budget", "Plan"])
         let session = await server.session

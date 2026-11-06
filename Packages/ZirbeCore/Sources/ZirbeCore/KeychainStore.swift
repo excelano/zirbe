@@ -1,8 +1,8 @@
 // Author: David M. Anderson
 // Built with AI assistance (Claude, Anthropic)
 //
-// Device-bound credential storage. The app-specific password for an account is
-// kept in the Keychain, keyed by the account id, so a returning user lands in
+// Device-bound credential storage. An account's app-specific password or OAuth
+// tokens are kept in the Keychain, keyed by the account id, so a returning user lands in
 // the inbox without retyping it. The accessibility class is deliberately
 // `...ThisDeviceOnly`: the secret never syncs to iCloud Keychain and never
 // migrates to another device in a backup restore, which is the privacy posture
@@ -11,9 +11,14 @@
 import Foundation
 import Security
 
+public enum Credential: Sendable, Equatable {
+    case password(String)
+    case oauth(OAuthTokens)
+}
+
 public protocol CredentialStore: Sendable {
-    func save(password: String, for accountID: String) throws
-    func password(for accountID: String) throws -> String?
+    func save(_ credential: Credential, for accountID: String) throws
+    func credential(for accountID: String) throws -> Credential?
     func delete(for accountID: String) throws
 }
 
@@ -24,6 +29,7 @@ public struct KeychainStore: CredentialStore {
 
     /// The Keychain service all Zirbe credentials live under.
     private static let service = "com.excelano.zirbe"
+    private static let oauthService = "com.excelano.zirbe.oauth"
 
     /// Errors from the underlying Keychain calls, carrying the `OSStatus` so an
     /// unexpected failure is at least legible.
@@ -31,20 +37,37 @@ public struct KeychainStore: CredentialStore {
         case unexpected(OSStatus)
     }
 
-    /// Store (or replace) the password for an account. The item is written
-    /// `AfterFirstUnlock` so a future background refresh can still read it once
-    /// the device has been unlocked since boot, but `ThisDeviceOnly` so it never
-    /// leaves this device. Synchronizable is left off (no iCloud Keychain).
-    public func save(password: String, for accountID: String) throws {
-        let data = Data(password.utf8)
-        // Replace any existing item: delete then add keeps this idempotent
-        // without a read-modify-write race.
-        try? delete(for: accountID)
+    public func save(_ credential: Credential, for accountID: String) throws {
+        try delete(for: accountID)
+        switch credential {
+        case .password(let password):
+            try write(Data(password.utf8), service: Self.service, account: accountID)
+        case .oauth(let tokens):
+            try write(JSONEncoder().encode(tokens), service: Self.oauthService, account: accountID)
+        }
+    }
 
+    public func credential(for accountID: String) throws -> Credential? {
+        if let data = try read(service: Self.oauthService, account: accountID) {
+            return .oauth(try JSONDecoder().decode(OAuthTokens.self, from: data))
+        }
+        return try read(service: Self.service, account: accountID).map { .password(String(decoding: $0, as: UTF8.self)) }
+    }
+
+    public func delete(for accountID: String) throws {
+        try remove(service: Self.service, account: accountID)
+        try remove(service: Self.oauthService, account: accountID)
+    }
+
+    /// The item is written `AfterFirstUnlock` so a background refresh can still
+    /// read it once the device has been unlocked since boot, but `ThisDeviceOnly`
+    /// so it never leaves this device. Synchronizable is left off (no iCloud
+    /// Keychain).
+    private func write(_ data: Data, service: String, account: String) throws {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: Self.service,
-            kSecAttrAccount as String: accountID,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
             kSecValueData as String: data,
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
         ]
@@ -52,35 +75,28 @@ public struct KeychainStore: CredentialStore {
         guard status == errSecSuccess else { throw KeychainError.unexpected(status) }
     }
 
-    /// The stored password for an account, or nil if none is held. A missing
-    /// item is not an error; any other failure is.
-    public func password(for accountID: String) throws -> String? {
+    private func read(service: String, account: String) throws -> Data? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: Self.service,
-            kSecAttrAccount as String: accountID,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
         switch status {
-        case errSecSuccess:
-            guard let data = item as? Data else { return nil }
-            return String(decoding: data, as: UTF8.self)
-        case errSecItemNotFound:
-            return nil
-        default:
-            throw KeychainError.unexpected(status)
+        case errSecSuccess: return item as? Data
+        case errSecItemNotFound: return nil
+        default: throw KeychainError.unexpected(status)
         }
     }
 
-    /// Remove the stored password for an account. A missing item is a no-op.
-    public func delete(for accountID: String) throws {
+    private func remove(service: String, account: String) throws {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: Self.service,
-            kSecAttrAccount as String: accountID,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
         ]
         let status = SecItemDelete(query as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {

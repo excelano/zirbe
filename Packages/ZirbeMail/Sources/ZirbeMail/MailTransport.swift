@@ -13,11 +13,16 @@
 
 import Foundation
 
+public enum MailLogin: Sendable {
+    case password(String)
+    case accessToken(@Sendable () async throws -> String)
+}
+
 /// The IMAP side: the engine's public surface, one requirement per operation
 /// SyncService performs. A conformer keeps its own session; `connect` is
 /// idempotent and every other call assumes it has been made.
 public protocol IMAPTransport: Sendable {
-    func connect(username: String, password: String) async throws
+    func connect(username: String, login: MailLogin) async throws
     func fetchRecentEnvelopes(in mailbox: String, limit: Int) async throws -> [MailEnvelope]
     func mailboxState(in mailbox: String) async throws -> MailboxState
     func searchEnvelopes(in mailbox: String, text: String, limit: Int) async throws -> [MailEnvelope]
@@ -41,7 +46,7 @@ public protocol IMAPTransport: Sendable {
 
 /// The SMTP side: deliver one message. A throw means nothing was delivered.
 public protocol SMTPTransport: Sendable {
-    func send(_ outgoing: OutgoingMessage, username: String, password: String) async throws
+    func send(_ outgoing: OutgoingMessage, username: String, login: MailLogin) async throws
 }
 
 extension MailEngine: IMAPTransport {}

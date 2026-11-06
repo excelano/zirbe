@@ -127,10 +127,8 @@ struct SettingsView: View {
             .sheet(isPresented: $addingAccount) {
                 OnboardingView(
                     prefill: nil,
-                    onConnect: { account, password in
-                        try await session.connect(account: account, password: password)
-                        addingAccount = false
-                    },
+                    session: session,
+                    onConnected: { addingAccount = false },
                     onCancel: { addingAccount = false }
                 )
             }
@@ -203,9 +201,9 @@ private struct AccountSettingsView: View {
 
             if !model.isConnected {
                 Section {
-                    Button("Enter Password") { reentering = true }
+                    Button("Sign In Again") { reentering = true }
                 } footer: {
-                    Text("Zirbe has no working password for this account, so it isn't syncing.")
+                    Text("Zirbe can’t sign in to this account, so it isn’t syncing.")
                 }
             }
 
@@ -241,10 +239,8 @@ private struct AccountSettingsView: View {
         .sheet(isPresented: $reentering) {
             OnboardingView(
                 prefill: account,
-                onConnect: { account, password in
-                    try await session.connect(account: account, password: password)
-                    reentering = false
-                },
+                session: session,
+                onConnected: { reentering = false },
                 onCancel: { reentering = false }
             )
         }

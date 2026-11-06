@@ -36,7 +36,7 @@ actor FakeMailSender: SMTPTransport {
     /// The delivered messages alone, for the common assertion.
     var sent: [OutgoingMessage] { deliveries.map(\.message) }
 
-    func send(_ outgoing: OutgoingMessage, username: String, password: String) async throws {
+    func send(_ outgoing: OutgoingMessage, username: String, login: MailLogin) async throws {
         attempts.append(outgoing)
         if failOnce || failAlways {
             failOnce = false

@@ -29,7 +29,8 @@ nothing that isn't email: no video or voice calls, no shared notes, tasks, or
 team workspaces. The CheckIn privacy posture carries over wholesale: no
 backend, no third-party SDKs, no telemetry. Credentials and tokens live in the
 Keychain, device-bound, never synced off the device that obtained them. The
-only network destinations are the user's own IMAP and SMTP servers.
+only network destinations are the user's own IMAP and SMTP servers and, for a
+Microsoft or Google account, that provider's sign-in service.
 
 ## Status
 

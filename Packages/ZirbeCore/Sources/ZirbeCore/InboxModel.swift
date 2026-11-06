@@ -45,7 +45,7 @@ public final class InboxModel {
     private let sync: SyncService
     /// The app-specific password for this session, in memory only. Cleared on
     /// sign-out; replaced by the Keychain in M4.
-    private var password: String?
+    private var login: MailLogin?
 
     /// Replies whose SMTP send failed, kept so the user can retry them verbatim —
     /// same recipients, body, attachments, and Message-ID — by tapping the failed
@@ -121,7 +121,7 @@ public final class InboxModel {
     }
 
     /// Whether a password is held, so refresh and conversation loads can run.
-    public var isConnected: Bool { password != nil }
+    public var isConnected: Bool { login != nil }
 
     /// True in demo/screenshot mode, where the store is pre-seeded and every
     /// network path is short-circuited. Always false in release. See `DemoMode`.
@@ -134,7 +134,7 @@ public final class InboxModel {
     /// and no-ops. Compiled out of release builds.
     public func enterDemoMode() {
         isDemo = true
-        password = "demo"
+        login = .password("demo")
     }
     #endif
 
@@ -185,23 +185,31 @@ public final class InboxModel {
 
     /// Resume a saved session from the cache with no network; the inbox syncs
     /// once it is on screen.
-    public func resume(password: String) async {
-        self.password = password
+    public func resume(login: MailLogin) async {
+        self.login = login
         await loadCached()
     }
 
-    /// Connect with an app-specific password, then sync the inbox. Throws if the
-    /// sync fails (e.g. a wrong password), clearing the held password so the
-    /// caller can keep the user on the connect screen. The password is retained
-    /// only on success, for later refreshes and body loads.
+    public func resume(password: String) async {
+        await resume(login: .password(password))
+    }
+
+    /// Connect with a password or an OAuth token source, then sync the inbox.
+    /// Throws if the sync fails (e.g. a wrong password), clearing the held login
+    /// so the caller can keep the user on the connect screen. The login is
+    /// retained only on success, for later refreshes and body loads.
     public func signIn(password: String) async throws {
-        self.password = password
+        try await signIn(login: .password(password))
+    }
+
+    public func signIn(login: MailLogin) async throws {
+        self.login = login
         isSyncing = true
         defer { isSyncing = false }
         do {
-            try await performSync(password: password)
+            try await performSync(login: login)
         } catch {
-            self.password = nil
+            self.login = nil
             throw error
         }
     }
@@ -209,14 +217,14 @@ public final class InboxModel {
     /// Re-sync the inbox using the held password. Errors surface in
     /// `errorMessage` rather than throwing, for pull-to-refresh.
     public func refresh() async {
-        guard let password else {
+        guard let login else {
             errorMessage = "Connect an account first."
             return
         }
         isSyncing = true
         await attempt {
             do {
-                try await self.performSync(password: password)
+                try await self.performSync(login: login)
             } catch MailEngineError.authenticationRejected {
                 self.credentialRejected()
             }
@@ -228,19 +236,19 @@ public final class InboxModel {
     private func credentialRejected() {
         monitorTask?.cancel()
         monitorTask = nil
-        password = nil
+        login = nil
     }
 
-    private func performSync(password: String) async throws {
+    private func performSync(login: MailLogin) async throws {
         // Demo mode reads from the pre-seeded store only; never touch the network.
         if isDemo { try await reloadList(); return }
         // Gated: a sync writes back the message list it read at the top, so it must
         // not straddle a mutation that deletes rows in between. See `exclusively`.
         try await exclusively {
             if isViewingInbox {
-                try await sync.syncInbox(password: password)
+                try await sync.syncInbox(login: login)
             } else {
-                try await sync.syncFolder(mailbox: currentMailbox.name, role: currentMailbox.role, password: password)
+                try await sync.syncFolder(mailbox: currentMailbox.name, role: currentMailbox.role, login: login)
             }
             try await reloadList()
         }
@@ -268,9 +276,9 @@ public final class InboxModel {
     /// surfacing, since the switcher still works from the cache. A no-op when not
     /// connected.
     public func discoverFolders() async {
-        guard let password else { return }
+        guard let login else { return }
         do {
-            mailboxes = try await sync.discoverFolders(password: password)
+            mailboxes = try await sync.discoverFolders(login: login)
         } catch {
             // The switcher falls back to whatever folders are already cached.
         }
@@ -284,9 +292,9 @@ public final class InboxModel {
     public func selectMailbox(_ mailbox: Mailbox) async {
         currentMailbox = mailbox
         await attempt { try await self.reloadList() }
-        guard let password, !isViewingInbox else { return }
+        guard let login, !isViewingInbox else { return }
         isSyncing = true
-        await attempt { try await self.performSync(password: password) }
+        await attempt { try await self.performSync(login: login) }
         isSyncing = false
     }
 
@@ -311,11 +319,11 @@ public final class InboxModel {
     /// return. A failed or dropped watch is non-fatal: the inbox still updates on
     /// pull-to-refresh and on the next foreground, so nothing surfaces as an error.
     public func startLiveRefresh() {
-        guard !isDemo, let password, monitorTask == nil else { return }
+        guard !isDemo, let login, monitorTask == nil else { return }
         monitorTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let changes = try await self.sync.watchInbox(password: password)
+                let changes = try await self.sync.watchInbox(login: login)
                 for await _ in changes {
                     if Task.isCancelled { break }
                     // Our own trash, archive, junk, and move expunge mail from the
@@ -360,10 +368,10 @@ public final class InboxModel {
 
     public func searchServer(_ query: String) async -> [ThreadSummary]? {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, !isDemo, let password else { return nil }
+        guard !trimmed.isEmpty, !isDemo, let login else { return nil }
         do {
             return try await exclusively {
-                let ids = try await sync.searchServer(trimmed, in: currentMailbox.name, password: password)
+                let ids = try await sync.searchServer(trimmed, in: currentMailbox.name, login: login)
                 try await reloadList()
                 return try await store.threadSummaries(containingMessages: ids, accountID: account.id)
             }
@@ -386,12 +394,12 @@ public final class InboxModel {
     /// unknown. The conversation view owns its own loading indicator, so this
     /// does not touch `isSyncing`.
     public func conversation(id: String) async -> Thread? {
-        guard let password else {
+        guard let login else {
             errorMessage = "Connect an account first."
             return nil
         }
         do {
-            return try await sync.loadConversation(id: id, password: password)
+            return try await sync.loadConversation(id: id, login: login)
         } catch {
             errorMessage = error.localizedDescription
             return nil
@@ -410,7 +418,7 @@ public final class InboxModel {
     /// SMTP send failed.
     @discardableResult
     public func sendReply(to thread: Thread, removing removedAddresses: Set<String> = [], body: String, attachments: [DraftAttachment] = [], replyingToMessageID: String? = nil) async -> Thread? {
-        guard let password else {
+        guard let login else {
             errorMessage = "Connect an account first."
             return nil
         }
@@ -435,7 +443,7 @@ public final class InboxModel {
             thread.messages.first { $0.messageID == id }
         }
         let draft = OutgoingDraft.reply(to: thread, as: account, to: to, cc: cc, body: trimmed, attachments: attachments.map(\.outgoing), replyingTo: target, sentAt: Date())
-        return await deliverReply(draft, into: thread.id, password: password)
+        return await deliverReply(draft, into: thread.id, login: login)
     }
 
     /// Whether a failed bubble can be retried in place, i.e. its draft is still
@@ -451,12 +459,12 @@ public final class InboxModel {
     /// connected or the draft is no longer held (a relaunch cleared it).
     @discardableResult
     public func retrySend(messageID: String, in threadID: String) async -> Thread? {
-        guard let password else {
+        guard let login else {
             errorMessage = "Connect an account first."
             return nil
         }
         guard let draft = pendingReplies[messageID] else { return nil }
-        return await deliverReply(draft, into: threadID, password: password)
+        return await deliverReply(draft, into: threadID, login: login)
     }
 
     /// Transmit a built reply and record the outcome as a bubble in its thread. On
@@ -464,9 +472,9 @@ public final class InboxModel {
     /// attempted; on failure it is filed as an undelivered bubble and the draft is
     /// held for retry. Either way the refreshed conversation is returned for the
     /// view to show.
-    private func deliverReply(_ draft: OutgoingDraft, into threadID: String, password: String) async -> Thread? {
+    private func deliverReply(_ draft: OutgoingDraft, into threadID: String, login: MailLogin) async -> Thread? {
         do {
-            try await sync.transmit(draft, password: password)
+            try await sync.transmit(draft, login: login)
         } catch {
             // The undelivered bubble is the indicator, so the shared errorMessage
             // is left untouched: setting it here would also surface in the next
@@ -478,7 +486,7 @@ public final class InboxModel {
         try? await sync.recordLocal(draft, state: .sent)
         pendingReplies[draft.messageID] = nil
         errorMessage = nil
-        await sync.saveSentCopy(draft, password: password)
+        await sync.saveSentCopy(draft, login: login)
         return try? await store.thread(id: threadID, accountID: account.id)
     }
 
@@ -496,20 +504,20 @@ public final class InboxModel {
     /// user has let the reaction stand, so by the time it runs the send is final.
     @discardableResult
     public func sendReaction(_ emoji: String, to targetMessageID: String, in thread: Thread) async -> Thread? {
-        guard let password else {
+        guard let login else {
             errorMessage = "Connect an account first."
             return nil
         }
         guard let target = thread.messages.first(where: { $0.messageID == targetMessageID }) else { return nil }
         let draft = OutgoingDraft.reaction(to: target, in: thread, as: account, emoji: emoji)
         do {
-            try await sync.transmit(draft, password: password)
+            try await sync.transmit(draft, login: login)
         } catch {
             errorMessage = "Couldn't send your reaction. Try again."
             return try? await store.thread(id: thread.id, accountID: account.id)
         }
         try? await sync.recordLocal(draft, state: .sent)
-        await sync.saveSentCopy(draft, password: password)
+        await sync.saveSentCopy(draft, login: login)
         return try? await store.thread(id: thread.id, accountID: account.id)
     }
 
@@ -528,7 +536,7 @@ public final class InboxModel {
         attachments: [DraftAttachment] = [],
         discardingDraft discarding: DraftContext? = nil
     ) async -> Bool {
-        guard let password else {
+        guard let login else {
             errorMessage = "Connect an account first."
             return false
         }
@@ -549,13 +557,13 @@ public final class InboxModel {
 
         let draft = OutgoingDraft.new(from: account, to: recipients, cc: cc, bcc: bcc, subject: wireSubject, body: trimmedBody, attachments: attachments.map(\.outgoing), sentAt: Date())
         do {
-            try await sync.send(draft, password: password)
+            try await sync.send(draft, login: login)
             if let discarding {
                 // The message is sent, so its draft has served its purpose.
                 // Best-effort: a failed expunge leaves a stale draft to reconcile,
                 // not a failed send, so it must not turn a sent message into an
                 // error. The single reloadList below reflects both changes.
-                try? await sync.deleteDraft(threadID: discarding.threadID, password: password)
+                try? await sync.deleteDraft(threadID: discarding.threadID, login: login)
             }
             try await reloadList()
             return true
@@ -585,7 +593,7 @@ public final class InboxModel {
         attachments: [DraftAttachment] = [],
         editing existing: DraftContext? = nil
     ) async -> DraftContext? {
-        guard let password else {
+        guard let login else {
             errorMessage = "Connect an account first."
             return nil
         }
@@ -601,7 +609,7 @@ public final class InboxModel {
             savedAt: Date()
         )
         do {
-            try await sync.saveDraft(draft, password: password)
+            try await sync.saveDraft(draft, login: login)
             try await reloadList()
             return DraftContext(messageID: messageID)
         } catch {
@@ -614,12 +622,12 @@ public final class InboxModel {
     /// refreshing the list. Called when a draft is explicitly discarded; a sent
     /// draft is removed by `sendNew` itself. Errors surface in `errorMessage`.
     public func deleteDraft(_ context: DraftContext) async {
-        guard let password else {
+        guard let login else {
             errorMessage = "Connect an account first."
             return
         }
         await attempt {
-            try await self.sync.deleteDraft(threadID: context.threadID, password: password)
+            try await self.sync.deleteDraft(threadID: context.threadID, login: login)
             try await self.reloadList()
         }
     }
@@ -631,12 +639,12 @@ public final class InboxModel {
     /// if not connected, the draft is unknown, or it carries no Message-ID, with
     /// any error in `errorMessage`.
     public func loadDraft(threadID: String) async -> DraftEdit? {
-        guard let password else {
+        guard let login else {
             errorMessage = "Connect an account first."
             return nil
         }
         do {
-            guard let thread = try await sync.loadConversation(id: threadID, password: password),
+            guard let thread = try await sync.loadConversation(id: threadID, login: login),
                   let message = thread.messages.first,
                   let messageID = message.messageID, !messageID.isEmpty
             else { return nil }
@@ -648,7 +656,7 @@ public final class InboxModel {
             var attachments: [DraftAttachment] = []
             for attachment in message.attachments where !attachment.partID.isEmpty {
                 if let data = try await sync.fetchAttachment(
-                    messageID: message.id, partID: attachment.partID, password: password
+                    messageID: message.id, partID: attachment.partID, login: login
                 ) {
                     attachments.append(DraftAttachment(
                         filename: attachment.filename, mimeType: attachment.mimeType, data: data
@@ -708,12 +716,12 @@ public final class InboxModel {
     /// server and then refreshing the inbox rows once. Errors surface in
     /// `errorMessage`.
     public func markRead(threadIDs: [String], read: Bool) async {
-        guard let password else {
+        guard let login else {
             errorMessage = "Connect an account first."
             return
         }
         await bulkMutate(threadIDs) { ids in
-            try await self.sync.setRead(threadIDs: ids, seen: read, password: password)
+            try await self.sync.setRead(threadIDs: ids, seen: read, login: login)
         }
     }
 
@@ -734,12 +742,12 @@ public final class InboxModel {
     /// and then refreshing the inbox rows once, mirroring `markRead`. Errors
     /// surface in `errorMessage`.
     public func markFlagged(threadIDs: [String], flagged: Bool) async {
-        guard let password else {
+        guard let login else {
             errorMessage = "Connect an account first."
             return
         }
         await bulkMutate(threadIDs) { ids in
-            try await self.sync.setFlagged(threadIDs: ids, flagged: flagged, password: password)
+            try await self.sync.setFlagged(threadIDs: ids, flagged: flagged, login: login)
         }
     }
 
@@ -764,12 +772,12 @@ public final class InboxModel {
     /// not cached; it is pulled fresh each open, since it is only needed while the
     /// reader is looking at it.
     public func htmlBody(for messageID: String) async -> WebViewBody? {
-        guard let password else {
+        guard let login else {
             errorMessage = "Connect an account first."
             return nil
         }
         do {
-            return try await sync.fetchHTMLBody(messageID: messageID, password: password)
+            return try await sync.fetchHTMLBody(messageID: messageID, login: login)
         } catch {
             errorMessage = error.localizedDescription
             return nil
@@ -782,12 +790,12 @@ public final class InboxModel {
     /// `errorMessage`. The bytes are not cached; they're pulled fresh each open and
     /// the caller writes them to a temp file for the preview.
     public func attachmentData(messageID: String, partID: String) async -> Data? {
-        guard let password else {
+        guard let login else {
             errorMessage = "Connect an account first."
             return nil
         }
         do {
-            return try await sync.fetchAttachment(messageID: messageID, partID: partID, password: password)
+            return try await sync.fetchAttachment(messageID: messageID, partID: partID, login: login)
         } catch {
             errorMessage = error.localizedDescription
             return nil
@@ -808,8 +816,8 @@ public final class InboxModel {
         }).value {
             return cached
         }
-        guard !attachment.partID.isEmpty, let password else { return nil }
-        guard let data = try? await sync.fetchAttachment(messageID: messageID, partID: attachment.partID, password: password) else {
+        guard !attachment.partID.isEmpty, let login else { return nil }
+        guard let data = try? await sync.fetchAttachment(messageID: messageID, partID: attachment.partID, login: login) else {
             return nil
         }
         Task.detached(priority: .utility) {
@@ -835,7 +843,7 @@ public final class InboxModel {
         cc: [Participant],
         note: String
     ) async -> Bool {
-        guard let password else {
+        guard let login else {
             errorMessage = "Connect an account first."
             return false
         }
@@ -847,7 +855,7 @@ public final class InboxModel {
             var files: [OutgoingAttachment] = []
             for attachment in message.attachments where !attachment.partID.isEmpty {
                 guard let data = try await sync.fetchAttachment(
-                    messageID: message.id, partID: attachment.partID, password: password
+                    messageID: message.id, partID: attachment.partID, login: login
                 ) else { continue }
                 files.append(OutgoingAttachment(
                     filename: attachment.filename, mimeType: attachment.mimeType, data: data
@@ -863,7 +871,7 @@ public final class InboxModel {
                 attachments: files,
                 sentAt: Date()
             )
-            try await sync.send(draft, password: password)
+            try await sync.send(draft, login: login)
             try await reloadList()
             return true
         } catch {
@@ -877,12 +885,12 @@ public final class InboxModel {
     /// failed move leaves that conversation in place with the reason in
     /// `errorMessage`.
     public func trash(threadIDs: [String]) async {
-        guard let password else {
+        guard let login else {
             errorMessage = "Connect an account first."
             return
         }
         await bulkMutate(threadIDs, removingRows: !isViewing(.trash)) { ids in
-            try await self.sync.trash(threadIDs: ids, password: password)
+            try await self.sync.trash(threadIDs: ids, login: login)
         }
     }
 
@@ -896,12 +904,12 @@ public final class InboxModel {
     /// rows once at the end. Server-first, mirroring `trash`: a failed move leaves
     /// that conversation in place with the reason in `errorMessage`.
     public func archive(threadIDs: [String]) async {
-        guard let password else {
+        guard let login else {
             errorMessage = "Connect an account first."
             return
         }
         await bulkMutate(threadIDs, removingRows: !isViewing(.archive)) { ids in
-            try await self.sync.archive(threadIDs: ids, password: password)
+            try await self.sync.archive(threadIDs: ids, login: login)
         }
     }
 
@@ -914,12 +922,12 @@ public final class InboxModel {
     /// folder and drop it from the current list, refreshing once at the end.
     /// Server-first, mirroring `trash`.
     public func junk(threadIDs: [String]) async {
-        guard let password else {
+        guard let login else {
             errorMessage = "Connect an account first."
             return
         }
         await bulkMutate(threadIDs, removingRows: !isViewing(.junk)) { ids in
-            try await self.sync.junk(threadIDs: ids, password: password)
+            try await self.sync.junk(threadIDs: ids, login: login)
         }
     }
 
@@ -934,7 +942,7 @@ public final class InboxModel {
     /// blocked. Server-touching (the sync moves the backlog), so a failed sync
     /// surfaces in `errorMessage` with the address still added.
     public func block(address: String) async {
-        guard let password else {
+        guard let login else {
             errorMessage = "Connect an account first."
             return
         }
@@ -943,7 +951,7 @@ public final class InboxModel {
         await attempt {
             try await self.exclusively {
                 try await self.store.setBlocked(true, address: normalized, accountID: self.account.id)
-                try await self.sync.syncInbox(password: password)
+                try await self.sync.syncInbox(login: login)
                 self.blockedSenders = try await self.store.blockedSenders(accountID: self.account.id)
                 try await self.reloadList()
             }
@@ -972,12 +980,12 @@ public final class InboxModel {
     /// each from the current list, refreshing once at the end. Server-first,
     /// mirroring `trash`.
     public func move(threadIDs: [String], to destination: String) async {
-        guard let password else {
+        guard let login else {
             errorMessage = "Connect an account first."
             return
         }
         await bulkMutate(threadIDs, removingRows: destination != currentMailbox.name) { ids in
-            try await self.sync.move(threadIDs: ids, to: destination, password: password)
+            try await self.sync.move(threadIDs: ids, to: destination, login: login)
         }
     }
 
@@ -991,7 +999,7 @@ public final class InboxModel {
     public func signOut() {
         monitorTask?.cancel()
         monitorTask = nil
-        password = nil
+        login = nil
         summaries = []
         mailboxes = []
         unreadCounts = [:]

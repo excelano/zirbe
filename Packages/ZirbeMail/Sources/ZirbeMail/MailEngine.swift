@@ -41,7 +41,7 @@ public actor MailEngine {
     private let logger: Logger
     /// The credentials of the current session, in memory only. Set by `connect`,
     /// cleared by `disconnect`; used to restore a dropped connection.
-    private var credentials: (username: String, password: String)?
+    private var credentials: (username: String, login: MailLogin)?
     /// Whether we hold a live, authenticated session. Reset when the socket dies.
     private var isLoggedIn = false
     /// The resolved Sent mailbox name, cached after the first lookup so saving a
@@ -77,10 +77,10 @@ public actor MailEngine {
 
     /// Establish or reuse an authenticated session with these credentials.
     /// Idempotent: when a live session already exists this returns immediately
-    /// without a new connection or login. The password is held in memory only so
+    /// without a new connection or login. The login is held in memory only so
     /// a dropped connection can be restored; it is never written to disk.
-    public func connect(username: String, password: String) async throws {
-        credentials = (username, password)
+    public func connect(username: String, login: MailLogin) async throws {
+        credentials = (username, login)
         try await ensureSession()
     }
 
@@ -570,7 +570,13 @@ public actor MailEngine {
             try await server.connect()
         }
         do {
-            try await server.login(username: credentials.username, password: credentials.password)
+            switch credentials.login {
+            case .password(let password):
+                try await server.login(username: credentials.username, password: password)
+            case .accessToken(let token):
+                try await server.authenticateXOAUTH2(email: credentials.username, accessToken: try await token())
+                await server.setXOAUTH2AccessTokenProvider(email: credentials.username, accessTokenProvider: token)
+            }
         } catch IMAPError.loginFailed, IMAPError.authFailed {
             throw MailEngineError.authenticationRejected
         }

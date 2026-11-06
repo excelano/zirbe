@@ -48,17 +48,17 @@ public actor SyncService {
     /// saving the freshly fetched headers, any cached message whose UID the server
     /// no longer reports is pruned, so a thread deleted elsewhere disappears here.
     ///
-    /// The password is passed in per call and never stored on the service; it
+    /// The login is passed in per call and never stored on the service; it
     /// comes from the Keychain at the call site and is used only for the IMAP
     /// login over TLS. The engine keeps the connection warm between calls, so a
     /// later sync or conversation open reuses it rather than reconnecting.
     @discardableResult
     public func syncInbox(
-        password: String,
+        login: MailLogin,
         mailbox: String = "INBOX",
         limit: Int = 50
     ) async throws -> [ThreadSummary] {
-        try await reconcile(mailbox: mailbox, role: .inbox, password: password, limit: limit)
+        try await reconcile(mailbox: mailbox, role: .inbox, login: login, limit: limit)
         // The home view is scoped to INBOX: every conversation with an INBOX
         // message, carrying its whole thread. Scoping keeps junk-only and
         // sent-only threads out of the inbox now that other folders also sync.
@@ -75,18 +75,18 @@ public actor SyncService {
     public func syncFolder(
         mailbox: String,
         role: MailboxRole?,
-        password: String,
+        login: MailLogin,
         limit: Int = 50
     ) async throws -> [ThreadSummary] {
-        try await reconcile(mailbox: mailbox, role: role, password: password, limit: limit)
+        try await reconcile(mailbox: mailbox, role: role, login: login, limit: limit)
         return try await store.threadSummaries(accountID: account.id, mailboxName: mailbox)
     }
 
     /// Fetch a folder, reconcile the cache against the server, and recompute
     /// threads. The shared core of `syncInbox` and `syncFolder`; neither returns
     /// from here, since they differ only in which summaries they read back after.
-    private func reconcile(mailbox: String, role: MailboxRole?, password: String, limit: Int) async throws {
-        try await engine.connect(username: account.username, password: password)
+    private func reconcile(mailbox: String, role: MailboxRole?, login: MailLogin, limit: Int) async throws {
+        try await engine.connect(username: account.username, login: login)
 
         // The server's current identity and contents for this mailbox: its
         // UIDVALIDITY and the full set of UIDs it holds right now.
@@ -135,8 +135,8 @@ public actor SyncService {
         await backfillLatestBodies()
     }
 
-    public func searchServer(_ query: String, in mailbox: String, password: String, limit: Int = 50) async throws -> [String] {
-        try await engine.connect(username: account.username, password: password)
+    public func searchServer(_ query: String, in mailbox: String, login: MailLogin, limit: Int = 50) async throws -> [String] {
+        try await engine.connect(username: account.username, login: login)
         let messages = try await engine.searchEnvelopes(in: mailbox, text: query, limit: limit).map(Message.init)
         guard !messages.isEmpty else { return [] }
         try await store.save(messages, accountID: account.id, mailboxName: mailbox)
@@ -185,8 +185,8 @@ public actor SyncService {
     /// folder rows but syncs no messages, so visiting a folder still triggers its
     /// own lazy sync.
     @discardableResult
-    public func discoverFolders(password: String) async throws -> [Mailbox] {
-        try await engine.connect(username: account.username, password: password)
+    public func discoverFolders(login: MailLogin) async throws -> [Mailbox] {
+        try await engine.connect(username: account.username, login: login)
         let mailboxes = try await engine.listMailboxes()
             .filter(\.isSelectable)
             .map { Mailbox(accountID: account.id, name: $0.name, role: MailboxRole($0.specialUse), hierarchyDelimiter: $0.hierarchyDelimiter) }
@@ -202,13 +202,13 @@ public actor SyncService {
     /// opens read straight from the store with no network. Returns nil if the
     /// thread is unknown.
     ///
-    /// The password is per call for the same reason as `syncInbox`: it lives in
+    /// The login is per call for the same reason as `syncInbox`: it lives in
     /// the Keychain (M4) or the in-memory session, never on this service.
-    public func loadConversation(id: String, password: String) async throws -> Thread? {
+    public func loadConversation(id: String, login: MailLogin) async throws -> Thread? {
         let targets = try await store.messagesNeedingBodies(threadID: id, accountID: account.id)
         var threadID = id
         if !targets.isEmpty {
-            try await engine.connect(username: account.username, password: password)
+            try await engine.connect(username: account.username, login: login)
             var bodies: [String: FetchedBody] = [:]
             for (mailbox, group) in Dictionary(grouping: targets, by: \.mailbox) {
                 let fetched = try await engine.fetchTextBodies(
@@ -234,10 +234,10 @@ public actor SyncService {
     /// images resolved to bytes. Resolves the message's server reference from the
     /// store, then pulls the HTML part and any `cid:`-referenced images over the
     /// warm session. Returns nil when the message is unknown, purely local, or
-    /// carries no HTML. The password is per call, as elsewhere.
-    public func fetchHTMLBody(messageID: String, password: String) async throws -> WebViewBody? {
+    /// carries no HTML. The login is per call, as elsewhere.
+    public func fetchHTMLBody(messageID: String, login: MailLogin) async throws -> WebViewBody? {
         guard let ref = try await store.messageRef(id: messageID, accountID: account.id) else { return nil }
-        try await engine.connect(username: account.username, password: password)
+        try await engine.connect(username: account.username, login: login)
         guard let body = try await engine.fetchHTMLBody(in: ref.mailbox, uid: ref.uid) else { return nil }
         return WebViewBody(
             html: body.html,
@@ -251,11 +251,11 @@ public actor SyncService {
     /// over the warm session, for opening it in a preview. Resolves the message's
     /// server reference from the store, then pulls just that part. Returns nil when
     /// the message is unknown or purely local (no UID, so nothing to fetch); a
-    /// missing part or undecodable bytes throw from the engine. The password is per
+    /// missing part or undecodable bytes throw from the engine. The login is per
     /// call, as elsewhere.
-    public func fetchAttachment(messageID: String, partID: String, password: String) async throws -> Data? {
+    public func fetchAttachment(messageID: String, partID: String, login: MailLogin) async throws -> Data? {
         guard let ref = try await store.messageRef(id: messageID, accountID: account.id) else { return nil }
-        try await engine.connect(username: account.username, password: password)
+        try await engine.connect(username: account.username, login: login)
         return try await engine.fetchAttachment(in: ref.mailbox, uid: ref.uid, partID: partID)
     }
 
@@ -272,10 +272,10 @@ public actor SyncService {
     /// swallowed rather than reported as a send failure for mail that did send.
     /// The local copy carries the same Message-ID, so when Sent is later synced
     /// the two reconcile to one row.
-    public func send(_ draft: OutgoingDraft, password: String) async throws {
-        try await transmit(draft, password: password)
+    public func send(_ draft: OutgoingDraft, login: MailLogin) async throws {
+        try await transmit(draft, login: login)
         try await recordLocal(draft, state: .sent)
-        await saveSentCopy(draft, password: password)
+        await saveSentCopy(draft, login: login)
     }
 
     /// The SMTP send on its own: the gate. Throws on any failure, having stored
@@ -283,8 +283,8 @@ public actor SyncService {
     /// shown in its open thread) or simply surface the error (a new message or
     /// forward, whose composer stays open to retry). A success means the mail was
     /// delivered; the caller then records the local copy and the Sent copy.
-    public func transmit(_ draft: OutgoingDraft, password: String) async throws {
-        try await sender.send(draft.outgoingMessage, username: account.username, password: password)
+    public func transmit(_ draft: OutgoingDraft, login: MailLogin) async throws {
+        try await sender.send(draft.outgoingMessage, username: account.username, login: login)
     }
 
     /// File the optimistic local copy of a sent or failed message into the local
@@ -317,9 +317,9 @@ public actor SyncService {
     /// swallowed rather than reported as a send failure for mail that did send.
     /// The same Message-ID as the SMTP send is carried through, so when Sent is
     /// later synced the server copy and the local copy reconcile to one row.
-    public func saveSentCopy(_ draft: OutgoingDraft, password: String) async {
+    public func saveSentCopy(_ draft: OutgoingDraft, login: MailLogin) async {
         do {
-            try await engine.connect(username: account.username, password: password)
+            try await engine.connect(username: account.username, login: login)
             try await engine.saveToSent(draft.outgoingMessage)
         } catch {
             // The mail was sent and is shown locally; a missing server-side Sent
@@ -341,10 +341,10 @@ public actor SyncService {
     /// old copy to be reconciled on the next Drafts sync. Returns the new server
     /// UID when the server reported one, else nil.
     @discardableResult
-    public func saveDraft(_ draft: OutgoingDraft, password: String) async throws -> UInt32? {
+    public func saveDraft(_ draft: OutgoingDraft, login: MailLogin) async throws -> UInt32? {
         let priorUID = try await store.messageRef(id: draft.localMessage.id, accountID: account.id)?.uid
 
-        try await engine.connect(username: account.username, password: password)
+        try await engine.connect(username: account.username, login: login)
         let newUID = try await engine.saveToDrafts(draft.outgoingMessage, replacing: priorUID)
 
         try await store.upsert(Mailbox(accountID: account.id, name: Self.localDraftsMailbox, role: .drafts))
@@ -364,11 +364,11 @@ public actor SyncService {
     /// if it were a Drafts UID. A discarded draft is a Drafts-only thread today, so
     /// this filter is a guard against a future thread bridging Drafts with another
     /// folder, not a change in behavior.
-    public func deleteDraft(threadID: String, password: String) async throws {
+    public func deleteDraft(threadID: String, login: MailLogin) async throws {
         let draftRefs = try await store.messageRefs(threadIDs: [threadID], accountID: account.id)
             .filter { $0.mailbox == Self.localDraftsMailbox }
         if !draftRefs.isEmpty {
-            try await engine.connect(username: account.username, password: password)
+            try await engine.connect(username: account.username, login: login)
             for ref in draftRefs {
                 try await engine.removeDraft(uid: ref.uid)
             }
@@ -382,8 +382,8 @@ public actor SyncService {
     /// update the local store and rethread once so the unread state follows. The
     /// server update is skipped when no message is server-backed (purely local
     /// conversations).
-    public func setRead(threadIDs: [String], seen: Bool, password: String) async throws {
-        try await applyToServer(threadIDs: threadIDs, password: password) { mailbox, uids in
+    public func setRead(threadIDs: [String], seen: Bool, login: MailLogin) async throws {
+        try await applyToServer(threadIDs: threadIDs, login: login) { mailbox, uids in
             try await self.engine.setSeen(seen, in: mailbox, uids: uids)
         }
         try await store.setSeen(seen, threadIDs: threadIDs, accountID: account.id)
@@ -391,8 +391,8 @@ public actor SyncService {
     }
 
     /// Flag or unflag conversations, mirroring `setRead`.
-    public func setFlagged(threadIDs: [String], flagged: Bool, password: String) async throws {
-        try await applyToServer(threadIDs: threadIDs, password: password) { mailbox, uids in
+    public func setFlagged(threadIDs: [String], flagged: Bool, login: MailLogin) async throws {
+        try await applyToServer(threadIDs: threadIDs, login: login) { mailbox, uids in
             try await self.engine.setFlagged(flagged, in: mailbox, uids: uids)
         }
         try await store.setFlagged(flagged, threadIDs: threadIDs, accountID: account.id)
@@ -401,12 +401,12 @@ public actor SyncService {
 
     private func applyToServer(
         threadIDs: [String],
-        password: String,
+        login: MailLogin,
         _ operation: (_ mailbox: String, _ uids: [UInt32]) async throws -> Void
     ) async throws {
         let refs = try await store.messageRefs(threadIDs: threadIDs, accountID: account.id)
         guard !refs.isEmpty else { return }
-        try await engine.connect(username: account.username, password: password)
+        try await engine.connect(username: account.username, login: login)
         for (mailbox, group) in Dictionary(grouping: refs, by: \.mailbox) {
             try await operation(mailbox, group.map(\.uid))
         }
@@ -415,8 +415,8 @@ public actor SyncService {
     /// Trash conversations: their server-backed messages go to the server's
     /// Trash, then the local copies are dropped. See `relocate` for the batching
     /// and the partial-failure rule.
-    public func trash(threadIDs: [String], password: String) async throws {
-        try await relocate(threadIDs: threadIDs, password: password) { mailbox, uids in
+    public func trash(threadIDs: [String], login: MailLogin) async throws {
+        try await relocate(threadIDs: threadIDs, login: login) { mailbox, uids in
             try await self.engine.trash(in: mailbox, uids: uids)
         }
     }
@@ -424,24 +424,24 @@ public actor SyncService {
     /// Move conversations' server-backed messages to `destination`. The
     /// destination folder shows them on its next sync (a moved message gets a new
     /// UID there, so it is re-fetched rather than carried over with a stale one).
-    public func move(threadIDs: [String], to destination: String, password: String) async throws {
-        try await relocate(threadIDs: threadIDs, password: password) { mailbox, uids in
+    public func move(threadIDs: [String], to destination: String, login: MailLogin) async throws {
+        try await relocate(threadIDs: threadIDs, login: login) { mailbox, uids in
             try await self.engine.move(in: mailbox, uids: uids, to: destination)
         }
     }
 
     /// Archive conversations: the server's Archive folder (resolved by the
     /// engine), read state preserved.
-    public func archive(threadIDs: [String], password: String) async throws {
-        try await relocate(threadIDs: threadIDs, password: password) { mailbox, uids in
+    public func archive(threadIDs: [String], login: MailLogin) async throws {
+        try await relocate(threadIDs: threadIDs, login: login) { mailbox, uids in
             try await self.engine.archive(in: mailbox, uids: uids)
         }
     }
 
     /// Mark conversations as junk: the server's Junk folder (resolved by the
     /// engine, with a name fallback).
-    public func junk(threadIDs: [String], password: String) async throws {
-        try await relocate(threadIDs: threadIDs, password: password) { mailbox, uids in
+    public func junk(threadIDs: [String], login: MailLogin) async throws {
+        try await relocate(threadIDs: threadIDs, login: login) { mailbox, uids in
             try await self.engine.markJunk(in: mailbox, uids: uids)
         }
     }
@@ -458,14 +458,14 @@ public actor SyncService {
     /// so a half-applied move is reported rather than reversed.
     private func relocate(
         threadIDs: [String],
-        password: String,
+        login: MailLogin,
         _ move: (_ mailbox: String, _ uids: [UInt32]) async throws -> Void
     ) async throws {
         let refs = try await store.messageRefs(threadIDs: threadIDs, accountID: account.id)
         var accepted: [String] = []
         var refusal: Error?
         if !refs.isEmpty {
-            try await engine.connect(username: account.username, password: password)
+            try await engine.connect(username: account.username, login: login)
             for (mailbox, group) in Dictionary(grouping: refs, by: \.mailbox) {
                 do {
                     try await move(mailbox, group.map(\.uid))
@@ -498,9 +498,9 @@ public actor SyncService {
     /// Begin watching the inbox for server-side changes, yielding once per change
     /// so the caller can re-sync (IMAP IDLE). Connects first, since the dedicated
     /// IDLE connection reuses the session's authentication. Thin pass-through to
-    /// the engine; the password is per call as everywhere else.
-    public func watchInbox(password: String, mailbox: String = "INBOX") async throws -> AsyncStream<Void> {
-        try await engine.connect(username: account.username, password: password)
+    /// the engine; the login is per call as everywhere else.
+    public func watchInbox(login: MailLogin, mailbox: String = "INBOX") async throws -> AsyncStream<Void> {
+        try await engine.connect(username: account.username, login: login)
         return try await engine.idleChanges(in: mailbox)
     }
 
@@ -509,7 +509,7 @@ public actor SyncService {
         await engine.stopIdle()
     }
 
-    /// Close the warm session and forget the password. Call on sign-out.
+    /// Close the warm session and forget the login. Call on sign-out.
     public func disconnect() async {
         await engine.disconnect()
     }

@@ -14,7 +14,7 @@ import ZirbeMail
 
 final class SyncServiceTests: XCTestCase {
     private let account = Account(emailAddress: "me@x.com", imapHost: "imap.x.com", smtpHost: "smtp.x.com")
-    private let password = "pw"
+    private let login = MailLogin.password("pw")
 
     private var store: MailStore!
     private var server: FakeMailServer!
@@ -93,8 +93,8 @@ final class SyncServiceTests: XCTestCase {
     private func seedThreadAcrossTwoFolders() async throws -> ZirbeCore.Thread {
         await server.add(incoming("Plan", id: "<a@x>", minutes: 0))
         await server.add(incoming("Re: Plan", id: "<b@x>", inReplyTo: "<a@x>", minutes: 5), to: "Archive")
-        try await sync.syncInbox(password: password)
-        try await sync.syncFolder(mailbox: "Archive", role: .archive, password: password)
+        try await sync.syncInbox(login: login)
+        try await sync.syncFolder(mailbox: "Archive", role: .archive, login: login)
         let thread = try await onlyThread()
         XCTAssertEqual(thread.messages.count, 2)
         return thread
@@ -106,7 +106,7 @@ final class SyncServiceTests: XCTestCase {
         await server.add(incoming("Plan", id: "<a@x>"))
         await server.add(incoming("Budget", id: "<b@x>", minutes: 1))
 
-        let summaries = try await sync.syncInbox(password: password)
+        let summaries = try await sync.syncInbox(login: login)
 
         XCTAssertEqual(summaries.map(\.subject), ["Budget", "Plan"], "most recent activity first")
         let validity = try await store.uidValidity(accountID: account.id, mailboxName: "INBOX")
@@ -120,10 +120,10 @@ final class SyncServiceTests: XCTestCase {
     func testDeletionMadeElsewhereIsPrunedOnTheNextSync() async throws {
         await server.add(incoming("Plan", id: "<a@x>"))
         let gone = await server.add(incoming("Spam", id: "<b@x>", minutes: 1))
-        try await sync.syncInbox(password: password)
+        try await sync.syncInbox(login: login)
 
         await server.delete(uid: gone)
-        let summaries = try await sync.syncInbox(password: password)
+        let summaries = try await sync.syncInbox(login: login)
 
         XCTAssertEqual(summaries.map(\.subject), ["Plan"])
     }
@@ -131,12 +131,12 @@ final class SyncServiceTests: XCTestCase {
     func testUIDValidityChangeRebuildsTheCacheUnderTheNewNumbering() async throws {
         await server.add(incoming("Plan", id: "<a@x>"))
         await server.add(incoming("Budget", id: "<b@x>", minutes: 1))
-        try await sync.syncInbox(password: password)
+        try await sync.syncInbox(login: login)
         // Someone deletes Plan, then the server renumbers.
         await server.delete(uid: 1)
         await server.renumber()
 
-        let summaries = try await sync.syncInbox(password: password)
+        let summaries = try await sync.syncInbox(login: login)
 
         XCTAssertEqual(summaries.map(\.subject), ["Budget"])
         let validity = try await store.uidValidity(accountID: account.id, mailboxName: "INBOX")
@@ -147,16 +147,16 @@ final class SyncServiceTests: XCTestCase {
 
     func testRenumberReseedsTheNotificationMarkSoOnlyLaterMailNotifies() async throws {
         await server.add(incoming("Plan", id: "<a@x>"))
-        try await sync.syncInbox(password: password)
+        try await sync.syncInbox(login: login)
         try await store.markNotificationWatermark(accountID: account.id)
 
         await server.renumber()
-        try await sync.syncInbox(password: password)
+        try await sync.syncInbox(login: login)
         let rebuilt = try await store.unnotifiedInboxArrivals(accountID: account.id)
         XCTAssertTrue(rebuilt.isEmpty, "the rebuilt inbox is not announced wholesale")
 
         await server.add(incoming("New", id: "<n@x>", minutes: 2))
-        try await sync.syncInbox(password: password)
+        try await sync.syncInbox(login: login)
         let arrivals = try await store.unnotifiedInboxArrivals(accountID: account.id)
         XCTAssertEqual(arrivals.map(\.subject), ["New"])
     }
@@ -165,10 +165,10 @@ final class SyncServiceTests: XCTestCase {
         for i in 0..<3 {
             await server.add(incoming("Old \(i)", id: "<o\(i)@x>", minutes: i))
         }
-        try await sync.syncInbox(password: password, limit: 3)
+        try await sync.syncInbox(login: login, limit: 3)
         await server.add(incoming("New", id: "<n@x>", minutes: 10))
 
-        let summaries = try await sync.syncInbox(password: password, limit: 2)
+        let summaries = try await sync.syncInbox(login: login, limit: 2)
 
         XCTAssertEqual(summaries.count, 4, "the keep-set is the server's full UID list, not the window")
         let fetches = await server.calls(.fetchRecentEnvelopes)
@@ -179,7 +179,7 @@ final class SyncServiceTests: XCTestCase {
         await server.add(incoming("Plan", id: "<a@x>", minutes: 0), body: MessageBody(text: "first", hasHTML: false))
         await server.add(incoming("Re: Plan", id: "<b@x>", inReplyTo: "<a@x>", minutes: 5), body: MessageBody(text: "second", hasHTML: true))
 
-        let summaries = try await sync.syncInbox(password: password)
+        let summaries = try await sync.syncInbox(login: login)
 
         XCTAssertEqual(summaries.first?.preview, "second")
         let fetches = await server.calls(.fetchTextBodies)
@@ -193,7 +193,7 @@ final class SyncServiceTests: XCTestCase {
         await server.add(incoming("Plan", id: "<a@x>"), body: MessageBody(text: "first", hasHTML: false))
         await server.fail(.fetchTextBodies)
 
-        let summaries = try await sync.syncInbox(password: password)
+        let summaries = try await sync.syncInbox(login: login)
 
         XCTAssertEqual(summaries.map(\.subject), ["Plan"])
         XCTAssertNil(summaries.first?.preview)
@@ -204,7 +204,7 @@ final class SyncServiceTests: XCTestCase {
         await server.fail(.connect)
 
         do {
-            try await sync.syncInbox(password: password)
+            try await sync.syncInbox(login: login)
             XCTFail("expected the connect failure to propagate")
         } catch let error as FakeMailServer.ScriptedFailure {
             XCTAssertEqual(error.operation, .connect)
@@ -219,7 +219,7 @@ final class SyncServiceTests: XCTestCase {
         await server.add(incoming("Plan", id: "<a@x>"))
         await server.add(incoming("Deal", id: "<s@x>", from: "Spam <spam@x.com>", minutes: 1))
 
-        let summaries = try await sync.syncInbox(password: password)
+        let summaries = try await sync.syncInbox(login: login)
 
         XCTAssertEqual(summaries.map(\.subject), ["Plan"])
         let inbox = await server.messages(in: "INBOX").map(\.subject)
@@ -235,9 +235,9 @@ final class SyncServiceTests: XCTestCase {
     func testSyncFolderScopesItsListToThatFolder() async throws {
         await server.add(incoming("Plan", id: "<a@x>"))
         await server.add(incoming("Filed", id: "<f@x>"), to: "Archive")
-        try await sync.syncInbox(password: password)
+        try await sync.syncInbox(login: login)
 
-        let archived = try await sync.syncFolder(mailbox: "Archive", role: .archive, password: password)
+        let archived = try await sync.syncFolder(mailbox: "Archive", role: .archive, login: login)
 
         XCTAssertEqual(archived.map(\.subject), ["Filed"])
         let inbox = try await inboxSummaries()
@@ -250,7 +250,7 @@ final class SyncServiceTests: XCTestCase {
         await server.addFolder(MailboxInfo(name: "Projects", hierarchyDelimiter: "/"))
         await server.addFolder(MailboxInfo(name: "[Gmail]", isSelectable: false))
 
-        let discovered = try await sync.discoverFolders(password: password)
+        let discovered = try await sync.discoverFolders(login: login)
 
         let byName = Dictionary(uniqueKeysWithValues: discovered.map { ($0.name, $0) })
         XCTAssertEqual(byName["INBOX"]?.role, .inbox)
@@ -267,20 +267,20 @@ final class SyncServiceTests: XCTestCase {
     func testLoadConversationFetchesMissingBodiesOnceThenReadsTheCache() async throws {
         await server.add(incoming("Plan", id: "<a@x>", minutes: 0), body: MessageBody(text: "first", hasHTML: false))
         await server.add(incoming("Re: Plan", id: "<b@x>", inReplyTo: "<a@x>", minutes: 5), body: MessageBody(text: "second", hasHTML: false))
-        try await sync.syncInbox(password: password)
+        try await sync.syncInbox(login: login)
         let id = try await onlyThread().id
 
-        let firstOpen = try await sync.loadConversation(id: id, password: password)
+        let firstOpen = try await sync.loadConversation(id: id, login: login)
         let opened = try XCTUnwrap(firstOpen)
         XCTAssertEqual(opened.messages.map(\.bodyText), ["first", "second"])
         let fetchesAfterOpen = await server.calls(.fetchTextBodies)
         XCTAssertEqual(fetchesAfterOpen.last, .fetchTextBodies(mailbox: "INBOX", uids: [1]), "only the body the backfill skipped")
 
-        _ = try await sync.loadConversation(id: id, password: password)
+        _ = try await sync.loadConversation(id: id, login: login)
         let fetchesAfterReopen = await server.calls(.fetchTextBodies)
         XCTAssertEqual(fetchesAfterReopen.count, fetchesAfterOpen.count, "a second open is served from the store")
 
-        let unknown = try await sync.loadConversation(id: "nope", password: password)
+        let unknown = try await sync.loadConversation(id: "nope", login: login)
         XCTAssertNil(unknown)
     }
 
@@ -291,17 +291,17 @@ final class SyncServiceTests: XCTestCase {
             html: HTMLBody(html: "<p>hi</p>", images: [InlineImagePart(contentID: "logo", mimeType: "image/png", data: logo)])
         )
         await server.add(incoming("Plain", id: "<p@x>", minutes: 1))
-        try await sync.syncInbox(password: password)
+        try await sync.syncInbox(login: login)
 
-        let fetched = try await sync.fetchHTMLBody(messageID: "mid:<a@x>", password: password)
+        let fetched = try await sync.fetchHTMLBody(messageID: "mid:<a@x>", login: login)
         let body = try XCTUnwrap(fetched)
         XCTAssertEqual(body.html, "<p>hi</p>")
         XCTAssertEqual(body.inlineImages.map(\.contentID), ["logo"])
         XCTAssertEqual(body.inlineImages.first?.data, logo)
 
-        let plain = try await sync.fetchHTMLBody(messageID: "mid:<p@x>", password: password)
+        let plain = try await sync.fetchHTMLBody(messageID: "mid:<p@x>", login: login)
         XCTAssertNil(plain, "a message without HTML yields nothing")
-        let unknown = try await sync.fetchHTMLBody(messageID: "mid:<zzz@x>", password: password)
+        let unknown = try await sync.fetchHTMLBody(messageID: "mid:<zzz@x>", login: login)
         XCTAssertNil(unknown)
     }
 
@@ -309,17 +309,17 @@ final class SyncServiceTests: XCTestCase {
         let bytes = Data("hello".utf8)
         let uid = await server.add(incoming("Plan", id: "<a@x>"))
         await server.addAttachment(bytes, to: "INBOX", uid: uid, partID: "2")
-        try await sync.syncInbox(password: password)
+        try await sync.syncInbox(login: login)
 
-        let data = try await sync.fetchAttachment(messageID: "mid:<a@x>", partID: "2", password: password)
+        let data = try await sync.fetchAttachment(messageID: "mid:<a@x>", partID: "2", login: login)
         XCTAssertEqual(data, bytes)
 
         do {
-            _ = try await sync.fetchAttachment(messageID: "mid:<a@x>", partID: "9", password: password)
+            _ = try await sync.fetchAttachment(messageID: "mid:<a@x>", partID: "9", login: login)
             XCTFail("a missing part throws from the engine")
         } catch MailEngineError.partNotFound {}
 
-        let unknown = try await sync.fetchAttachment(messageID: "mid:<zzz@x>", partID: "2", password: password)
+        let unknown = try await sync.fetchAttachment(messageID: "mid:<zzz@x>", partID: "2", login: login)
         XCTAssertNil(unknown, "an unknown message has nothing to fetch")
     }
 
@@ -328,7 +328,7 @@ final class SyncServiceTests: XCTestCase {
     func testSendFilesALocalCopyAndAServerSentCopy() async throws {
         let draft = newDraft()
 
-        try await sync.send(draft, password: password)
+        try await sync.send(draft, login: login)
 
         let delivered = await sender.sent.map(\.messageID)
         XCTAssertEqual(delivered, [draft.messageID])
@@ -345,7 +345,7 @@ final class SyncServiceTests: XCTestCase {
         await sender.failNext()
 
         do {
-            try await sync.send(newDraft(), password: password)
+            try await sync.send(newDraft(), login: login)
             XCTFail("expected the SMTP failure to propagate")
         } catch is FakeMailSender.ScriptedFailure {}
 
@@ -358,7 +358,7 @@ final class SyncServiceTests: XCTestCase {
     func testFailedSentCopyKeepsTheLocalCopy() async throws {
         await server.fail(.saveToSent)
 
-        try await sync.send(newDraft(), password: password)
+        try await sync.send(newDraft(), login: login)
 
         let thread = try await onlyThread()
         XCTAssertEqual(thread.messages.first?.sendState, .sent, "the mail went; the server copy is a reconciliation detail")
@@ -381,10 +381,10 @@ final class SyncServiceTests: XCTestCase {
     // MARK: Drafts
 
     func testSaveDraftReplacesThePriorServerCopyOnEdit() async throws {
-        let first = try await sync.saveDraft(savedDraft(body: "v1"), password: password)
+        let first = try await sync.saveDraft(savedDraft(body: "v1"), login: login)
         XCTAssertEqual(first, 1)
 
-        let second = try await sync.saveDraft(savedDraft(body: "v2"), password: password)
+        let second = try await sync.saveDraft(savedDraft(body: "v2"), login: login)
 
         XCTAssertEqual(second, 2)
         let appends = await server.calls(.saveToDrafts)
@@ -404,7 +404,7 @@ final class SyncServiceTests: XCTestCase {
         await server.fail(.saveToDrafts)
 
         do {
-            try await sync.saveDraft(savedDraft(body: "v1"), password: password)
+            try await sync.saveDraft(savedDraft(body: "v1"), login: login)
             XCTFail("expected the APPEND failure to propagate")
         } catch is FakeMailServer.ScriptedFailure {}
 
@@ -413,10 +413,10 @@ final class SyncServiceTests: XCTestCase {
     }
 
     func testDeleteDraftExpungesTheServerCopyAndDropsTheThread() async throws {
-        try await sync.saveDraft(savedDraft(body: "v1"), password: password)
+        try await sync.saveDraft(savedDraft(body: "v1"), login: login)
         let id = try await onlyThread().id
 
-        try await sync.deleteDraft(threadID: id, password: password)
+        try await sync.deleteDraft(threadID: id, login: login)
 
         let removed = await server.calls(.removeDraft)
         XCTAssertEqual(removed, [.removeDraft(uid: 1)])
@@ -431,7 +431,7 @@ final class SyncServiceTests: XCTestCase {
     func testSetReadReachesEveryFolderTheThreadSpans() async throws {
         let thread = try await seedThreadAcrossTwoFolders()
 
-        try await sync.setRead(threadIDs: [thread.id], seen: true, password: password)
+        try await sync.setRead(threadIDs: [thread.id], seen: true, login: login)
 
         let calls = await server.calls(.setSeen)
         XCTAssertEqual(Set(calls), [
@@ -443,7 +443,7 @@ final class SyncServiceTests: XCTestCase {
         let summary = try await allSummaries().first
         XCTAssertEqual(summary?.isUnread, false)
 
-        try await sync.setRead(threadIDs: [thread.id], seen: false, password: password)
+        try await sync.setRead(threadIDs: [thread.id], seen: false, login: login)
         let reread = try await allSummaries().first
         XCTAssertEqual(reread?.isUnread, true)
     }
@@ -451,7 +451,7 @@ final class SyncServiceTests: XCTestCase {
     func testSetFlaggedReachesEveryFolderTheThreadSpans() async throws {
         let thread = try await seedThreadAcrossTwoFolders()
 
-        try await sync.setFlagged(threadIDs: [thread.id], flagged: true, password: password)
+        try await sync.setFlagged(threadIDs: [thread.id], flagged: true, login: login)
 
         let calls = await server.calls(.setFlagged)
         XCTAssertEqual(Set(calls), [
@@ -469,7 +469,7 @@ final class SyncServiceTests: XCTestCase {
     func testTrashMovesEveryMessageAndDropsTheThread() async throws {
         let thread = try await seedThreadAcrossTwoFolders()
 
-        try await sync.trash(threadIDs: [thread.id], password: password)
+        try await sync.trash(threadIDs: [thread.id], login: login)
 
         let inbox = await server.uids(in: "INBOX")
         let archive = await server.uids(in: "Archive")
@@ -485,12 +485,12 @@ final class SyncServiceTests: XCTestCase {
         await server.add(incoming("A", id: "<a@x>", minutes: 0))
         await server.add(incoming("J", id: "<j@x>", minutes: 1))
         await server.add(incoming("M", id: "<m@x>", minutes: 2))
-        let summaries = try await sync.syncInbox(password: password)
+        let summaries = try await sync.syncInbox(login: login)
         let ids = Dictionary(uniqueKeysWithValues: summaries.map { ($0.subject, $0.id) })
 
-        try await sync.archive(threadIDs: [ids["A"]!], password: password)
-        try await sync.junk(threadIDs: [ids["J"]!], password: password)
-        try await sync.move(threadIDs: [ids["M"]!], to: "Projects", password: password)
+        try await sync.archive(threadIDs: [ids["A"]!], login: login)
+        try await sync.junk(threadIDs: [ids["J"]!], login: login)
+        try await sync.move(threadIDs: [ids["M"]!], to: "Projects", login: login)
 
         let archive = await server.messages(in: "Archive").map(\.subject)
         let junk = await server.messages(in: "Junk").map(\.subject)
@@ -506,12 +506,12 @@ final class SyncServiceTests: XCTestCase {
 
     func testServerRefusalLeavesTheStoreIntact() async throws {
         await server.add(incoming("Plan", id: "<a@x>"))
-        let synced = try await sync.syncInbox(password: password)
+        let synced = try await sync.syncInbox(login: login)
         let id = try XCTUnwrap(synced.first?.id)
         await server.fail(.trash)
 
         do {
-            try await sync.trash(threadIDs: [id], password: password)
+            try await sync.trash(threadIDs: [id], login: login)
             XCTFail("expected the server refusal to propagate")
         } catch is FakeMailServer.ScriptedFailure {}
 
@@ -526,7 +526,7 @@ final class SyncServiceTests: XCTestCase {
         await server.fail(.trash, in: "Archive")
 
         do {
-            try await sync.trash(threadIDs: [thread.id], password: password)
+            try await sync.trash(threadIDs: [thread.id], login: login)
             XCTFail("expected the Archive refusal to propagate")
         } catch is FakeMailServer.ScriptedFailure {}
 
@@ -549,7 +549,7 @@ final class SyncServiceTests: XCTestCase {
         await server.fail(.move, in: "INBOX")
 
         do {
-            try await sync.move(threadIDs: [thread.id], to: "Projects", password: password)
+            try await sync.move(threadIDs: [thread.id], to: "Projects", login: login)
             XCTFail("expected the INBOX refusal to propagate")
         } catch is FakeMailServer.ScriptedFailure {}
 
@@ -565,7 +565,7 @@ final class SyncServiceTests: XCTestCase {
         try await sync.recordLocal(newDraft(), state: .failed)
         let id = try await onlyThread().id
 
-        try await sync.trash(threadIDs: [id], password: password)
+        try await sync.trash(threadIDs: [id], login: login)
 
         let trashed = await server.calls(.trash)
         XCTAssertTrue(trashed.isEmpty, "a never-delivered bubble has no server copy to move")
@@ -577,9 +577,9 @@ final class SyncServiceTests: XCTestCase {
         await server.add(incoming("A", id: "<a@x>", minutes: 0))
         await server.add(incoming("B", id: "<b@x>", minutes: 1))
         await server.add(incoming("C", id: "<c@x>", minutes: 2))
-        let ids = try await sync.syncInbox(password: password).map(\.id)
+        let ids = try await sync.syncInbox(login: login).map(\.id)
 
-        try await sync.trash(threadIDs: ids, password: password)
+        try await sync.trash(threadIDs: ids, login: login)
 
         let calls = await server.calls(.trash)
         XCTAssertEqual(calls.count, 1, "three conversations in one folder cost one server move")
@@ -594,11 +594,11 @@ final class SyncServiceTests: XCTestCase {
     func testServerSearchCachesMatchesOlderThanTheSyncedWindow() async throws {
         await server.add(incoming("Budget", id: "<old@x>", minutes: 0), body: MessageBody(text: "Q3 numbers", hasHTML: false))
         await server.add(incoming("Plan", id: "<new@x>", minutes: 5))
-        try await sync.syncInbox(password: password, limit: 1)
+        try await sync.syncInbox(login: login, limit: 1)
         let before = try await inboxSummaries()
         XCTAssertEqual(before.map(\.subject), ["Plan"], "the older message sits outside the window")
 
-        let ids = try await sync.searchServer("q3", in: "INBOX", password: password)
+        let ids = try await sync.searchServer("q3", in: "INBOX", login: login)
 
         XCTAssertEqual(ids, ["mid:<old@x>"])
         let hits = try await store.threadSummaries(containingMessages: ids, accountID: account.id)
@@ -610,9 +610,9 @@ final class SyncServiceTests: XCTestCase {
 
     func testServerSearchWithNoMatchesLeavesTheStoreAlone() async throws {
         await server.add(incoming("Plan", id: "<a@x>"))
-        try await sync.syncInbox(password: password)
+        try await sync.syncInbox(login: login)
 
-        let ids = try await sync.searchServer("budget", in: "INBOX", password: password)
+        let ids = try await sync.searchServer("budget", in: "INBOX", login: login)
 
         XCTAssertTrue(ids.isEmpty)
         let summaries = try await allSummaries()
@@ -622,7 +622,7 @@ final class SyncServiceTests: XCTestCase {
     // MARK: Watching
 
     func testWatchInboxYieldsOnServerChangesAndEndsWhenStopped() async throws {
-        let changes = try await sync.watchInbox(password: password)
+        let changes = try await sync.watchInbox(login: login)
         var iterator = changes.makeAsyncIterator()
         let watching = await server.isWatching
         XCTAssertTrue(watching)
@@ -639,7 +639,7 @@ final class SyncServiceTests: XCTestCase {
     }
 
     func testDisconnectClosesTheSession() async throws {
-        try await sync.syncInbox(password: password)
+        try await sync.syncInbox(login: login)
         let before = await server.session
         XCTAssertNotNil(before)
 

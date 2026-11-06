@@ -195,11 +195,16 @@ actor FakeMailServer: IMAPTransport {
 
     // MARK: IMAPTransport
 
-    func connect(username: String, password: String) async throws {
+    func connect(username: String, login: MailLogin) async throws {
         calls.append(.connect(username: username))
+        let secret: String
+        switch login {
+        case .password(let password): secret = password
+        case .accessToken(let token): secret = try await token()
+        }
         if rejectsPassword { throw MailEngineError.authenticationRejected }
         try check(.connect)
-        session = (username, password)
+        session = (username, secret)
     }
 
     func fetchRecentEnvelopes(in mailbox: String, limit: Int) async throws -> [MailEnvelope] {

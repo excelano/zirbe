@@ -9,6 +9,7 @@
 // handed to AppSession, which signs in and, on success, stores it in the
 // Keychain so the next launch is silent. This screen never stores a secret.
 
+import AuthenticationServices
 import SwiftUI
 import ZirbeCore
 
@@ -16,10 +17,11 @@ struct OnboardingView: View {
     /// A stored account whose password needs re-entering: its address and
     /// servers are prefilled, so the user only types the password.
     let prefill: Account?
-    /// Signs in and persists the credential. Throwing keeps the user here on
-    /// failure, e.g. a wrong password.
-    let onConnect: (Account, String) async throws -> Void
+    let session: AppSession
+    var onConnected: () -> Void = {}
     var onCancel: (() -> Void)?
+    @Environment(\.webAuthenticationSession) private var webAuthenticationSession
+    @State private var usesAppPassword = false
 
     @State private var email = ""
     @State private var password = ""
@@ -39,6 +41,17 @@ struct OnboardingView: View {
     private var resolved: ProviderPreset? { ProviderPresets.resolve(forEmail: email) }
     private var hasDomain: Bool { resolved != nil }
 
+    private var oauthProvider: OAuthProvider? {
+        guard !usesAppPassword, let id = ProviderPresets.oauthProvider(forIMAPHost: imapHost) else { return nil }
+        let provider = OAuthProvider.provider(for: id)
+        return provider.isConfigured ? provider : nil
+    }
+
+    private var hostedProviders: [OAuthProvider] {
+        guard preset == nil, ProviderPresets.oauthProvider(forIMAPHost: imapHost) == nil else { return [] }
+        return [OAuthProvider.microsoft, .google].filter(\.isConfigured)
+    }
+
     var body: some View {
         ScrollView {
             VStack(spacing: 24) {
@@ -46,7 +59,14 @@ struct OnboardingView: View {
                 emailField
                 if hasDomain {
                     providerCaption
-                    passwordField
+                    if let oauthProvider {
+                        signInButton(oauthProvider)
+                        Button("Use an app password instead") { usesAppPassword = true }
+                            .font(.footnote)
+                    } else {
+                        passwordField
+                        if !hostedProviders.isEmpty { hostedSignIn }
+                    }
                     serverSettings
                 }
                 if let errorMessage {
@@ -55,7 +75,9 @@ struct OnboardingView: View {
                         .foregroundStyle(.red)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                connectButton
+                if oauthProvider == nil {
+                    connectButton
+                }
             }
             .padding(24)
             .frame(maxWidth: 480)
@@ -133,6 +155,42 @@ struct OnboardingView: View {
         }
     }
 
+    private func signInButton(_ provider: OAuthProvider) -> some View {
+        Button { signIn(with: provider) } label: {
+            Text("Sign in with \(provider.displayName)")
+                .font(.headline)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 14)
+                .background(Color.accentColor, in: RoundedRectangle(cornerRadius: 12))
+                .foregroundStyle(.white)
+        }
+        .disabled(isConnecting)
+    }
+
+    private var hostedSignIn: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Email hosted by Microsoft 365 or Google Workspace?")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            HStack {
+                ForEach(hostedProviders, id: \.id) { provider in
+                    Button("Sign in with \(provider.displayName)") {
+                        let servers = ProviderPresets.servers(for: provider.id)
+                        imapHost = servers.imapHost
+                        imapPort = String(servers.imapPort)
+                        smtpHost = servers.smtpHost
+                        smtpPort = String(servers.smtpPort)
+                        signIn(with: provider)
+                    }
+                    .buttonStyle(.bordered)
+                    .font(.subheadline)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .disabled(isConnecting)
+    }
+
     private var serverSettings: some View {
         DisclosureGroup("Server settings", isExpanded: $serversExpanded) {
             VStack(spacing: 12) {
@@ -206,20 +264,43 @@ struct OnboardingView: View {
         smtpPort = String(prefill.smtpPort)
     }
 
-    private func connect() {
-        passwordFocused = false
-        let account = Account(
+    private var formAccount: Account {
+        Account(
             emailAddress: email.trimmed,
             imapHost: imapHost.trimmed,
             imapPort: Int(imapPort.trimmed) ?? 993,
             smtpHost: smtpHost.trimmed,
             smtpPort: Int(smtpPort.trimmed) ?? 587
         )
+    }
+
+    private func connect() {
+        passwordFocused = false
+        let account = formAccount
+        run { try await session.connect(account: account, password: password) }
+    }
+
+    private func signIn(with provider: OAuthProvider) {
+        let account = formAccount
+        let authorization = OAuthAuthorization(provider: provider, loginHint: account.emailAddress)
+        run {
+            let callback = try await webAuthenticationSession.authenticate(
+                using: authorization.url,
+                callbackURLScheme: provider.callbackScheme,
+                preferredBrowserSession: .ephemeral
+            )
+            try await session.connect(account: account, authorization: authorization, callback: callback)
+        }
+    }
+
+    private func run(_ attempt: @escaping () async throws -> Void) {
         Task {
             isConnecting = true
             errorMessage = nil
             do {
-                try await onConnect(account, password)
+                try await attempt()
+                onConnected()
+            } catch let error as ASWebAuthenticationSessionError where error.code == .canceledLogin {
             } catch {
                 errorMessage = error.localizedDescription
             }
