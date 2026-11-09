@@ -2,7 +2,7 @@
 # against the release being cut, so notes left from last time stop the release
 # rather than reaching the listing.
 
-version = "1.5.1"
+version = "1.5.2"
 
 [locales."en-us"]
 whats-new = """
@@ -21,6 +21,9 @@ list is a little wider.
 Adding an address that's already in Zirbe now says so instead of replacing \
 the existing account, and a mail server that stops answering during sign-in \
 shows an error after 30 seconds instead of spinning.
+
+Replies you send from another mail program or computer now show up in their \
+conversation right away, without opening the Sent folder first.
 
 As always, Zirbe talks only to your own mail servers and, when you sign in \
 with Microsoft, Microsoft's sign-in service. No backend, no analytics, no \
