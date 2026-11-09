@@ -337,6 +337,13 @@ public actor MailEngine {
         contentID.trimmingCharacters(in: CharacterSet(charactersIn: "<> \t")).lowercased()
     }
 
+    /// The name of the server's Sent mailbox, the folder `saveToSent` files into,
+    /// so a sync can read back what other mail programs sent.
+    public func sentMailbox() async throws -> String {
+        try await ensureSession()
+        return try await resolvedSentMailbox()
+    }
+
     /// Save a copy of a just-sent message to the server's Sent mailbox, over the
     /// warm session, so it appears in other mail clients and survives a local
     /// rebuild. Flagged `\Seen` since the user wrote it. The same Message-ID as

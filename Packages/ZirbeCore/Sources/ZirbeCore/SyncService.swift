@@ -37,9 +37,9 @@ public actor SyncService {
         self.sender = sender
     }
 
-    /// Fetch the most recent `limit` messages from `mailbox`, reconcile the cache
-    /// against the server, and recompute conversations. Returns the resulting
-    /// inbox summaries.
+    /// Fetch the most recent `limit` messages from `mailbox`, and from the
+    /// server's Sent folder, reconcile the cache against the server, and
+    /// recompute conversations. Returns the resulting inbox summaries.
     ///
     /// Reconciliation is what makes a refresh reflect deletions made in another
     /// client, not just additions. First the server's UIDVALIDITY is compared to
@@ -58,7 +58,11 @@ public actor SyncService {
         mailbox: String = "INBOX",
         limit: Int = 50
     ) async throws -> [ThreadSummary] {
-        try await reconcile(mailbox: mailbox, role: .inbox, login: login, limit: limit)
+        try await engine.connect(username: account.username, login: login)
+        try await reconcile(mailbox: mailbox, role: .inbox, limit: limit)
+        await reconcileSent(limit: limit)
+        try await store.rethread(accountID: account.id)
+        await backfillLatestBodies()
         // The home view is scoped to INBOX: every conversation with an INBOX
         // message, carrying its whole thread. Scoping keeps junk-only and
         // sent-only threads out of the inbox now that other folders also sync.
@@ -70,7 +74,8 @@ public actor SyncService {
     /// (fetch, UIDVALIDITY check, prune, rethread, snippet backfill), differing
     /// only in the role stamped on the folder and in returning a mailbox-scoped
     /// view rather than the whole account. Folders sync lazily, on first visit and
-    /// on refresh; INBOX remains the one folder synced on launch and watched.
+    /// on refresh; INBOX and Sent sync on launch and with every inbox sync, and
+    /// INBOX is the one folder watched.
     @discardableResult
     public func syncFolder(
         mailbox: String,
@@ -78,16 +83,28 @@ public actor SyncService {
         login: MailLogin,
         limit: Int = 50
     ) async throws -> [ThreadSummary] {
-        try await reconcile(mailbox: mailbox, role: role, login: login, limit: limit)
+        try await engine.connect(username: account.username, login: login)
+        try await reconcile(mailbox: mailbox, role: role, limit: limit)
+        try await store.rethread(accountID: account.id)
+        await backfillLatestBodies()
         return try await store.threadSummaries(accountID: account.id, mailboxName: mailbox)
     }
 
-    /// Fetch a folder, reconcile the cache against the server, and recompute
-    /// threads. The shared core of `syncInbox` and `syncFolder`; neither returns
-    /// from here, since they differ only in which summaries they read back after.
-    private func reconcile(mailbox: String, role: MailboxRole?, login: MailLogin, limit: Int) async throws {
-        try await engine.connect(username: account.username, login: login)
+    /// Reconcile the server's Sent folder, so a reply sent from another mail
+    /// program joins its conversation without the user opening Sent. Best
+    /// effort: a server with no Sent folder, or a failed fetch, leaves the inbox
+    /// sync standing.
+    private func reconcileSent(limit: Int) async {
+        do {
+            let sent = try await engine.sentMailbox()
+            try await reconcile(mailbox: sent, role: .sent, limit: limit)
+        } catch {}
+    }
 
+    /// Fetch a folder and reconcile the cache against the server, over a
+    /// connected engine. The shared core of `syncInbox` and `syncFolder`, which
+    /// rethread once after it.
+    private func reconcile(mailbox: String, role: MailboxRole?, limit: Int) async throws {
         // The server's current identity and contents for this mailbox: its
         // UIDVALIDITY and the full set of UIDs it holds right now.
         let state = try await engine.mailboxState(in: mailbox)
@@ -106,7 +123,15 @@ public actor SyncService {
         }
         try await store.setUIDValidity(Int64(state.uidValidity), accountID: account.id, mailboxName: mailbox)
 
-        try await store.save(envelopes.map(Message.init), accountID: account.id, mailboxName: mailbox)
+        var messages = envelopes.map(Message.init)
+        // A message filed in INBOX and in Sent (mail to yourself, or a Cc to
+        // yourself) is one row, keyed by Message-ID; it stays in INBOX so its
+        // conversation stays in the inbox.
+        if role == .sent {
+            let inInbox = try await store.messageIDs(messages.map(\.id), filedIn: Self.inboxMailbox, accountID: account.id)
+            messages.removeAll { inInbox.contains($0.id) }
+        }
+        try await store.save(messages, accountID: account.id, mailboxName: mailbox)
         // Drop anything the server no longer has, so deletions made elsewhere
         // take effect locally. The keep-set is the server's full UID list, not
         // just the fetched window, so older mail still on the server survives.
@@ -131,8 +156,6 @@ public actor SyncService {
         if mailbox == Self.inboxMailbox {
             try await enforceBlocklist()
         }
-        try await store.rethread(accountID: account.id)
-        await backfillLatestBodies()
     }
 
     public func searchServer(_ query: String, in mailbox: String, login: MailLogin, limit: Int = 50) async throws -> [String] {
@@ -519,10 +542,10 @@ public actor SyncService {
     /// Matches `MailStore`'s own INBOX scope for that mark.
     private static let inboxMailbox = "INBOX"
 
-    /// The mailbox name the optimistic Sent copy is filed under locally. The
-    /// server's real Sent folder is resolved by the engine when appending; a
-    /// later Sent sync (a future milestone) will reconcile the names by
-    /// Message-ID. Until then this is a stable local label, not a server folder.
+    /// The mailbox name the optimistic Sent copy is filed under locally, a stable
+    /// label rather than a server folder. The server's real Sent folder is
+    /// resolved by the engine; when it syncs, the server's copy takes over the
+    /// local row, since both carry the same Message-ID.
     private static let localSentMailbox = "Sent"
 
     /// The mailbox name the optimistic local Draft copy is filed under, mirroring

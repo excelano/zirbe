@@ -27,7 +27,7 @@ actor FakeMailServer: IMAPTransport {
 
     /// The operations a test can fail, and the log records.
     enum Operation: Hashable {
-        case connect, fetchRecentEnvelopes, mailboxState, searchEnvelopes, listMailboxes, fetchTextBodies
+        case connect, fetchRecentEnvelopes, mailboxState, searchEnvelopes, listMailboxes, sentMailbox, fetchTextBodies
         case fetchHTMLBody, fetchAttachment, saveToSent, saveToDrafts, removeDraft
         case setSeen, setFlagged, idleChanges, trash, move, archive, markJunk
     }
@@ -39,6 +39,7 @@ actor FakeMailServer: IMAPTransport {
         case mailboxState(mailbox: String)
         case searchEnvelopes(mailbox: String, text: String, limit: Int)
         case listMailboxes
+        case sentMailbox
         case fetchTextBodies(mailbox: String, uids: [UInt32])
         case fetchHTMLBody(mailbox: String, uid: UInt32)
         case fetchAttachment(mailbox: String, uid: UInt32, partID: String)
@@ -242,6 +243,12 @@ actor FakeMailServer: IMAPTransport {
         return folders.keys.sorted().map { folders[$0]!.info }
     }
 
+    func sentMailbox() async throws -> String {
+        calls.append(.sentMailbox)
+        try check(.sentMailbox)
+        return folderName(for: .sent)
+    }
+
     func fetchTextBodies(in mailbox: String, messages: [(id: String, uid: UInt32)]) async throws -> [String: MessageBody] {
         calls.append(.fetchTextBodies(mailbox: mailbox, uids: messages.map(\.uid)))
         try check(.fetchTextBodies)
@@ -435,6 +442,7 @@ extension FakeMailServer.Call {
         case .mailboxState: .mailboxState
         case .searchEnvelopes: .searchEnvelopes
         case .listMailboxes: .listMailboxes
+        case .sentMailbox: .sentMailbox
         case .fetchTextBodies: .fetchTextBodies
         case .fetchHTMLBody: .fetchHTMLBody
         case .fetchAttachment: .fetchAttachment

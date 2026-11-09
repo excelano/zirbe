@@ -27,6 +27,7 @@ public protocol IMAPTransport: Sendable {
     func mailboxState(in mailbox: String) async throws -> MailboxState
     func searchEnvelopes(in mailbox: String, text: String, limit: Int) async throws -> [MailEnvelope]
     func listMailboxes() async throws -> [MailboxInfo]
+    func sentMailbox() async throws -> String
     func fetchTextBodies(in mailbox: String, messages: [(id: String, uid: UInt32)]) async throws -> [String: MessageBody]
     func fetchHTMLBody(in mailbox: String, uid: UInt32) async throws -> HTMLBody?
     func fetchAttachment(in mailbox: String, uid: UInt32, partID: String) async throws -> Data

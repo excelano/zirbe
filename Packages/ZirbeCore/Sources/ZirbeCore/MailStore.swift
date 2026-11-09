@@ -549,6 +549,19 @@ public final class MailStore: @unchecked Sendable {
         }
     }
 
+    /// The ids among `ids` whose message is filed in `mailboxName`.
+    public func messageIDs(_ ids: [String], filedIn mailboxName: String, accountID: String) async throws -> Set<String> {
+        guard !ids.isEmpty else { return [] }
+        return try await database.read { db in
+            try String.fetchSet(
+                db,
+                MessageRow
+                    .select(Column("id"))
+                    .filter(Column("accountID") == accountID && Column("mailboxName") == mailboxName && ids.contains(Column("id")))
+            )
+        }
+    }
+
     /// Prune the cached messages for one mailbox down to what the server still
     /// holds: delete every row in (accountID, mailboxName) whose UID is not in
     /// `keepingUIDs`. Rows with no UID are left alone (a locally-composed Sent

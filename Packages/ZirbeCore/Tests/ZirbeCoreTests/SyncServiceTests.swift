@@ -172,7 +172,7 @@ final class SyncServiceTests: XCTestCase {
 
         XCTAssertEqual(summaries.count, 4, "the keep-set is the server's full UID list, not the window")
         let fetches = await server.calls(.fetchRecentEnvelopes)
-        XCTAssertEqual(fetches.last, .fetchRecentEnvelopes(mailbox: "INBOX", limit: 2))
+        XCTAssertTrue(fetches.suffix(2).contains(.fetchRecentEnvelopes(mailbox: "INBOX", limit: 2)))
     }
 
     func testSnippetBackfillFetchesOnlyTheNewestMessagePerThread() async throws {
@@ -244,6 +244,56 @@ final class SyncServiceTests: XCTestCase {
         XCTAssertEqual(inbox.map(\.subject), ["Plan"])
         let mailboxes = try await store.mailboxes(accountID: account.id)
         XCTAssertEqual(mailboxes.first { $0.name == "Archive" }?.role, .archive)
+    }
+
+    func testInboxSyncBringsInRepliesSentFromElsewhere() async throws {
+        await server.add(incoming("Plan", id: "<a@x>", minutes: 0))
+        await server.add(
+            incoming("Re: Plan", id: "<b@x>", from: "Me <me@x.com>", inReplyTo: "<a@x>", minutes: 5, flags: ["\\Seen"]),
+            to: "Sent"
+        )
+
+        let summaries = try await sync.syncInbox(login: login)
+
+        XCTAssertEqual(summaries.map(\.subject), ["Plan"])
+        XCTAssertEqual(summaries.first?.messageCount, 2)
+        XCTAssertEqual(summaries.first?.lastActivity, Date(timeIntervalSince1970: 300))
+        let mailboxes = try await store.mailboxes(accountID: account.id)
+        XCTAssertEqual(mailboxes.first { $0.name == "Sent" }?.role, .sent)
+    }
+
+    func testSentSyncTakesOverTheLocalCopyOfAReply() async throws {
+        let draft = newDraft()
+        try await sync.send(draft, login: login)
+
+        try await sync.syncInbox(login: login)
+
+        let thread = try await onlyThread()
+        XCTAssertEqual(thread.messages.count, 1)
+        let ref = try await store.messageRef(id: try XCTUnwrap(thread.messages.first?.id), accountID: account.id)
+        XCTAssertEqual(ref?.mailbox, "Sent")
+        XCTAssertNotNil(ref?.uid)
+    }
+
+    func testMailToYourselfStaysInTheInboxWhenSentSyncs() async throws {
+        let note = incoming("Note to self", id: "<self@x>", from: "Me <me@x.com>")
+        await server.add(note)
+        await server.add(note, to: "Sent")
+
+        let summaries = try await sync.syncInbox(login: login)
+
+        XCTAssertEqual(summaries.map(\.subject), ["Note to self"])
+        let ref = try await store.messageRef(id: "mid:<self@x>", accountID: account.id)
+        XCTAssertEqual(ref?.mailbox, "INBOX")
+    }
+
+    func testSentFailureLeavesTheInboxSyncStanding() async throws {
+        await server.add(incoming("Plan", id: "<a@x>"))
+        await server.fail(.sentMailbox)
+
+        let summaries = try await sync.syncInbox(login: login)
+
+        XCTAssertEqual(summaries.map(\.subject), ["Plan"])
     }
 
     func testDiscoverFoldersMapsRolesAndDropsContainers() async throws {
