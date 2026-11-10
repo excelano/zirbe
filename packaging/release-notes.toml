@@ -2,28 +2,13 @@
 # against the release being cut, so notes left from last time stop the release
 # rather than reaching the listing.
 
-version = "1.5.2"
+version = "1.5.3"
 
 [locales."en-us"]
 whats-new = """
-Sign in with Microsoft. Outlook.com, Hotmail, Live, and Microsoft 365 accounts \
-now sign in on Microsoft's own page, so Zirbe never sees your Microsoft \
-password and you don't need an app password. Zirbe stays signed in and renews \
-access on its own.
-
-Email on your own domain hosted by Microsoft 365 works too: type your address \
-and choose Sign in with Microsoft.
-
-A long account name at the top of the inbox no longer pushes the Select and \
-Settings buttons out of sight, at any text size, and on iPad the conversation \
-list is a little wider.
-
-Adding an address that's already in Zirbe now says so instead of replacing \
-the existing account, and a mail server that stops answering during sign-in \
-shows an error after 30 seconds instead of spinning.
-
-Replies you send from another mail program or computer now show up in their \
-conversation right away, without opening the Sent folder first.
+The button that shows an HTML message as the sender laid it out is now called \
+Web View, and the setting that opens HTML mail there automatically says the \
+same.
 
 As always, Zirbe talks only to your own mail servers and, when you sign in \
 with Microsoft, Microsoft's sign-in service. No backend, no analytics, no \
