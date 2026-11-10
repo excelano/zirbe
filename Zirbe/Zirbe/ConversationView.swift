@@ -1380,7 +1380,7 @@ private struct MessageBubble: View {
     private var webViewControls: some View {
         HStack(spacing: 0) {
             WebControlButton(
-                title: "Email View", systemImage: "safari", edge: .leading,
+                title: "Web View", systemImage: "safari", edge: .leading,
                 isLoading: loadingWithImages == loadRemoteImages
             ) { openWebView(showImages: loadRemoteImages) }
             // When images already load by default the second button would just

@@ -11,9 +11,9 @@ import ZirbeCore
 /// off: Zirbe shows the plain-text version with remote images blocked unless the
 /// user opts into the richer, less private behavior.
 enum SettingsKeys {
-    /// Open an HTML email in the Email View automatically instead of the chat bubble.
+    /// Open an HTML email in Web View automatically instead of the chat bubble.
     static let openHTMLInWebView = "settings.openHTMLInWebView"
-    /// Load remote images in the Email View by default rather than blocking them.
+    /// Load remote images in Web View by default rather than blocking them.
     static let loadRemoteImages = "settings.loadRemoteImages"
     /// Post a banner when a background check finds new mail. Defaults on; the
     /// notifier reads the same key and treats an unset value as on.
@@ -93,12 +93,12 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    Toggle("Open HTML email in Email View", isOn: $openHTMLInWebView)
+                    Toggle("Open HTML email in Web View", isOn: $openHTMLInWebView)
                     Toggle("Load remote images", isOn: $loadRemoteImages)
                 } header: {
                     Text("HTML Email")
                 } footer: {
-                    Text("Zirbe shows the plain-text version as a chat bubble by default. The Email View renders the full HTML message. Loading remote images can let a sender know you opened the message and roughly where you are, so it stays off unless you turn it on.")
+                    Text("Zirbe shows the plain-text version as a chat bubble by default. Web View renders the full HTML message. Loading remote images can let a sender know you opened the message and roughly where you are, so it stays off unless you turn it on.")
                 }
 
                 #if DEBUG
