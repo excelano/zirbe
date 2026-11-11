@@ -8,9 +8,8 @@ personal working style and writing standards; they are not part of this repo.)
 
 An open-source iOS/iPadOS email client that looks like Messages but keeps real
 email semantics: a thread is a conversation, the subject is its title, and
-messages render as chat bubbles. The canonical roadmap is `BACKLOG.md` (the
-"Shipped" section plus git history are the changelog). Don't restate shipped
-work here.
+messages render as chat bubbles. The roadmap is kept outside this repository,
+and git history is the changelog. Don't restate shipped work here.
 
 ## Tech stack
 

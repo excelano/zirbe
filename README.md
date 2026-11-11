@@ -2,7 +2,10 @@
 
 An open-source email client for iPhone and iPad that looks and feels like a
 texting app, while keeping real email underneath. Standards-only, no backend,
-free. On iPad the conversation list sits beside the open conversation.
+free. On iPad the conversation list sits beside the open conversation. Its Linux
+desktop port is [zirbe-desktop](https://github.com/excelano/zirbe-desktop).
+
+https://excelano.com/zirbe/ is the product page for every platform.
 
 ## The name
 
@@ -26,22 +29,13 @@ conversation requires naming it, and that name is the subject.
 Apple Messages is the aesthetic muse, never a clone. I implement only what the
 email RFCs define (5321 SMTP, 5322 message format, 2045/2046/2047 MIME) and
 nothing that isn't email: no video or voice calls, no shared notes, tasks, or
-team workspaces. The CheckIn privacy posture carries over wholesale: no
-backend, no third-party SDKs, no telemetry. Credentials and tokens live in the
-Keychain, device-bound, never synced off the device that obtained them. The
-only network destinations are the user's own IMAP and SMTP servers and, for a
-Microsoft or Google account, that provider's sign-in service.
+team workspaces. There is no backend, no third-party SDK and no
+telemetry. Credentials and tokens live in the Keychain, device-bound, never
+synced off the device that obtained them. The only network destinations are the
+user's own IMAP and SMTP servers and, for a Microsoft account, Microsoft's sign-in
+service. [PRIVACY.md](PRIVACY.md) states this in full.
 
-## Status
-
-Zirbe is [on the App Store](https://apps.apple.com/app/id6778170645),
-iPhone-only, and connects to any IMAP/SMTP account with a password or
-app-specific password. It reads and sends mail, threads it into conversations,
-handles attachments and inline images, and covers the surrounding surface a
-daily mail app needs: folders, archive and move, drafts, junk and block-sender,
-search, pinning, reactions, voice messages, and local new-mail notifications.
-The full picture of what is built and what is next is in
-[BACKLOG.md](BACKLOG.md).
+## How it is built
 
 The mail engine is [Cocoanetics/SwiftMail](https://github.com/Cocoanetics/SwiftMail),
 a mature actor-based async IMAP and SMTP client, consumed through a thin adapter
@@ -49,8 +43,6 @@ in `Packages/ZirbeMail` (a `MailEngine` actor returning Zirbe-owned value types,
 so the engine stays swappable). Email content parsing — HTML to text, quote
 folding, signatures, inline images — comes from the shared
 [Klartext](https://github.com/excelano/klartext) package.
-
-Next up is multiple accounts and an integrated inbox, then OAuth for the providers that are retiring app passwords.
 
 ## Building and testing
 

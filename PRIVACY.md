@@ -1,8 +1,7 @@
 # Zirbe: Privacy Statement
 
 Zirbe is an open-source iOS and iPadOS email client. It connects only to your own
-mail servers and, for a Microsoft or Google account, that provider's sign-in
-service. It keeps everything it holds on your device and sends nothing about you
+mail servers and, for a Microsoft account, Microsoft's sign-in service. It keeps everything it holds on your device and sends nothing about you
 anywhere. This document is the canonical statement of what Zirbe does and does
 not do with your data. The app is open source so that every claim here is
 independently verifiable, and the claims are enforced by how the code is built,
@@ -11,11 +10,11 @@ not by a policy that depends on the developer behaving well.
 ## The short version
 
 Zirbe talks to the IMAP server and the SMTP server you sign in to and, when you
-sign in with Microsoft or Google, to that provider's sign-in service. Nothing
+sign in with Microsoft, to Microsoft's sign-in service. Nothing
 else. There is no Zirbe server, no account to create with us, no
 analytics, no telemetry, and no third-party SDK. Your mail and your credentials
-stay on your device. When Zirbe ships to the App Store its App Privacy declaration
-is "Data Not Collected," because the developer collects nothing.
+stay on your device. Zirbe's App Privacy declaration is "Data Not Collected,"
+because the developer collects nothing.
 
 ## What stays on your device
 
@@ -32,8 +31,8 @@ Zirbe service, and never shared with anyone. Signing out erases it: the app tear
 the database down and rebuilds it empty.
 
 Your sign-in credentials are held separately in the iOS Keychain, device-bound. The
-app-specific password you enter, or the tokens Microsoft or Google issue when you
-sign in with them, are stored there so Zirbe can reconnect, and nowhere else. They are never written to the message database, never
+app-specific password you enter, or the tokens Microsoft issues when you sign in
+with Microsoft, are stored there so Zirbe can reconnect, and nowhere else. They are never written to the message database, never
 copied to another device, and never synced through iCloud Keychain. A credential
 obtained on one device stays on that device.
 
@@ -49,15 +48,14 @@ analytics to that traffic. It requires transport encryption: TLS is implicit on 
 standard secure ports and demanded via STARTTLS otherwise, and a connection that
 cannot be secured fails rather than falling back to plaintext.
 
-**Your mail provider's sign-in, for Microsoft and Google accounts.** When you
-choose Sign in with Microsoft or Sign in with Google, Zirbe opens the provider's
+**Microsoft's sign-in, for Microsoft accounts.** When you choose Sign in with
+Microsoft, Zirbe opens Microsoft's
 own sign-in page in a private browser session that keeps no cookies, and you sign
-in there. Zirbe never sees your account password. The provider returns an access
+in there. Zirbe never sees your account password. Microsoft returns an access
 token, which your mail servers accept in place of a password, and a refresh token,
 which lets Zirbe obtain a new access token when the current one expires, usually
-after about an hour. To do that, Zirbe contacts the provider's token service
-(`login.microsoftonline.com` for Microsoft, `oauth2.googleapis.com` for Google),
-sending only Zirbe's public client identifier and the tokens. An account that
+after about an hour. To do that, Zirbe contacts Microsoft's token service
+(`login.microsoftonline.com`), sending only Zirbe's public client identifier and the tokens. An account that
 signs in with a password never contacts a sign-in service.
 
 **Nothing else.** Zirbe makes no other network request. There is no analytics
@@ -126,7 +124,7 @@ To check the claims here independently:
 
 1. Search the project for the code that opens network connections. Every server
    connection targets the IMAP and SMTP hosts the user configured, or the
-   Microsoft and Google sign-in endpoints declared in `OAuth.swift`; the app
+   sign-in endpoints declared in `OAuth.swift`; the app
    defines no other destination.
 2. Search for analytics and crash-reporter SDK names: Firebase, Sentry, Crashlytics,
    Mixpanel, Amplitude, Segment, GoogleAnalytics. None appear. The package manifests
