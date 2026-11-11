@@ -2,13 +2,14 @@
 # against the release being cut, so notes left from last time stop the release
 # rather than reaching the listing.
 
-version = "1.5.3"
+version = "1.5.4"
 
 [locales."en-us"]
 whats-new = """
-The button that shows an HTML message as the sender laid it out is now called \
-Web View, and the setting that opens HTML mail there automatically says the \
-same.
+Web View is stricter about what a message can do. Scripts in a message no \
+longer run, and its forms cannot be sent. Until you choose to load images, \
+nothing in the message reaches the internet; when you do, only its images \
+load, and nothing a sender's server sets is kept after you close the message.
 
 As always, Zirbe talks only to your own mail servers and, when you sign in \
 with Microsoft, Microsoft's sign-in service. No backend, no analytics, no \
