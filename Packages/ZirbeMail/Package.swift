@@ -37,7 +37,7 @@ let package = Package(
         ),
         // Klartext reduces an HTML body to text (MailEngine's fetch path). Content
         // only, on-device, SwiftSoup-backed.
-        .package(url: "https://github.com/excelano/klartext", from: "1.0.0"),
+        .package(url: "https://github.com/excelano/klartext", from: "1.6.0"),
     ],
     targets: [
         .target(
