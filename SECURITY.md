@@ -31,15 +31,15 @@ account that signs in with a password contacts no sign-in service.
 Mail arrives from other people and is the input this application has to
 withstand. Messages are shown as text, with HTML turned into text by the
 `Klartext` package. A message's HTML is rendered only in Web View, which the
-user opens per message, in a `WKWebView` with WebKit's default settings, so
-script in the message is not disabled. Until the user chooses Show Images for
-that message, or turns on the setting that loads remote images by default, a
-content rule blocks every `http` and `https` request the page makes, and only
-the images carried inside the message load. Once remote content is allowed the
-page loads whatever it references from the sender's servers, which lets them see
-the request. Tapping a link hands it to the system to open. A crash on a
-malformed or hostile message, or anything in Web View that reaches the network
-while remote content is blocked, is worth reporting.
+user opens per message, in a `WKWebView` that does not run the message's
+scripts or submit its forms. Until the user chooses Show Images for that
+message, or turns on the setting that loads remote images by default, a content
+rule blocks every load of any scheme, and only the images carried inside the
+message load. Allowing remote content admits remote images and nothing else, so
+a sender's server sees those image requests and no stylesheet, script, font,
+frame or socket is fetched. Tapping a link hands it to the system to open. A
+crash on a malformed or hostile message, or anything in Web View that reaches
+the network while remote content is blocked, is worth reporting.
 
 Zirbe asks iOS for these permissions, each when a feature first needs it.
 Contacts is read on the device to show sender photos and suggest recipients,
@@ -69,8 +69,7 @@ last account erases the database.
 The display and notification settings and the account last viewed, in the app's
 user defaults. An attachment the user opens is written to `attachments` in the
 app's temporary directory for Quick Look, and a voice message is recorded into
-that directory before it is attached. Web View uses WebKit's default website
-data store, so anything a sender's server sets once remote content is allowed is
-kept by WebKit inside the app's container. Everything above lives in the app's
+that directory before it is attached. Web View keeps no cookies or website
+data: each one uses a non-persistent store that is discarded when it closes. Everything above lives in the app's
 own sandbox, and none of it is sent anywhere except the mail the user sends and
 the changes the user makes to the mailbox on the server.
