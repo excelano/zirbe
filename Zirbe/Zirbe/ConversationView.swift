@@ -896,8 +896,10 @@ struct ReplyBar: View {
     @FocusState private var fieldFocused: Bool
     @State private var recorder = VoiceRecorder()
     @State private var showVideoCamera = false
-    @State private var isPreparingVideo = false
+    @State private var preparingVideos = 0
     @State private var videoProblem: String?
+
+    private var isPreparingVideo: Bool { preparingVideos > 0 }
 
     /// Nothing to send: no typed text and no picked files.
     private var isEmpty: Bool {
@@ -995,7 +997,7 @@ struct ReplyBar: View {
     }
 
     private func prepareVideo(_ source: URL) {
-        isPreparingVideo = true
+        preparingVideos += 1
         Task {
             defer { try? FileManager.default.removeItem(at: source) }
             do {
@@ -1003,16 +1005,16 @@ struct ReplyBar: View {
                 defer { try? FileManager.default.removeItem(at: compressed) }
                 let staged = StagedAttachment(attachment: AttachmentLoader.videoDraft(try Data(contentsOf: compressed)))
                 attachments.append(staged)
-                isPreparingVideo = false
+                preparingVideos -= 1
                 guard let words = try? await Transcriber.transcribeVideo(compressed), !words.isEmpty,
                       attachments.contains(where: { $0.id == staged.id }),
                       text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
                 text = words
             } catch VideoExport.Failure.tooLarge {
-                isPreparingVideo = false
+                preparingVideos -= 1
                 videoProblem = "Zirbe couldn’t make this video small enough to send by email. Try a shorter one."
             } catch {
-                isPreparingVideo = false
+                preparingVideos -= 1
                 videoProblem = "Zirbe couldn’t read this video."
             }
         }
