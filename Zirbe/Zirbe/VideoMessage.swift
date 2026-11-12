@@ -92,6 +92,9 @@ struct VideoCamera: UIViewControllerRepresentable {
         picker.sourceType = .camera
         picker.mediaTypes = [UTType.movie.identifier]
         picker.cameraCaptureMode = .video
+        if UIImagePickerController.isCameraDeviceAvailable(.front) {
+            picker.cameraDevice = .front
+        }
         picker.videoQuality = .typeHigh
         picker.videoMaximumDuration = 180
         picker.delegate = context.coordinator
