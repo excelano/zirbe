@@ -183,6 +183,19 @@ public final class InboxModel {
 
     public private(set) var hasSynced = false
 
+    /// Save the account's other addresses and regroup its conversations, since
+    /// who counts as the user decides which replies are private.
+    public func setAliases(_ aliases: [String]) async {
+        await attempt {
+            try await self.exclusively {
+                try await self.store.setAliases(aliases, accountID: self.account.id)
+                self.account.aliases = aliases
+                try await self.store.rethread(accountID: self.account.id)
+                try await self.reloadList()
+            }
+        }
+    }
+
     /// Resume a saved session from the cache with no network; the inbox syncs
     /// once it is on screen.
     public func resume(login: MailLogin) async {
@@ -947,7 +960,7 @@ public final class InboxModel {
             return
         }
         let normalized = address.lowercased()
-        guard !normalized.isEmpty, normalized != account.emailAddress.lowercased() else { return }
+        guard !normalized.isEmpty, !account.owns(normalized) else { return }
         await attempt {
             try await self.exclusively {
                 try await self.store.setBlocked(true, address: normalized, accountID: self.account.id)

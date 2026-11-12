@@ -21,6 +21,9 @@ public struct Account: Sendable, Hashable, Identifiable, Codable {
     public var username: String
     public var label: String?
     public var color: AccountColor
+    /// Other addresses that reach this account, such as a shared address it
+    /// receives. Each counts as the user wherever the account's own address does.
+    public var aliases: [String]
 
     public init(
         id: String? = nil,
@@ -32,7 +35,8 @@ public struct Account: Sendable, Hashable, Identifiable, Codable {
         smtpPort: Int = 587,
         username: String? = nil,
         label: String? = nil,
-        color: AccountColor = .blue
+        color: AccountColor = .blue,
+        aliases: [String] = []
     ) {
         let address = emailAddress.lowercased()
         self.id = id ?? address
@@ -45,6 +49,17 @@ public struct Account: Sendable, Hashable, Identifiable, Codable {
         self.username = username ?? address
         self.label = label
         self.color = color
+        self.aliases = aliases
+    }
+
+    /// The account's address and its aliases, lowercased.
+    public var ownAddresses: Set<String> {
+        Set(([emailAddress] + aliases).map { $0.trimmingCharacters(in: .whitespaces).lowercased() })
+    }
+
+    /// Whether `address` is one of the account's own.
+    public func owns(_ address: String) -> Bool {
+        ownAddresses.contains(address.trimmingCharacters(in: .whitespaces).lowercased())
     }
 
     public var title: String {

@@ -28,7 +28,7 @@ final class MessageStackTests: XCTestCase {
     }
 
     private func rows(_ messages: [Message]) -> [StackedMessage] {
-        MessageStack.rows(messages, ownedBy: me, calendar: calendar)
+        MessageStack.rows(messages, ownedBy: [me], calendar: calendar)
     }
 
     func testARunEndsWhenTheSenderChanges() {

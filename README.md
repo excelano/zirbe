@@ -21,8 +21,11 @@ identified by the RFC 5322 `Message-ID`, `In-Reply-To`, and `References`
 headers and shown like a named group chat: the **subject is the title**, the
 people on `From`/`To`/`Cc` are the members, and each message is one bubble in
 time order. The same person writing five different-subject threads produces
-five conversations, which is correct email behavior. Starting a new
-conversation requires naming it, and that name is the subject.
+five conversations, which is correct email behavior. A private reply out of
+a thread, such as an answer to a message sent to many people by Bcc, starts a
+conversation of its own with the message it answers shown at the top. An
+account's other addresses, set in its settings, count as the user's own.
+Starting a new conversation requires naming it, and that name is the subject.
 
 ## Principles
 

@@ -8,7 +8,8 @@ import Foundation
 
 /// A conversation. Its identity is the thread root, its title is the subject,
 /// its members are everyone on From/To/Cc across the messages, and its body is
-/// the messages in time order, one bubble each.
+/// the messages in time order, one bubble each. A private reply out of a thread
+/// starts its own conversation, identified by the thread root and that reply.
 public struct Thread: Sendable, Hashable, Identifiable {
     /// Stable thread identity, derived from the root message's `Message-ID`
     /// (even when that root message itself was never received).
@@ -22,19 +23,25 @@ public struct Thread: Sendable, Hashable, Identifiable {
     public var participants: [Participant]
     /// The most recent message date in the thread, for inbox sorting.
     public var lastActivity: Date?
+    /// For a private reply split off from a larger thread, the message it
+    /// answers, shown above the conversation. It belongs to another
+    /// conversation, so nothing done to this one reaches it.
+    public var context: Message?
 
     public init(
         id: String,
         subject: String,
         messages: [Message],
         participants: [Participant],
-        lastActivity: Date?
+        lastActivity: Date?,
+        context: Message? = nil
     ) {
         self.id = id
         self.subject = subject
         self.messages = messages
         self.participants = participants
         self.lastActivity = lastActivity
+        self.context = context
     }
 
     /// A thread is unread if any of its chat messages is unread. Reactions are

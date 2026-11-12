@@ -15,15 +15,14 @@ extension Thread {
     /// on the account alone.
     public func isNoteToSelf(as account: Account) -> Bool {
         let (to, cc) = ReplyBuilder.replyAllRecipients(to: self, as: account)
-        return cc.isEmpty && to.count == 1 && to.first?.address == account.emailAddress.lowercased()
+        return cc.isEmpty && to.count == 1 && to.first.map { account.owns($0.address) } == true
     }
 
     /// The sender a Block Sender action would block: the most recent message not
     /// from the account. Nil when every message is the user's own, so the menu
     /// hides the item; a summary-level fallback covers a thread not yet loaded.
     public func blockableSender(as account: Account) -> Participant? {
-        let me = account.emailAddress.lowercased()
-        return messages.last { ($0.from?.address.lowercased() ?? me) != me }?.from
+        return messages.last { $0.from.map { !account.owns($0.address) } ?? false }?.from
     }
 
     /// The emoji the user has already sent as a reaction to a message, if any. A
@@ -43,8 +42,7 @@ extension Thread {
 
 extension [Reaction] {
     public func emoji(sentBy account: Account) -> String? {
-        let me = account.emailAddress.lowercased()
-        return first { $0.reactor.address.lowercased() == me }?.emoji
+        return first { account.owns($0.reactor.address) }?.emoji
     }
 }
 
@@ -65,7 +63,6 @@ extension ThreadSummary {
     /// known: the first participant other than the account. Nil for a thread of
     /// the user alone.
     public func blockableSender(as account: Account) -> Participant? {
-        let me = account.emailAddress.lowercased()
-        return participants.first { $0.address.lowercased() != me }
+        return participants.first { !account.owns($0.address) }
     }
 }

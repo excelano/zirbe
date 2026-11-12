@@ -5,7 +5,8 @@
 // into conversations using their RFC 5322 Message-ID / In-Reply-To / References
 // headers, following Jamie Zawinski's message-threading algorithm
 // (https://www.jwz.org/doc/threading.html). The output is what the inbox shows:
-// one Thread per conversation, each a flat, time-ordered list of messages.
+// one Thread per conversation, each a flat, time-ordered list of messages, with
+// private replies out of a thread split into conversations of their own.
 //
 // Why JWZ and not the IMAP THREAD extension: SwiftMail does not expose
 // server-side THREAD, and a single client pass behaves identically across every
@@ -20,19 +21,26 @@ import Foundation
 public enum Threader {
     /// Group `messages` into conversations.
     ///
-    /// - Parameter mergeBySubject: when true, runs JWZ's final subject-grouping
-    ///   step to also merge root threads that share a normalized subject. Off by
-    ///   default; see the file note on false merges.
+    /// - Parameters:
+    ///   - ownAddresses: the account's addresses, lowercased. A private reply is
+    ///     judged by who it went to besides these.
+    ///   - mergeBySubject: when true, runs JWZ's final subject-grouping step to
+    ///     also merge root threads that share a normalized subject. Off by
+    ///     default; see the file note on false merges.
     /// - Returns: one `Thread` per conversation, each with its messages oldest
     ///   first. Thread order is unspecified; callers sort (typically by
     ///   `lastActivity`).
-    public static func thread(_ messages: [Message], mergeBySubject: Bool = false) -> [Thread] {
+    public static func thread(
+        _ messages: [Message],
+        ownAddresses: Set<String> = [],
+        mergeBySubject: Bool = false
+    ) -> [Thread] {
         let forest = buildForest(messages)
         var roots = prune(forest, isRoot: true)
         if mergeBySubject {
             roots = mergeRootsBySubject(roots)
         }
-        return roots.map(makeThread)
+        return roots.flatMap { makeThreads($0, ownAddresses: ownAddresses) }
     }
 
     // MARK: - JWZ container tree
@@ -222,13 +230,30 @@ public enum Threader {
 
     // MARK: - Thread assembly
 
-    /// Flatten a root container's subtree into a chronological Thread.
-    private static func makeThread(_ root: Container) -> Thread {
+    /// Flatten a root container's subtree into chronological Threads: the thread
+    /// itself, and one more for each private reply that branches off it.
+    private static func makeThreads(_ root: Container, ownAddresses: Set<String>) -> [Thread] {
         var collected: [Message] = []
         collect(root, into: &collected)
         let messages = collected.chronological()
+        let mainID = threadID(for: root, messages: messages)
+        let branches = Branches(messages, ownAddresses: ownAddresses)
+        return branches.order.map { branch in
+            let own = messages.indices.filter { branches.resolved[$0] == branch }.map { messages[$0] }
+            switch branch {
+            case .main:
+                return makeThread(id: mainID, messages: own, context: nil)
+            case .from(let start):
+                let context = branches.parents[start].map { messages[$0] }
+                return makeThread(id: "\(mainID)/\(messages[start].id)", messages: own, context: context)
+            }
+        }
+    }
 
-        let subject = SubjectNormalizer.normalize(messages.first { ($0.subject?.isEmpty == false) }?.subject)
+    private static func makeThread(id: String, messages: [Message], context: Message?) -> Thread {
+        let subject = SubjectNormalizer.normalize(
+            (messages + [context].compactMap { $0 }).first { ($0.subject?.isEmpty == false) }?.subject
+        )
         // A reaction shouldn't bump the conversation in the inbox: sort by the
         // newest chat message. Fall back to all messages so a thread that is
         // somehow only reactions (its target arrived outside the synced window)
@@ -245,12 +270,86 @@ public enum Threader {
         }
 
         return Thread(
-            id: threadID(for: root, messages: messages),
+            id: id,
             subject: subject,
             messages: messages,
             participants: participants,
-            lastActivity: lastActivity
+            lastActivity: lastActivity,
+            context: context
         )
+    }
+
+    // MARK: - Private replies
+
+    /// Which conversation each message of a thread belongs to. A reply starts its
+    /// own when it shares no one with the message it answers (a reply to a Bcc'd
+    /// or relayed message), or when it narrows a group down to one person; the
+    /// account's own addresses don't count. Its replies follow it by the same
+    /// rule, and everything else stays in the thread, as do reactions and
+    /// messages about a meeting.
+    private struct Branches {
+        enum Branch: Hashable {
+            case main
+            case from(Int)
+        }
+
+        let parents: [Int?]
+        private(set) var resolved: [Branch?]
+        private(set) var order: [Branch] = []
+
+        init(_ messages: [Message], ownAddresses: Set<String>) {
+            var position: [String: Int] = [:]
+            for (index, message) in messages.enumerated() {
+                if let mid = message.messageID, !mid.isEmpty, position[mid] == nil { position[mid] = index }
+            }
+            parents = messages.enumerated().map { index, message in
+                ([message.inReplyTo].compactMap { $0 } + message.references.reversed())
+                    .compactMap { position[$0] }
+                    .first { $0 != index }
+            }
+            resolved = Array(repeating: nil, count: messages.count)
+            let audiences = messages.map { Self.audience(of: $0, ownAddresses: ownAddresses) }
+            for index in messages.indices {
+                var visiting: Set<Int> = []
+                _ = resolve(index, messages: messages, audiences: audiences, visiting: &visiting)
+            }
+            for branch in resolved.compactMap({ $0 }) where !order.contains(branch) {
+                order.append(branch)
+            }
+        }
+
+        private mutating func resolve(
+            _ index: Int,
+            messages: [Message],
+            audiences: [Set<String>],
+            visiting: inout Set<Int>
+        ) -> Branch {
+            if let known = resolved[index] { return known }
+            let branch: Branch
+            if let parent = parents[index], !visiting.contains(parent) {
+                let message = messages[index]
+                if !message.isReaction, message.invite == nil,
+                   Self.splitsOff(audiences[index], from: audiences[parent]) {
+                    branch = .from(index)
+                } else {
+                    visiting.insert(index)
+                    branch = resolve(parent, messages: messages, audiences: audiences, visiting: &visiting)
+                }
+            } else {
+                branch = .main
+            }
+            resolved[index] = branch
+            return branch
+        }
+
+        private static func splitsOff(_ reply: Set<String>, from parent: Set<String>) -> Bool {
+            !reply.isEmpty && (reply.isDisjoint(with: parent) || (reply.count == 1 && parent.count > 1))
+        }
+
+        private static func audience(of message: Message, ownAddresses: Set<String>) -> Set<String> {
+            Set(([message.from].compactMap { $0 } + message.to + message.cc).map(\.address))
+                .subtracting(ownAddresses)
+        }
     }
 
     private static func collect(_ c: Container, into messages: inout [Message]) {

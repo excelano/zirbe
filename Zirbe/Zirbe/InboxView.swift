@@ -199,7 +199,7 @@ struct InboxView: View {
         let account = scope.model(for: summary)?.account
         let label = ThreadRow(
             summary: summary,
-            selfAddress: account?.emailAddress ?? "",
+            owner: account,
             account: scope.isAllInboxes ? account : nil
         )
         if isViewingDrafts && !isSelecting {
@@ -654,9 +654,9 @@ private struct RowActions: ViewModifier {
 /// one-line preview of the newest message when its body has been fetched.
 private struct ThreadRow: View {
     let summary: ThreadSummary
-    /// The account's own address, so an unnamed chat is titled by the other
-    /// people rather than by the viewer.
-    let selfAddress: String
+    /// The account the thread belongs to, so an unnamed chat is titled by the
+    /// other people rather than by the viewer.
+    let owner: Account?
     var account: Account?
     /// How many preview lines to show under the subject (0 hides the preview).
     @AppStorage(SettingsKeys.previewLineCount) private var previewLineCount = 2
@@ -670,7 +670,7 @@ private struct ThreadRow: View {
                 .frame(width: 8, height: 8)
             ThreadAvatar(
                 others: otherParticipants,
-                fallback: summary.participants.first ?? Participant(address: selfAddress)
+                fallback: summary.participants.first ?? Participant(address: owner?.emailAddress ?? "")
             )
             VStack(alignment: .leading, spacing: 3) {
                 // The subject owns the first line; a pin and flag trail it so
@@ -731,7 +731,7 @@ private struct ThreadRow: View {
     /// Everyone in the thread except the account holder, in order — the faces the
     /// row shows (one, or two stacked for a group).
     private var otherParticipants: [Participant] {
-        summary.participants.filter { $0.address.lowercased() != selfAddress.lowercased() }
+        summary.participants.filter { owner?.owns($0.address) != true }
     }
 
     /// Whether the user titled this chat (vs the default sent for an untitled one),
@@ -745,7 +745,7 @@ private struct ThreadRow: View {
         ConversationDefaults.displayTitle(
             subject: summary.subject,
             participants: summary.participants,
-            selfAddress: selfAddress
+            ownAddresses: owner?.ownAddresses ?? []
         )
     }
 

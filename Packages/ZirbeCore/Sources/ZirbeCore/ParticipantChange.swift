@@ -34,25 +34,31 @@ public enum ParticipantChange {
 
     /// The membership changes across a conversation's messages, oldest first.
     /// For each adjacent pair, whoever is on the newer message but not the older
-    /// was added, and whoever fell off was removed. The account's own address is
-    /// excluded from both. Boundaries with no change are omitted.
-    public static func deltas(across messages: [Message], excluding selfAddress: String) -> [Delta] {
+    /// was added, and whoever fell off was removed. The account's own addresses
+    /// are excluded from both. A change is reported only when the newer message
+    /// answers the one before it and more than one other person is involved on
+    /// either side: one person swapped for another is just who's talking, and the
+    /// sender's name already says so. Boundaries with no change are omitted.
+    public static func deltas(across messages: [Message], excluding ownAddresses: Set<String>) -> [Delta] {
         guard messages.count >= 2 else { return [] }
-        let me = selfAddress.lowercased()
 
         var deltas: [Delta] = []
         for index in 1..<messages.count {
-            let before = members(of: messages[index - 1])
-            let after = members(of: messages[index])
-            let beforeAddrs = Set(before.map(\.address))
-            let afterAddrs = Set(after.map(\.address))
+            let previous = messages[index - 1]
+            let message = messages[index]
+            let before = members(of: previous)
+            let after = members(of: message)
+            let beforeAddrs = Set(before.map(\.address)).subtracting(ownAddresses)
+            let afterAddrs = Set(after.map(\.address)).subtracting(ownAddresses)
 
-            let addedAddrs = afterAddrs.subtracting(beforeAddrs).subtracting([me])
-            let removedAddrs = beforeAddrs.subtracting(afterAddrs).subtracting([me])
+            let answersPrevious = message.inReplyTo == nil || message.inReplyTo == previous.messageID
+            guard answersPrevious, beforeAddrs.count > 1 || afterAddrs.count > 1 else { continue }
+            let addedAddrs = afterAddrs.subtracting(beforeAddrs)
+            let removedAddrs = beforeAddrs.subtracting(afterAddrs)
             guard !addedAddrs.isEmpty || !removedAddrs.isEmpty else { continue }
 
             deltas.append(Delta(
-                messageID: messages[index].id,
+                messageID: message.id,
                 added: pick(addedAddrs, from: after),
                 removed: pick(removedAddrs, from: before)
             ))

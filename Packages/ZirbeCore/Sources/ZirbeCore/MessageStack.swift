@@ -42,7 +42,7 @@ public enum MessageStack {
     /// separator, and doesn't close the day the message before it opened.
     public static func rows(
         _ messages: [Message],
-        ownedBy selfAddress: String,
+        ownedBy ownAddresses: Set<String>,
         calendar: Calendar = .current
     ) -> [StackedMessage] {
         messages.enumerated().map { index, message in
@@ -50,7 +50,7 @@ public enum MessageStack {
             let previous = index > 0 ? messages[index - 1] : nil
             let next = index < messages.count - 1 ? messages[index + 1] : nil
             let startsRun = previous.map { $0.from?.address != message.from?.address } ?? true
-            let isOwn = message.from?.address == selfAddress
+            let isOwn = message.from.map { ownAddresses.contains($0.address) } ?? false
 
             return StackedMessage(
                 message: message,

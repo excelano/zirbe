@@ -29,7 +29,7 @@ final class MultiAccountStoreTests: XCTestCase {
             references: ["<lunch@x>"],
             subject: "Re: Lunch",
             from: Participant(address: "sam@x.com"),
-            to: [Participant(address: "me@work.com")],
+            to: [Participant(address: "me@work.com"), Participant(address: "dana@x.com")],
             date: Date(timeIntervalSince1970: 120),
             flags: []
         )

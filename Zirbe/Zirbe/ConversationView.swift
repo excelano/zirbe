@@ -297,7 +297,7 @@ struct ConversationView: View {
         ConversationDefaults.displayTitle(
             subject: summary.subject,
             participants: summary.participants,
-            selfAddress: model.account.emailAddress
+            ownAddresses: model.account.ownAddresses
         )
     }
 
@@ -330,10 +330,10 @@ struct ConversationView: View {
             inviteResponses = [:]
             return
         }
-        let messages = newValue.conversationMessages
-        stack = MessageStack.rows(messages, ownedBy: model.account.emailAddress)
+        let messages = [newValue.context].compactMap { $0 } + newValue.conversationMessages
+        stack = MessageStack.rows(messages, ownedBy: model.account.ownAddresses)
         participantDeltas = Dictionary(
-            ParticipantChange.deltas(across: messages, excluding: model.account.emailAddress)
+            ParticipantChange.deltas(across: messages, excluding: model.account.ownAddresses)
                 .map { ($0.messageID, $0) },
             uniquingKeysWith: { first, _ in first }
         )

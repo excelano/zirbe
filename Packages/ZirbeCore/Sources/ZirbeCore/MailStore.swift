@@ -216,6 +216,9 @@ struct ThreadRow: Codable, FetchableRecord, PersistableRecord {
     /// cached body so the inbox list reads it directly without parsing per row.
     /// Recomputed on every rethread; nil until that body is fetched.
     var snippet: String?
+    /// The id of the message a split-off conversation answers, shown above its
+    /// own messages. That message belongs to another conversation.
+    var contextMessageID: String?
 
     init(_ thread: Thread, accountID: String, snippet: String?) {
         self.id = thread.id
@@ -227,6 +230,7 @@ struct ThreadRow: Codable, FetchableRecord, PersistableRecord {
         self.messageCount = thread.messageCount
         self.participants = thread.participants
         self.snippet = snippet
+        self.contextMessageID = thread.context?.id
     }
 
     /// The id of the message the row's preview is drawn from: the newest chat
@@ -475,6 +479,13 @@ public final class MailStore: @unchecked Sendable {
                 sql: "UPDATE account SET label = ?, color = ? WHERE id = ?",
                 arguments: [label, color.rawValue, accountID]
             )
+        }
+    }
+
+    public func setAliases(_ aliases: [String], accountID: String) async throws {
+        let json = String(decoding: try JSONEncoder().encode(aliases), as: UTF8.self)
+        try await database.write { db in
+            try db.execute(sql: "UPDATE account SET aliases = ? WHERE id = ?", arguments: [json, accountID])
         }
     }
 
@@ -900,7 +911,8 @@ public final class MailStore: @unchecked Sendable {
                 sql: "SELECT \(ThreadingProbe.columns) FROM message WHERE accountID = ?",
                 arguments: [accountID]
             )
-            let threads = Threader.thread(rows.map(\.message))
+            let ownAddresses = try Account.fetchOne(db, key: accountID)?.ownAddresses ?? []
+            let threads = Threader.thread(rows.map(\.message), ownAddresses: ownAddresses)
             var snippetByMessage: [String: String] = [:]
             for row in rows where row.snippet != nil { snippetByMessage[row.id] = row.snippet }
 
@@ -917,13 +929,14 @@ public final class MailStore: @unchecked Sendable {
             // each re-rooted thread (a changed row still carries its prior thread id
             // here) so local-only state keyed by thread id can be moved with it.
             var oldToNew: [String: String] = [:]
+            let threadIDs = Set(threads.map(\.id))
             for row in rows where row.threadID != threadByMessage[row.id] {
                 let newID = threadByMessage[row.id]
                 try db.execute(
                     sql: "UPDATE message SET threadID = ? WHERE accountID = ? AND id = ?",
                     arguments: [newID, accountID, row.id]
                 )
-                if let old = row.threadID, let newID { oldToNew[old] = newID }
+                if let old = row.threadID, let newID, !threadIDs.contains(old) { oldToNew[old] = newID }
             }
             // Follow pins across the re-root, so a pinned conversation keeps its pin
             // instead of silently dropping out of the pinned group. Nothing else is
@@ -1124,8 +1137,14 @@ public final class MailStore: @unchecked Sendable {
     /// means the conversation is fully cached and can be shown offline.
     public func messagesNeedingBodies(threadID: String, accountID: String) async throws -> [(id: String, uid: UInt32, mailbox: String)] {
         try await database.read { db in
-            try MessageRow
-                .filter(Column("accountID") == accountID && Column("threadID") == threadID
+            let context = try String.fetchOne(
+                db,
+                sql: "SELECT contextMessageID FROM thread WHERE accountID = ? AND id = ?",
+                arguments: [accountID, threadID]
+            )
+            return try MessageRow
+                .filter(Column("accountID") == accountID
+                    && (Column("threadID") == threadID || Column("id") == context)
                     && Column("bodyText") == nil && Column("uid") != nil)
                 .fetchAll(db)
                 .compactMap { row in
@@ -1171,12 +1190,16 @@ public final class MailStore: @unchecked Sendable {
                 .fetchAll(db)
                 .map(\.message)
                 .chronological()
+            let context = try row.contextMessageID.flatMap {
+                try MessageRow.fetchOne(db, key: MessageRow.key(id: $0, accountID: accountID))?.message
+            }
             return Thread(
                 id: row.id,
                 subject: row.subject,
                 messages: messages,
                 participants: row.participants,
-                lastActivity: row.lastActivity
+                lastActivity: row.lastActivity,
+                context: context
             )
         }
     }
@@ -1538,6 +1561,14 @@ public final class MailStore: @unchecked Sendable {
             try db.alter(table: "account") { t in
                 t.add(column: "label", .text)
                 t.add(column: "color", .text).notNull().defaults(to: AccountColor.blue.rawValue)
+            }
+        }
+        migrator.registerMigration("v22-split-conversations") { db in
+            try db.alter(table: "account") { t in
+                t.add(column: "aliases", .text).notNull().defaults(to: "[]")
+            }
+            try db.alter(table: "thread") { t in
+                t.add(column: "contextMessageID", .text)
             }
         }
         return migrator

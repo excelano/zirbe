@@ -159,6 +159,7 @@ private struct AccountSettingsView: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var label = ""
+    @State private var aliases = ""
     @State private var confirmingRemove = false
     @State private var reentering = false
 
@@ -173,6 +174,16 @@ private struct AccountSettingsView: View {
                 LabeledContent("Email", value: account.emailAddress)
             } footer: {
                 Text("The label names this account in the folder list and the inbox title.")
+            }
+
+            Section {
+                TextField("Other Addresses", text: $aliases, prompt: Text("hello@example.com"))
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .keyboardType(.emailAddress)
+                    .onSubmit(saveAliases)
+            } footer: {
+                Text("Addresses that also reach you, such as a shared address. Separate them with commas. Mail to or from them counts as yours.")
             }
 
             Section("Color") {
@@ -233,8 +244,14 @@ private struct AccountSettingsView: View {
         .background(Color.zirbeCanvas)
         .navigationTitle(account.title)
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear { label = account.label ?? "" }
-        .onDisappear(perform: saveLabel)
+        .onAppear {
+            label = account.label ?? ""
+            aliases = account.aliases.joined(separator: ", ")
+        }
+        .onDisappear {
+            saveLabel()
+            saveAliases()
+        }
         .task { await model.loadBlockedSenders() }
         .sheet(isPresented: $reentering) {
             OnboardingView(
@@ -263,6 +280,15 @@ private struct AccountSettingsView: View {
         let newLabel = trimmed.isEmpty ? nil : trimmed
         guard newLabel != account.label else { return }
         Task { await session.setAppearance(label: newLabel, color: account.color, accountID: account.id) }
+    }
+
+    private func saveAliases() {
+        let parsed = aliases
+            .split(whereSeparator: { $0 == "," || $0 == ";" || $0.isWhitespace })
+            .map { $0.lowercased() }
+            .filter { $0.contains("@") }
+        guard parsed != account.aliases else { return }
+        Task { await model.setAliases(parsed) }
     }
 }
 

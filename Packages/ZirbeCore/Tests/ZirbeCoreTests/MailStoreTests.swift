@@ -11,6 +11,7 @@ final class MailStoreTests: XCTestCase {
         references: [String] = [],
         subject: String?,
         from: String,
+        to: [String] = [],
         minutes: Int,
         seen: Bool = true
     ) -> Message {
@@ -19,6 +20,7 @@ final class MailStoreTests: XCTestCase {
             references: references,
             subject: subject,
             from: Participant(address: from),
+            to: to.map { Participant(address: $0) },
             date: Date(timeIntervalSince1970: TimeInterval(minutes * 60)),
             flags: seen ? [.seen] : []
         )
@@ -57,6 +59,34 @@ final class MailStoreTests: XCTestCase {
         summaries = try await store.threadSummaries(accountID: acct.id)
         XCTAssertEqual(summaries.map(\.subject), ["Invoice", "Lunch"])
         XCTAssertFalse(summaries.contains { $0.isPinned })
+    }
+
+    func testAPrivateReplyIsItsOwnConversationAndLeavesTheOriginalAlone() async throws {
+        let store = try MailStore()
+        let acct = account()
+        try await store.upsert(acct)
+
+        let root = Message(messageID: "<root@x>", uid: 1, subject: "Renewal", from: Participant(address: "relay@x.net"), to: [Participant(address: "me@x.com")], date: Date(timeIntervalSince1970: 60))
+        let reply = Message(messageID: "<p@x>", uid: 2, inReplyTo: "<root@x>", references: ["<root@x>"], subject: "Re: Renewal", from: Participant(address: "peter@x.com"), to: [Participant(address: "me@x.com")], date: Date(timeIntervalSince1970: 120))
+        try await store.save([root, reply], accountID: acct.id, mailboxName: "INBOX")
+        try await store.rethread(accountID: acct.id)
+
+        let summaries = try await store.threadSummaries(accountID: acct.id)
+        XCTAssertEqual(Set(summaries.map(\.id)), ["mid:<root@x>", "mid:<root@x>/mid:<p@x>"])
+        let loaded = try await store.thread(id: "mid:<root@x>/mid:<p@x>", accountID: acct.id)
+        let side = try XCTUnwrap(loaded)
+        XCTAssertEqual(side.context?.messageID, "<root@x>")
+        XCTAssertEqual(side.messages.map(\.messageID), ["<p@x>"])
+
+        let refs = try await store.messageRefs(threadIDs: [side.id], accountID: acct.id)
+        XCTAssertEqual(refs.map(\.uid), [2])
+        let needing = try await store.messagesNeedingBodies(threadID: side.id, accountID: acct.id)
+        XCTAssertEqual(Set(needing.map(\.uid)), [1, 2])
+
+        try await store.setAliases(["hello@x.com"], accountID: acct.id)
+        let stored = try await store.accounts()
+        XCTAssertEqual(stored.first?.aliases, ["hello@x.com"])
+        XCTAssertTrue(stored.first?.owns("Hello@X.com") == true)
     }
 
     func testBlockedSenderRefsAndListManagement() async throws {
@@ -107,7 +137,7 @@ final class MailStoreTests: XCTestCase {
         try await store.upsert(acct)
 
         let a = msg(id: "<a@x>", subject: "Lunch", from: "p@x.com", minutes: 0)
-        let b = msg(id: "<b@x>", references: ["<a@x>"], subject: "Re: Lunch", from: "q@x.com", minutes: 1, seen: false)
+        let b = msg(id: "<b@x>", references: ["<a@x>"], subject: "Re: Lunch", from: "q@x.com", to: ["p@x.com"], minutes: 1, seen: false)
         let z = msg(id: "<z@x>", subject: "Invoice", from: "r@x.com", minutes: 5)
         try await store.save([a, b, z], accountID: acct.id, mailboxName: "INBOX")
         try await store.rethread(accountID: acct.id)
@@ -186,7 +216,7 @@ final class MailStoreTests: XCTestCase {
         try await store.upsert(acct)
 
         // Only a reply arrives first; its root <a@x> is referenced but absent.
-        let reply = msg(id: "<b@x>", references: ["<a@x>"], subject: "Re: Plan", from: "q@x.com", minutes: 1)
+        let reply = msg(id: "<b@x>", references: ["<a@x>"], subject: "Re: Plan", from: "q@x.com", to: ["p@x.com"], minutes: 1)
         try await store.save([reply], accountID: acct.id, mailboxName: "INBOX")
         try await store.rethread(accountID: acct.id)
         let firstID = try await store.threadSummaries(accountID: acct.id).first?.id
@@ -220,7 +250,7 @@ final class MailStoreTests: XCTestCase {
 
         // A reply arrives referencing an earlier, previously-unseen ancestor,
         // which re-roots the tree so the thread id changes.
-        let b = msg(id: "<b@x>", references: ["<a0@x>", "<a@x>"], subject: "Re: Plan", from: "q@x.com", minutes: 2)
+        let b = msg(id: "<b@x>", references: ["<a0@x>", "<a@x>"], subject: "Re: Plan", from: "q@x.com", to: ["p@x.com"], minutes: 2)
         try await store.save([b], accountID: acct.id, mailboxName: "INBOX")
         try await store.rethread(accountID: acct.id)
         summaries = try await store.threadSummaries(accountID: acct.id)
@@ -463,7 +493,7 @@ final class MailStoreTests: XCTestCase {
         try await store.upsert(acct)
 
         let a = msg(id: "<a@x>", subject: "Lunch", from: "p@x.com", minutes: 0)
-        let b = msg(id: "<b@x>", references: ["<a@x>"], subject: "Re: Lunch", from: "q@x.com", minutes: 1)
+        let b = msg(id: "<b@x>", references: ["<a@x>"], subject: "Re: Lunch", from: "q@x.com", to: ["p@x.com"], minutes: 1)
         try await store.save([a, b], accountID: acct.id, mailboxName: "INBOX")
         try await store.rethread(accountID: acct.id)
         let summaries = try await store.threadSummaries(accountID: acct.id)

@@ -36,7 +36,7 @@ final class InviteThreadingTests: XCTestCase {
                             invite: invite("M1", method: .reply, replyFrom: .init(name: "Sam", address: "sam@x.com", status: .accepted)))
         let other = message("<d@x>", from: pat, minutes: 30, subject: "Dinner", invite: invite("M2", summary: "Dinner"))
 
-        let threads = Threader.thread([first, update, reply, other])
+        let threads = Threader.thread([first, update, reply, other], ownAddresses: [me.address])
 
         XCTAssertEqual(threads.count, 2)
         let lunch = try? XCTUnwrap(threads.first { $0.messages.contains { $0.messageID == "<a@x>" } })
@@ -47,9 +47,9 @@ final class InviteThreadingTests: XCTestCase {
 
     func testAMeetingThreadKeepsItsIDAsUpdatesArrive() {
         let first = message("<a@x>", from: pat, minutes: 0, invite: invite("M1"))
-        let before = Threader.thread([first]).first?.id
+        let before = Threader.thread([first], ownAddresses: [me.address]).first?.id
         let update = message("<b@x>", from: pat, minutes: 10, invite: invite("M1", sequence: 1))
-        let after = Threader.thread([first, update]).first?.id
+        let after = Threader.thread([first, update], ownAddresses: [me.address]).first?.id
         XCTAssertEqual(before, "mid:<a@x>")
         XCTAssertEqual(after, before, "no re-root when an update lands")
     }
@@ -58,7 +58,7 @@ final class InviteThreadingTests: XCTestCase {
         let first = message("<a@x>", from: pat, minutes: 0, invite: invite("M1"))
         let chat = message("<b@x>", from: me, minutes: 5, inReplyTo: "<a@x>", body: "Can we do 1pm?")
         let update = message("<c@x>", from: pat, minutes: 10, invite: invite("M1", sequence: 1))
-        let threads = Threader.thread([first, chat, update])
+        let threads = Threader.thread([first, chat, update], ownAddresses: [me.address])
         XCTAssertEqual(threads.count, 1)
         XCTAssertEqual(threads.first?.messages.count, 3)
     }
@@ -72,7 +72,7 @@ final class InviteThreadingTests: XCTestCase {
         let reply = message("<d@x>", from: sam, minutes: 20,
                             invite: invite("M1", method: .reply, replyFrom: .init(name: "Sam", address: "sam@x.com", status: .accepted)))
         let later = message("<e@x>", from: pat, minutes: 30, inReplyTo: "<a@x>", body: "See you there")
-        return Threader.thread([first, chat, update, reply, later]).first!
+        return Threader.thread([first, chat, update, reply, later], ownAddresses: [me.address]).first!
     }
 
     func testAnUpdateReplacesTheCardAndAnAnswerIsALine() {
@@ -92,7 +92,7 @@ final class InviteThreadingTests: XCTestCase {
     func testATiedSequenceKeepsTheNewerMessage() {
         let first = message("<a@x>", from: pat, minutes: 0, invite: invite("M1", sequence: 1))
         let resend = message("<b@x>", from: pat, minutes: 10, invite: invite("M1", sequence: 1, summary: "Lunch (resent)"))
-        let thread = Threader.thread([first, resend]).first!
+        let thread = Threader.thread([first, resend], ownAddresses: [me.address]).first!
         XCTAssertEqual(thread.conversationMessages.map(\.messageID), ["<b@x>"])
     }
 

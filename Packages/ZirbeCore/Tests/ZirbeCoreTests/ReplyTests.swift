@@ -146,7 +146,7 @@ final class ReplyTests: XCTestCase {
         let m2 = message(id: "<b@x>", from: "p@x.com", to: ["q@x.com"], references: ["<a@x>"], minutes: 1)
         let m3 = message(id: "<c@x>", from: "p@x.com", to: ["q@x.com", "s@x.com"], references: ["<a@x>", "<b@x>"], minutes: 2)
 
-        let deltas = ParticipantChange.deltas(across: [m1, m2, m3], excluding: "me@x.com")
+        let deltas = ParticipantChange.deltas(across: [m1, m2, m3], excluding: ["me@x.com"])
         XCTAssertEqual(deltas.count, 2)
         XCTAssertEqual(deltas[0].messageID, "mid:<b@x>")
         XCTAssertEqual(deltas[0].removed.map(\.address), ["r@x.com"])
@@ -160,7 +160,7 @@ final class ReplyTests: XCTestCase {
         // me drops off the second message; that must not surface as a change.
         let m1 = message(id: "<a@x>", from: "p@x.com", to: ["me@x.com", "q@x.com"], minutes: 0)
         let m2 = message(id: "<b@x>", from: "p@x.com", to: ["q@x.com"], references: ["<a@x>"], minutes: 1)
-        let deltas = ParticipantChange.deltas(across: [m1, m2], excluding: "me@x.com")
+        let deltas = ParticipantChange.deltas(across: [m1, m2], excluding: ["me@x.com"])
         XCTAssertTrue(deltas.isEmpty)
     }
 
@@ -168,7 +168,21 @@ final class ReplyTests: XCTestCase {
         // Same people, addressing rearranged (q moves from To to Cc): no change.
         let m1 = message(id: "<a@x>", from: "p@x.com", to: ["q@x.com"], minutes: 0)
         let m2 = message(id: "<b@x>", from: "p@x.com", to: [], cc: ["q@x.com"], references: ["<a@x>"], minutes: 1)
-        let deltas = ParticipantChange.deltas(across: [m1, m2], excluding: "me@x.com")
+        let deltas = ParticipantChange.deltas(across: [m1, m2], excluding: ["me@x.com"])
         XCTAssertTrue(deltas.isEmpty)
+    }
+
+    func testParticipantChangeIgnoresOnePersonSwappedForAnother() {
+        // A relayed message, then a private reply to it: who's talking changed,
+        // nobody joined or left.
+        let m1 = message(id: "<a@x>", from: "relay@x.com", to: ["me@x.com"], minutes: 0)
+        let m2 = message(id: "<b@x>", from: "p@x.com", to: ["me@x.com"], references: ["<a@x>"], minutes: 1)
+        XCTAssertTrue(ParticipantChange.deltas(across: [m1, m2], excluding: ["me@x.com"]).isEmpty)
+    }
+
+    func testParticipantChangeCountsAnAliasAsMe() {
+        let m1 = message(id: "<a@x>", from: "p@x.com", to: ["hello@x.com", "q@x.com"], minutes: 0)
+        let m2 = message(id: "<b@x>", from: "p@x.com", to: ["q@x.com"], references: ["<a@x>"], minutes: 1)
+        XCTAssertTrue(ParticipantChange.deltas(across: [m1, m2], excluding: ["me@x.com", "hello@x.com"]).isEmpty)
     }
 }

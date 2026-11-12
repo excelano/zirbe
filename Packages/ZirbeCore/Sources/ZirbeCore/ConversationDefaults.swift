@@ -23,14 +23,13 @@ public enum ConversationDefaults {
     public static func displayTitle(
         subject: String,
         participants: [Participant],
-        selfAddress: String
+        ownAddresses: Set<String>
     ) -> String {
         let trimmed = subject.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty && trimmed != unnamedSubject { return trimmed }
 
-        let me = selfAddress.lowercased()
         let others = participants
-            .filter { $0.address.lowercased() != me }
+            .filter { !ownAddresses.contains($0.address) }
             .prefix(3)
             .map(\.label)
         guard !others.isEmpty else { return unnamedSubject }

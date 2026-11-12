@@ -12,7 +12,7 @@ final class ConversationDefaultsTests: XCTestCase {
         let title = ConversationDefaults.displayTitle(
             subject: "Lunch Friday",
             participants: [p("me@x.com"), p("sarah@x.com", "Sarah")],
-            selfAddress: me
+            ownAddresses: [me]
         )
         XCTAssertEqual(title, "Lunch Friday")
     }
@@ -21,7 +21,7 @@ final class ConversationDefaultsTests: XCTestCase {
         let title = ConversationDefaults.displayTitle(
             subject: ConversationDefaults.unnamedSubject,
             participants: [p("me@x.com"), p("sarah@x.com", "Sarah")],
-            selfAddress: me
+            ownAddresses: [me]
         )
         XCTAssertEqual(title, "Chat with Sarah")
     }
@@ -30,7 +30,7 @@ final class ConversationDefaultsTests: XCTestCase {
         let title = ConversationDefaults.displayTitle(
             subject: "   ",
             participants: [p("sarah@x.com", "Sarah"), p("tom@x.com", "Tom")],
-            selfAddress: me
+            ownAddresses: [me]
         )
         XCTAssertEqual(title, "Chat with Sarah, Tom")
     }
@@ -39,7 +39,7 @@ final class ConversationDefaultsTests: XCTestCase {
         let title = ConversationDefaults.displayTitle(
             subject: "",
             participants: [p("ME@X.com"), p("tom@x.com", "Tom")],
-            selfAddress: me
+            ownAddresses: [me]
         )
         XCTAssertEqual(title, "Chat with Tom")
     }
@@ -48,7 +48,7 @@ final class ConversationDefaultsTests: XCTestCase {
         let title = ConversationDefaults.displayTitle(
             subject: "",
             participants: [p("a@x.com", "A"), p("b@x.com", "B"), p("c@x.com", "C"), p("d@x.com", "D")],
-            selfAddress: me
+            ownAddresses: [me]
         )
         XCTAssertEqual(title, "Chat with A, B, C")
     }
@@ -57,7 +57,7 @@ final class ConversationDefaultsTests: XCTestCase {
         let title = ConversationDefaults.displayTitle(
             subject: ConversationDefaults.unnamedSubject,
             participants: [p("me@x.com")],
-            selfAddress: me
+            ownAddresses: [me]
         )
         XCTAssertEqual(title, "Chat")
     }

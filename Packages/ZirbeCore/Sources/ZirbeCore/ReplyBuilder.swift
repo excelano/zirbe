@@ -21,8 +21,7 @@ public enum ReplyBuilder {
         as account: Account
     ) -> (to: [Participant], cc: [Participant]) {
         guard let latest = thread.messages.last else { return ([], []) }
-        let me = account.emailAddress.lowercased()
-        var placed: Set<String> = [me]
+        var placed = account.ownAddresses
 
         var to: [Participant] = []
         for p in ([latest.from].compactMap { $0 } + latest.to) where placed.insert(p.address).inserted {
