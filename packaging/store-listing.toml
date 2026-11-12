@@ -34,7 +34,7 @@ WHAT YOU CAN DO
 The inbox is a list of conversations, where each conversation is an email thread shown like a group chat: the subject is the title and every message is a bubble in time order. Tap a conversation to open it (on iPad it opens beside the list), then reply, attach a photo or file, react to a message, search within the thread, or swipe a message to reply, and swipe a conversation to archive, delete, or pin. A meeting invitation shows as a card with the time, the organizer and a Join button, and Add to Calendar opens Apple's own event editor. The mailbox contains a sample conversation to open and act on. Sending delivers over the account's own SMTP server (excelano.com).
 
 PRIVACY
-Zirbe's only network destinations are the demo account's own IMAP and SMTP servers. It contains no analytics, telemetry, or third-party SDKs, which is why the App Privacy declaration is Data Not Collected. The full privacy statement is at https://excelano.com/legal/#zirbe and the complete source is public at https://github.com/excelano/zirbe.
+Zirbe's only network destinations are the demo account's own IMAP and SMTP servers. Voice and video messages are transcribed on the device with Apple's Speech framework, so iOS may download Apple's speech model the first time one is transcribed. It contains no analytics, telemetry, or third-party SDKs, which is why the App Privacy declaration is Data Not Collected. The full privacy statement is at https://excelano.com/legal/#zirbe and the complete source is public at https://github.com/excelano/zirbe.
 
 Contact for review questions: David M. Anderson, david.anderson@excelano.com.
 """

@@ -76,6 +76,17 @@ final class MappingTests: XCTestCase {
         XCTAssertNil(MailEnvelope(canonical).reaction)
     }
 
+    func testPartTypesComeFromTheBodyStructure() {
+        let info = MessageInfo(
+            sequenceNumber: SequenceNumber(1),
+            parts: [
+                MessagePart(sectionString: "1", contentType: "text/plain", disposition: nil, filename: nil, contentId: nil),
+                MessagePart(sectionString: "2", contentType: "audio/mp4", disposition: "attachment", filename: "Voice Message.m4a", contentId: nil),
+            ]
+        )
+        XCTAssertEqual(MailEnvelope(info).partTypes, ["text/plain", "audio/mp4"])
+    }
+
     // MARK: Mailboxes
 
     private func folder(_ name: String, _ attributes: Mailbox.Info.Attributes = [], delimiter: String? = "/") -> Mailbox.Info {

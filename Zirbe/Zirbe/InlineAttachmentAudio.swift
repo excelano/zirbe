@@ -55,6 +55,12 @@ final class AudioPlayback {
         startTicker()
     }
 
+    func stop() {
+        guard player != nil else { return }
+        player?.stop()
+        finish()
+    }
+
     private func pause() {
         player?.pause()
         currentTime = player?.currentTime ?? currentTime
@@ -103,9 +109,13 @@ struct InlineAttachmentAudio: View {
     let messageID: String
     let attachment: MessageAttachment
     let isOwn: Bool
+    let transcript: String?
+    let transcribes: Bool
 
     @State private var playback = AudioPlayback()
     @State private var isLoading = false
+    @State private var heard: String?
+    @State private var isTranscribing = false
     /// Set once the bytes can't be loaded, switching to the chip fallback.
     @State private var failed = false
 
@@ -117,22 +127,48 @@ struct InlineAttachmentAudio: View {
         if failed {
             AttachmentChip(model: model, messageID: messageID, attachment: attachment, isOwn: isOwn)
         } else {
-            HStack(spacing: 10) {
-                playButton
-                VStack(alignment: .leading, spacing: 5) {
-                    progressTrack
-                    Text(timeLabel)
-                        .font(.caption2)
-                        .monospacedDigit()
-                        .foregroundStyle(tint.opacity(0.85))
-                }
+            VStack(alignment: .leading, spacing: 6) {
+                player
+                transcriptText
             }
-            .frame(width: 210)
-            .padding(.vertical, 2)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Voice message")
-            .accessibilityValue(playback.isLoaded ? VoiceRecorderSheet.clock(playback.duration) : "")
-            .accessibilityAddTraits(.isButton)
+            .task {
+                guard transcribes, transcript == nil else { return }
+                isTranscribing = true
+                heard = await TranscriptionQueue.transcribe(attachment, of: messageID, in: model)
+                isTranscribing = false
+            }
+        }
+    }
+
+    private var player: some View {
+        HStack(spacing: 10) {
+            playButton
+            VStack(alignment: .leading, spacing: 5) {
+                AudioProgressTrack(progress: playback.progress, tint: tint)
+                Text(timeLabel)
+                    .font(.caption2)
+                    .monospacedDigit()
+                    .foregroundStyle(tint.opacity(0.85))
+            }
+        }
+        .frame(width: 210)
+        .padding(.vertical, 2)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Voice message")
+        .accessibilityValue(playback.isLoaded ? VoiceRecorder.clock(playback.duration) : "")
+        .accessibilityAddTraits(.isButton)
+    }
+
+    @ViewBuilder
+    private var transcriptText: some View {
+        if let words = transcript ?? heard, !words.isEmpty {
+            Text(words)
+                .foregroundStyle(isOwn ? .white : .primary)
+                .fixedSize(horizontal: false, vertical: true)
+        } else if isTranscribing {
+            Text("Transcribing…")
+                .font(.caption)
+                .foregroundStyle(tint.opacity(0.85))
         }
     }
 
@@ -154,23 +190,13 @@ struct InlineAttachmentAudio: View {
         .buttonStyle(.plain)
     }
 
-    private var progressTrack: some View {
-        GeometryReader { geo in
-            ZStack(alignment: .leading) {
-                Capsule().fill(tint.opacity(0.25))
-                Capsule().fill(tint).frame(width: geo.size.width * playback.progress)
-            }
-        }
-        .frame(height: 3)
-    }
-
     /// The total duration before it has played, the running time once it has: the
     /// label a chat audio player shows. Before the bytes load there's no duration
     /// yet, so it names itself instead.
     private var timeLabel: String {
         guard playback.isLoaded else { return "Voice Message" }
         let shown = (playback.isPlaying || playback.currentTime > 0) ? playback.currentTime : playback.duration
-        return VoiceRecorderSheet.clock(shown)
+        return VoiceRecorder.clock(shown)
     }
 
     /// First tap loads the bytes and starts playing; later taps just toggle. A
@@ -185,5 +211,20 @@ struct InlineAttachmentAudio: View {
             guard let data, playback.load(data) else { failed = true; return }
             playback.toggle()
         }
+    }
+}
+
+struct AudioProgressTrack: View {
+    let progress: Double
+    let tint: Color
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(tint.opacity(0.25))
+                Capsule().fill(tint).frame(width: geo.size.width * progress)
+            }
+        }
+        .frame(height: 3)
     }
 }

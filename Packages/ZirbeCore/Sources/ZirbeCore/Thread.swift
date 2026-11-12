@@ -141,6 +141,7 @@ public struct ThreadSummary: Sendable, Hashable, Identifiable {
     /// been fetched (the sync backfills it), or when that body reduces to nothing
     /// worth showing.
     public var preview: String?
+    public var media: MessageMedia
 
     public init(
         id: String,
@@ -152,7 +153,8 @@ public struct ThreadSummary: Sendable, Hashable, Identifiable {
         isFlagged: Bool = false,
         isPinned: Bool = false,
         messageCount: Int,
-        preview: String? = nil
+        preview: String? = nil,
+        media: MessageMedia = []
     ) {
         self.id = id
         self.accountID = accountID
@@ -164,6 +166,7 @@ public struct ThreadSummary: Sendable, Hashable, Identifiable {
         self.isPinned = isPinned
         self.messageCount = messageCount
         self.preview = preview
+        self.media = media
     }
 
     public var key: ThreadKey { ThreadKey(accountID: accountID, threadID: id) }

@@ -22,7 +22,8 @@ extension Message {
             cc: envelope.cc.flatMap(AddressParser.parseList),
             date: envelope.date,
             flags: Set(envelope.flags.map(Flag.init(imap:))),
-            reaction: envelope.reaction
+            reaction: envelope.reaction,
+            media: MessageMedia(mimeTypes: envelope.partTypes)
         )
     }
 }

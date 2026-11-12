@@ -330,7 +330,7 @@ public actor SyncService {
         // section to fetch by.
         for attachment in draft.attachments {
             let type = attachment.mimeType.lowercased()
-            guard type.hasPrefix("image/") || type.hasPrefix("audio/") else { continue }
+            guard type.hasPrefix("image/") || type.hasPrefix("audio/") || type.hasPrefix("video/") else { continue }
             AttachmentCache.save(attachment.data, messageID: local.id, filename: attachment.filename)
         }
     }

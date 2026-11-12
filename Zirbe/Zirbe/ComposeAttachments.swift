@@ -44,11 +44,11 @@ enum AttachmentSymbol {
 /// choices), and Files. Each source loads into the bound staging list.
 struct AttachButton: View {
     @Binding var attachments: [StagedAttachment]
+    let onVideo: (URL) -> Void
 
     @State private var showPhotos = false
     @State private var showFiles = false
     @State private var showCamera = false
-    @State private var showRecorder = false
     @State private var photoItems: [PhotosPickerItem] = []
 
     var body: some View {
@@ -66,11 +66,6 @@ struct AttachButton: View {
                 }
             }
             Button {
-                showRecorder = true
-            } label: {
-                Label("Voice Message", systemImage: "mic")
-            }
-            Button {
                 showFiles = true
             } label: {
                 Label("Files", systemImage: "folder")
@@ -83,7 +78,7 @@ struct AttachButton: View {
                 .background(Color(.secondarySystemFill), in: Circle())
         }
         .accessibilityLabel("Add attachment")
-        .photosPicker(isPresented: $showPhotos, selection: $photoItems, matching: .images)
+        .photosPicker(isPresented: $showPhotos, selection: $photoItems, matching: .any(of: [.images, .videos]))
         .onChange(of: photoItems) { _, items in
             guard !items.isEmpty else { return }
             Task { await addPhotos(items) }
@@ -101,20 +96,23 @@ struct AttachButton: View {
             }
             .ignoresSafeArea()
         }
-        .sheet(isPresented: $showRecorder) {
-            VoiceRecorderSheet { draft in append(draft) }
-        }
     }
 
     /// Load each picked photo off the main actor, then append on the main actor
     /// and clear the picker selection so the next pick fires `onChange` again.
     private func addPhotos(_ items: [PhotosPickerItem]) async {
         var loaded: [DraftAttachment] = []
+        var movies: [URL] = []
         for item in items {
-            if let draft = await AttachmentLoader.draft(from: item) { loaded.append(draft) }
+            if item.supportedContentTypes.contains(where: { $0.conforms(to: .movie) }) {
+                if let movie = try? await item.loadTransferable(type: PickedMovie.self) { movies.append(movie.url) }
+            } else if let draft = await AttachmentLoader.draft(from: item) {
+                loaded.append(draft)
+            }
         }
         await MainActor.run {
             for draft in loaded { append(draft) }
+            for movie in movies { onVideo(movie) }
             photoItems = []
         }
     }
@@ -185,6 +183,10 @@ enum AttachmentLoader {
     static func draft(from image: UIImage) -> DraftAttachment? {
         guard let data = image.jpegData(compressionQuality: 0.9) else { return nil }
         return DraftAttachment(filename: "Photo-\(token()).jpg", mimeType: "image/jpeg", data: data)
+    }
+
+    static func videoDraft(_ data: Data) -> DraftAttachment {
+        DraftAttachment(filename: "Video-\(token()).mp4", mimeType: "video/mp4", data: data)
     }
 
     private static func token() -> String {

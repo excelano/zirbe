@@ -9,13 +9,15 @@
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>NSCameraUsageDescription</key>
-	<string>Zirbe uses the camera so you can take a photo to attach to a message.</string>
+	<string>Zirbe uses the camera so you can take a photo or record a video to send.</string>
 	<key>NSCalendarsWriteOnlyAccessUsageDescription</key>
 	<string>Zirbe adds a meeting from an email invitation to your calendar when you ask it to. It never reads your calendar.</string>
 	<key>NSContactsUsageDescription</key>
 	<string>Zirbe looks up your contacts on this device to show photos and initials beside messages and to suggest recipients as you address one. Nothing leaves your device.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Zirbe uses the microphone so you can record a voice message to send. Recordings stay on your device until you send them.</string>
+	<string>Zirbe uses the microphone so you can record a voice or video message to send. Recordings stay on your device until you send them.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Zirbe turns voice and video messages into text on this device. Audio is never sent anywhere to be transcribed.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>fetch</string>

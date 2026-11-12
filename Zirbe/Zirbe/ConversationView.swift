@@ -899,6 +899,10 @@ struct ReplyBar: View {
     let onSend: () -> Void
 
     @FocusState private var fieldFocused: Bool
+    @State private var recorder = VoiceRecorder()
+    @State private var showVideoCamera = false
+    @State private var isPreparingVideo = false
+    @State private var videoProblem: String?
 
     /// Nothing to send: no typed text and no picked files.
     private var isEmpty: Bool {
@@ -908,29 +912,59 @@ struct ReplyBar: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             AttachmentTray(attachments: $attachments)
-            HStack(alignment: .bottom, spacing: 8) {
-                AttachButton(attachments: $attachments)
-                TextField(placeholder, text: $text, axis: .vertical)
-                    .lineLimit(1...5)
-                    .focused($fieldFocused)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .background(Color(.secondarySystemBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-                Button(action: onSend) {
-                    if isSending {
-                        ProgressView()
-                            .frame(width: 30, height: 30)
-                    } else {
-                        Image(systemName: "arrow.up.circle.fill")
-                            .font(.system(size: 30))
-                    }
+            if isPreparingVideo {
+                HStack(spacing: 6) {
+                    ProgressView().controlSize(.small)
+                    Text("Preparing video…")
                 }
-                .disabled(isSending || isEmpty || !canSend)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 4)
+            }
+            if recorder.phase == .idle {
+                HStack(alignment: .bottom, spacing: 8) {
+                    AttachButton(attachments: $attachments, onVideo: prepareVideo)
+                    if VideoCamera.isAvailable {
+                        Button {
+                            fieldFocused = false
+                            showVideoCamera = true
+                        } label: {
+                            Image(systemName: "video.fill")
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 34, height: 34)
+                                .background(Color(.secondarySystemFill), in: Circle())
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Record video message")
+                    }
+                    TextField(placeholder, text: $text, axis: .vertical)
+                        .lineLimit(1...5)
+                        .focused($fieldFocused)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                        .background(Color(.secondarySystemBackground))
+                        .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    trailingButton
+                }
+            } else {
+                VoiceStrip(recorder: recorder, canSend: canSend && !isSending, onSend: sendVoice)
             }
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
+        .fullScreenCover(isPresented: $showVideoCamera) {
+            VideoCamera(onCapture: prepareVideo)
+                .ignoresSafeArea()
+        }
+        .alert("Can’t Send This Video", isPresented: Binding(
+            get: { videoProblem != nil },
+            set: { if !$0 { videoProblem = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(videoProblem ?? "")
+        }
         // A swipe-to-reply asks the bar to take focus; consume the request so it
         // fires once per swipe.
         .onChange(of: focusRequest?.wrappedValue ?? false) { _, want in
@@ -939,6 +973,62 @@ struct ReplyBar: View {
                 focusRequest?.wrappedValue = false
             }
         }
+    }
+
+    @ViewBuilder
+    private var trailingButton: some View {
+        if isSending {
+            ProgressView()
+                .frame(width: 30, height: 30)
+        } else if isEmpty && !isPreparingVideo {
+            Button {
+                fieldFocused = false
+                recorder.start()
+            } label: {
+                Image(systemName: "mic.circle.fill")
+                    .font(.system(size: 30))
+            }
+            .accessibilityLabel("Record voice message")
+        } else {
+            Button(action: onSend) {
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.system(size: 30))
+            }
+            .disabled(!canSend || isPreparingVideo)
+            .accessibilityLabel("Send")
+        }
+    }
+
+    private func prepareVideo(_ source: URL) {
+        isPreparingVideo = true
+        Task {
+            defer { try? FileManager.default.removeItem(at: source) }
+            do {
+                let compressed = try await VideoExport.compressed(source)
+                defer { try? FileManager.default.removeItem(at: compressed) }
+                let staged = StagedAttachment(attachment: AttachmentLoader.videoDraft(try Data(contentsOf: compressed)))
+                attachments.append(staged)
+                isPreparingVideo = false
+                guard let words = try? await Transcriber.transcribeVideo(compressed), !words.isEmpty,
+                      attachments.contains(where: { $0.id == staged.id }),
+                      text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+                text = words
+            } catch VideoExport.Failure.tooLarge {
+                isPreparingVideo = false
+                videoProblem = "Zirbe couldn’t make this video small enough to send by email. Try a shorter one."
+            } catch {
+                isPreparingVideo = false
+                videoProblem = "Zirbe couldn’t read this video."
+            }
+        }
+    }
+
+    private func sendVoice() {
+        guard let voice = recorder.makeAttachment() else { return }
+        text = recorder.finishedTranscript ?? ""
+        attachments.append(StagedAttachment(attachment: voice))
+        recorder.reset()
+        onSend()
     }
 }
 
@@ -1237,8 +1327,25 @@ private struct MessageBubble: View {
                     ForEach(Array(imageAttachments.enumerated()), id: \.offset) { _, attachment in
                         InlineAttachmentImage(model: model, messageID: message.id, attachment: attachment, isOwn: isOwn)
                     }
-                    ForEach(Array(audioAttachments.enumerated()), id: \.offset) { _, attachment in
-                        InlineAttachmentAudio(model: model, messageID: message.id, attachment: attachment, isOwn: isOwn)
+                    ForEach(Array(videoAttachments.enumerated()), id: \.offset) { index, attachment in
+                        InlineAttachmentVideo(
+                            model: model,
+                            messageID: message.id,
+                            attachment: attachment,
+                            isOwn: isOwn,
+                            transcript: index == 0 && audioAttachments.isEmpty ? message.transcript : nil,
+                            transcribes: index == 0 && audioAttachments.isEmpty && !hasVisibleBody
+                        )
+                    }
+                    ForEach(Array(audioAttachments.enumerated()), id: \.offset) { index, attachment in
+                        InlineAttachmentAudio(
+                            model: model,
+                            messageID: message.id,
+                            attachment: attachment,
+                            isOwn: isOwn,
+                            transcript: index == 0 ? message.transcript : nil,
+                            transcribes: index == 0 && !hasVisibleBody
+                        )
                     }
                     ForEach(Array(fileAttachments.enumerated()), id: \.offset) { _, attachment in
                         AttachmentChip(model: model, messageID: message.id, attachment: attachment, isOwn: isOwn)
@@ -1432,10 +1539,14 @@ private struct MessageBubble: View {
     }
 
     /// Everything else, rendered as a tappable chip.
+    private var videoAttachments: [MessageAttachment] {
+        message.attachments.filter { $0.mimeType.lowercased().hasPrefix("video/") }
+    }
+
     private var fileAttachments: [MessageAttachment] {
         message.attachments.filter {
             let type = $0.mimeType.lowercased()
-            return !type.hasPrefix("image/") && !type.hasPrefix("audio/")
+            return !type.hasPrefix("image/") && !type.hasPrefix("audio/") && !type.hasPrefix("video/")
         }
     }
 }

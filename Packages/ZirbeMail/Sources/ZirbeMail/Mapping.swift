@@ -20,7 +20,8 @@ extension MailEnvelope {
             flags: info.flags.map { String(describing: $0) },
             // Custom header keys arrive lowercased from the parser, so the
             // reaction marker is read by the lowercased name.
-            reaction: info.additionalFields?[MailHeader.zirbeReaction.lowercased()]
+            reaction: info.additionalFields?[MailHeader.zirbeReaction.lowercased()],
+            partTypes: info.parts.map(\.contentType)
         )
     }
 }

@@ -33,8 +33,7 @@ struct InboxView: View {
     /// conversations. Held as an Identifiable request so `.sheet(item:)` drives it
     /// and the ids are captured before any selection clears.
     @State private var moveRequest: MoveRequest?
-    /// When set, the list shows only conversations with unread mail.
-    @State private var showUnreadOnly = false
+    @State private var filter = InboxFilter.all
     /// The conversations picked in selection mode, by account and thread.
     @State private var selection = Set<ThreadKey>()
     /// Drives selection mode: `.active` shows the per-row circles and the bulk
@@ -82,7 +81,7 @@ struct InboxView: View {
     /// inbox narrowed to unread when the filter is on.
     private var visibleSummaries: [ThreadSummary] {
         if isSearching { return searchResults }
-        return showUnreadOnly ? scope.summaries.filter(\.isUnread) : scope.summaries
+        return filter == .all ? scope.summaries : scope.summaries.filter(filter.includes)
     }
 
     var body: some View {
@@ -443,14 +442,18 @@ struct InboxView: View {
             // Bottom bar in the Mail idiom: filter at the leading edge, the system
             // search field centered, compose at the trailing edge.
             ToolbarItem(placement: .bottomBar) {
-                Button {
-                    showUnreadOnly.toggle()
+                Menu {
+                    Picker("Show", selection: $filter) {
+                        ForEach(InboxFilter.allCases, id: \.self) { option in
+                            Label(option.title, systemImage: option.symbol)
+                        }
+                    }
                 } label: {
                     Label(
-                        showUnreadOnly ? "Show All Conversations" : "Show Unread Only",
-                        systemImage: showUnreadOnly
-                            ? "line.3.horizontal.decrease.circle.fill"
-                            : "line.3.horizontal.decrease.circle"
+                        "Filter",
+                        systemImage: filter == .all
+                            ? "line.3.horizontal.decrease.circle"
+                            : "line.3.horizontal.decrease.circle.fill"
                     )
                 }
             }
@@ -483,11 +486,11 @@ struct InboxView: View {
                     description: Text(scope.errorMessage ?? "Pull down to refresh.")
                 )
             }
-        } else if showUnreadOnly && visibleSummaries.isEmpty {
+        } else if filter != .all && visibleSummaries.isEmpty {
             ContentUnavailableView(
-                "No unread conversations",
-                systemImage: "envelope.open",
-                description: Text("You’re all caught up.")
+                filter.emptyTitle,
+                systemImage: filter.emptySymbol,
+                description: filter.emptyDescription.map(Text.init)
             )
         }
     }
@@ -717,7 +720,7 @@ private struct ThreadRow: View {
                     }
                 }
                 if previewLineCount > 0, let preview = summary.preview, !preview.isEmpty {
-                    Text(preview)
+                    Text("\(mediaGlyph)\(preview)")
                         .font(.footnote)
                         .foregroundStyle(.tertiary)
                         .lineLimit(previewLineCount)
@@ -726,6 +729,12 @@ private struct ThreadRow: View {
         }
         .padding(.vertical, 5)
         .contentShape(.rect)
+    }
+
+    private var mediaGlyph: Text {
+        if summary.media.contains(.video) { return Text("\(Image(systemName: "video.fill")) ") }
+        if summary.media.contains(.audio) { return Text("\(Image(systemName: "waveform")) ") }
+        return Text("")
     }
 
     /// Everyone in the thread except the account holder, in order — the faces the
@@ -798,5 +807,59 @@ private extension String {
             limit -= 1
         }
         return "\(prefix(1))…"
+    }
+}
+
+private enum InboxFilter: CaseIterable {
+    case all
+    case unread
+    case voice
+    case video
+
+    var title: String {
+        switch self {
+        case .all: "All Conversations"
+        case .unread: "Unread"
+        case .voice: "Voice Messages"
+        case .video: "Video Messages"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .all: "tray"
+        case .unread: "envelope.badge"
+        case .voice: "waveform"
+        case .video: "video"
+        }
+    }
+
+    func includes(_ summary: ThreadSummary) -> Bool {
+        switch self {
+        case .all: true
+        case .unread: summary.isUnread
+        case .voice: summary.media.contains(.audio)
+        case .video: summary.media.contains(.video)
+        }
+    }
+
+    var emptyTitle: String {
+        switch self {
+        case .all: ""
+        case .unread: "No unread conversations"
+        case .voice: "No voice messages"
+        case .video: "No video messages"
+        }
+    }
+
+    var emptySymbol: String {
+        switch self {
+        case .unread: "envelope.open"
+        default: symbol
+        }
+    }
+
+    var emptyDescription: String? {
+        self == .unread ? "You’re all caught up." : nil
     }
 }

@@ -56,6 +56,8 @@ struct MessageRow: Codable, FetchableRecord, PersistableRecord {
     /// Stored with the body (it comes from the same fetch) and read by the
     /// rethread, which threads invitations by their meeting's UID.
     var invite: Invite?
+    var transcript: String?
+    var media: Int
 
     init(_ message: Message, accountID: String, mailboxName: String) {
         self.id = message.id
@@ -79,7 +81,10 @@ struct MessageRow: Codable, FetchableRecord, PersistableRecord {
         self.sendState = message.sendState.rawValue
         self.reaction = message.reaction
         self.invite = message.invite
+        self.transcript = message.transcript
+        self.media = message.media.rawValue
         self.snippet = Self.preview(text: message.bodyText, invite: message.invite)
+            ?? message.transcript.flatMap(Self.preview(of:))
     }
 
     /// The stored preview for a fetched body: the text's glance, else the
@@ -97,7 +102,7 @@ struct MessageRow: Codable, FetchableRecord, PersistableRecord {
 
     /// The columns a fetched body owns. A synced envelope carries none of them, so
     /// a re-save of an already-cached message must leave them alone.
-    static let bodyColumns: Set<String> = ["bodyText", "hasHTML", "attachments", "snippet", "invite"]
+    static let bodyColumns: Set<String> = ["bodyText", "hasHTML", "attachments", "snippet", "invite", "transcript"]
 
     /// Every other column: what a sync refreshes on a row it already has. Read off
     /// the table itself rather than listed by hand, so a column added in a later
@@ -130,7 +135,9 @@ struct MessageRow: Codable, FetchableRecord, PersistableRecord {
             attachments: attachments,
             sendState: SendState(rawValue: sendState) ?? .sent,
             reaction: reaction,
-            invite: invite
+            invite: invite,
+            transcript: transcript,
+            media: MessageMedia(rawValue: media)
         )
     }
 }
@@ -171,9 +178,10 @@ private struct ThreadingProbe: Decodable, FetchableRecord {
     var snippet: String?
     /// Read for the meeting UID an invitation threads by; nil on ordinary mail.
     var invite: Invite?
+    var media: Int
 
     /// The columns to select, in one place so the SQL and the decoder can't drift.
-    static let columns = "id, uid, messageID, inReplyTo, referenceIDs, subject, fromAddress, fromName, toParticipants, ccParticipants, date, flags, hasHTML, threadID, sendState, reaction, snippet, invite"
+    static let columns = "id, uid, messageID, inReplyTo, referenceIDs, subject, fromAddress, fromName, toParticipants, ccParticipants, date, flags, hasHTML, threadID, sendState, reaction, snippet, invite, media"
 
     /// The domain message, with an empty body and no attachments. Enough to thread
     /// and to build a thread row, and never written back.
@@ -194,7 +202,8 @@ private struct ThreadingProbe: Decodable, FetchableRecord {
             attachments: [],
             sendState: SendState(rawValue: sendState) ?? .sent,
             reaction: reaction,
-            invite: invite
+            invite: invite,
+            media: MessageMedia(rawValue: media)
         )
     }
 }
@@ -219,6 +228,7 @@ struct ThreadRow: Codable, FetchableRecord, PersistableRecord {
     /// The id of the message a split-off conversation answers, shown above its
     /// own messages. That message belongs to another conversation.
     var contextMessageID: String?
+    var media: Int
 
     init(_ thread: Thread, accountID: String, snippet: String?) {
         self.id = thread.id
@@ -231,6 +241,7 @@ struct ThreadRow: Codable, FetchableRecord, PersistableRecord {
         self.participants = thread.participants
         self.snippet = snippet
         self.contextMessageID = thread.context?.id
+        self.media = thread.conversationMessages.reduce(MessageMedia()) { $0.union($1.media) }.rawValue
     }
 
     /// The id of the message the row's preview is drawn from: the newest chat
@@ -253,7 +264,8 @@ struct ThreadRow: Codable, FetchableRecord, PersistableRecord {
             isUnread: isUnread,
             isFlagged: isFlagged,
             messageCount: messageCount,
-            preview: snippet
+            preview: snippet,
+            media: MessageMedia(rawValue: media)
         )
     }
 }
@@ -360,7 +372,7 @@ enum SearchIndex {
             subject: row.subject,
             sender: senderText(name: row.fromName, address: row.fromAddress),
             participants: participantText(to: row.toParticipants, cc: row.ccParticipants),
-            body: row.bodyText,
+            body: bodyText(row.bodyText, invite: nil, transcript: row.transcript),
             in: db
         )
     }
@@ -383,6 +395,11 @@ enum SearchIndex {
             ]
         )
         if db.changesCount == 0 { try index(row, in: db) }
+    }
+
+    static func bodyText(_ body: String?, invite: Invite?, transcript: String?) -> String {
+        let text = (body?.isEmpty ?? true) ? (invite?.searchText ?? "") : (body ?? "")
+        return [text, transcript ?? ""].filter { !$0.isEmpty }.joined(separator: "\n")
     }
 
     /// Update the body text of an already-indexed message.
@@ -834,13 +851,34 @@ public final class MailStore: @unchecked Sendable {
             for (id, body) in bodiesByMessageID {
                 let attachmentsJSON = String(decoding: try encoder.encode(body.attachments), as: UTF8.self)
                 let inviteJSON = try body.invite.map { String(decoding: try encoder.encode($0), as: UTF8.self) }
-                try db.execute(
-                    sql: "UPDATE message SET bodyText = ?, hasHTML = ?, attachments = ?, snippet = ?, invite = ? WHERE accountID = ? AND id = ?",
-                    arguments: [body.text, body.hasHTML, attachmentsJSON, MessageRow.preview(text: body.text, invite: body.invite), inviteJSON, accountID, id]
+                let transcript = try String.fetchOne(
+                    db,
+                    sql: "SELECT transcript FROM message WHERE accountID = ? AND id = ?",
+                    arguments: [accountID, id]
                 )
-                let searchable = body.text.isEmpty ? (body.invite?.searchText ?? "") : body.text
+                let snippet = MessageRow.preview(text: body.text, invite: body.invite)
+                    ?? transcript.flatMap(MessageRow.preview(of:))
+                try db.execute(
+                    sql: "UPDATE message SET bodyText = ?, hasHTML = ?, attachments = ?, snippet = ?, invite = ?, media = media | ? WHERE accountID = ? AND id = ?",
+                    arguments: [body.text, body.hasHTML, attachmentsJSON, snippet, inviteJSON,
+                                MessageMedia(mimeTypes: body.attachments.map(\.mimeType)).rawValue, accountID, id]
+                )
+                let searchable = SearchIndex.bodyText(body.text, invite: body.invite, transcript: transcript)
                 try SearchIndex.indexBody(searchable, messageID: id, accountID: accountID, in: db)
             }
+        }
+    }
+
+    public func storeTranscript(_ transcript: String, messageID id: String, accountID: String) async throws {
+        try await database.write { db in
+            guard let row = try MessageRow.fetchOne(db, key: MessageRow.key(id: id, accountID: accountID)) else { return }
+            let snippet = row.snippet ?? MessageRow.preview(of: transcript)
+            try db.execute(
+                sql: "UPDATE message SET transcript = ?, snippet = ? WHERE accountID = ? AND id = ?",
+                arguments: [transcript, snippet, accountID, id]
+            )
+            let searchable = SearchIndex.bodyText(row.bodyText, invite: row.invite, transcript: transcript)
+            try SearchIndex.indexBody(searchable, messageID: id, accountID: accountID, in: db)
         }
     }
 
@@ -1569,6 +1607,19 @@ public final class MailStore: @unchecked Sendable {
             }
             try db.alter(table: "thread") { t in
                 t.add(column: "contextMessageID", .text)
+            }
+        }
+        migrator.registerMigration("v23-message-transcript") { db in
+            try db.alter(table: "message") { t in
+                t.add(column: "transcript", .text)
+            }
+        }
+        migrator.registerMigration("v24-media") { db in
+            try db.alter(table: "message") { t in
+                t.add(column: "media", .integer).notNull().defaults(to: 0)
+            }
+            try db.alter(table: "thread") { t in
+                t.add(column: "media", .integer).notNull().defaults(to: 0)
             }
         }
         return migrator

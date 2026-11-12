@@ -1,12 +1,5 @@
 // Author: David M. Anderson
 // Built with AI assistance (Claude, Anthropic)
-//
-// Recording a voice message to attach. The recorder wraps AVAudioRecorder and the
-// audio session, captures mono AAC into a temp .m4a (voice-grade, so the file
-// stays small for email), and reads it back into a ZirbeCore DraftAttachment that
-// joins the composer's staging tray like any other attachment. The sheet drives
-// it: tap to record, stop, then re-record or attach. Everything stays on device;
-// the memo only leaves when the message sends, over the same SMTP path as a photo.
 
 import SwiftUI
 import AVFoundation
@@ -19,27 +12,35 @@ final class VoiceRecorder {
         case idle
         case recording
         case recorded(TimeInterval)
-        /// Microphone access is off, so point the user at Settings.
         case denied
     }
 
+    enum Transcript: Equatable {
+        case pending
+        case done(String)
+        case unavailable
+    }
+
     private(set) var phase: Phase = .idle
-    /// Seconds elapsed in the current take, polled for the live timer.
     private(set) var elapsed: TimeInterval = 0
+    private(set) var transcript: Transcript = .pending
+    private(set) var playback = AudioPlayback()
 
     private var recorder: AVAudioRecorder?
     private var ticker: Task<Void, Never>?
+    private var transcribing: Task<Void, Never>?
     private var fileURL: URL?
 
-    /// The finished take as a sendable attachment, or nil if nothing usable was
-    /// captured. Named so it reads as a voice message in other mail clients too.
     func makeAttachment() -> DraftAttachment? {
         guard let fileURL, let data = try? Data(contentsOf: fileURL) else { return nil }
         return DraftAttachment(filename: "Voice Message.m4a", mimeType: "audio/mp4", data: data)
     }
 
-    /// Ask for the mic once if needed, then start, or fall to the denied state so
-    /// the sheet can offer Settings. Called when record is tapped from idle.
+    var finishedTranscript: String? {
+        guard case .done(let words) = transcript, !words.isEmpty else { return nil }
+        return words
+    }
+
     func start() {
         switch AVAudioApplication.shared.recordPermission {
         case .granted:
@@ -57,23 +58,34 @@ final class VoiceRecorder {
     }
 
     func stop() {
-        guard case .recording = phase else { return }
+        guard case .recording = phase, let fileURL else { return }
         let duration = recorder?.currentTime ?? elapsed
         recorder?.stop()
         stopTicker()
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         phase = .recorded(max(duration, 0))
+        if let data = try? Data(contentsOf: fileURL) { _ = playback.load(data) }
+        transcribing = Task { [weak self] in
+            let words = try? await Transcriber.transcribe(fileURL)
+            guard !Task.isCancelled, let self else { return }
+            self.transcript = words.map(Transcript.done) ?? .unavailable
+        }
     }
 
-    /// Discard the take and return to idle so the user can record again.
     func reset() {
+        let wasRecording = phase == .recording
         recorder?.stop()
         stopTicker()
+        transcribing?.cancel()
+        transcribing = nil
+        playback.stop()
+        playback = AudioPlayback()
         if let fileURL { try? FileManager.default.removeItem(at: fileURL) }
         recorder = nil
         fileURL = nil
         elapsed = 0
-        if case .recording = phase {
+        transcript = .pending
+        if wasRecording {
             try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         }
         phase = .idle
@@ -100,8 +112,6 @@ final class VoiceRecorder {
             self.phase = .recording
             startTicker()
         } catch {
-            // A session or recorder failure is, for the user, the same dead end as
-            // no microphone: nothing to record into.
             phase = .denied
         }
     }
@@ -120,141 +130,139 @@ final class VoiceRecorder {
         ticker?.cancel()
         ticker = nil
     }
-}
 
-/// The recording sheet, presented from the composer's attach menu. It walks the
-/// three states (idle, recording, recorded) and hands a finished take back to the
-/// composer, which stages it as a chip. A denied microphone routes to Settings.
-struct VoiceRecorderSheet: View {
-    /// Stage the finished recording in the composer's tray.
-    let onAttach: (DraftAttachment) -> Void
-
-    @State private var recorder = VoiceRecorder()
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        NavigationStack {
-            VStack {
-                Spacer()
-                content
-                Spacer()
-            }
-            .frame(maxWidth: .infinity)
-            .padding(24)
-            .background(Color.zirbeCanvas.ignoresSafeArea())
-            .navigationTitle("Voice Message")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { recorder.reset(); dismiss() }
-                }
-            }
-            .interactiveDismissDisabled(recorder.phase == .recording)
-        }
-        .presentationDetents([.height(300)])
-    }
-
-    @ViewBuilder
-    private var content: some View {
-        switch recorder.phase {
-        case .idle:
-            recordControl(label: "Tap to record") {
-                Image(systemName: "mic.fill")
-                    .font(.system(size: 30))
-                    .foregroundStyle(.white)
-            } action: { recorder.start() }
-
-        case .recording:
-            VStack(spacing: 20) {
-                Text(Self.clock(recorder.elapsed))
-                    .font(.system(size: 40, weight: .light, design: .rounded))
-                    .monospacedDigit()
-                    .foregroundStyle(Color.accentColor)
-                Button(action: recorder.stop) {
-                    ZStack {
-                        Circle().fill(.red).frame(width: 76, height: 76)
-                        RoundedRectangle(cornerRadius: 6).fill(.white).frame(width: 26, height: 26)
-                    }
-                }
-                .buttonStyle(.plain)
-                Text("Recording… tap to stop")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-            }
-
-        case .recorded(let duration):
-            VStack(spacing: 24) {
-                Label(Self.clock(duration), systemImage: "waveform")
-                    .font(.title3.weight(.medium))
-                    .foregroundStyle(Color.accentColor)
-                HStack(spacing: 14) {
-                    Button { recorder.reset() } label: {
-                        Label("Re-record", systemImage: "arrow.counterclockwise")
-                            .font(.headline)
-                            .foregroundStyle(.secondary)
-                            .padding(.vertical, 12)
-                            .padding(.horizontal, 18)
-                            .background(Color(.tertiarySystemFill), in: Capsule())
-                    }
-                    .buttonStyle(.plain)
-                    Button(action: attach) {
-                        Label("Attach", systemImage: "arrow.up.circle.fill")
-                            .font(.headline)
-                            .foregroundStyle(.white)
-                            .padding(.vertical, 12)
-                            .padding(.horizontal, 22)
-                            .background(Color.accentColor, in: Capsule())
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-
-        case .denied:
-            VStack(spacing: 16) {
-                Image(systemName: "mic.slash")
-                    .font(.system(size: 34))
-                    .foregroundStyle(.secondary)
-                Text("Microphone access is off for Zirbe. Turn it on in Settings to record a voice message.")
-                    .font(.callout)
-                    .multilineTextAlignment(.center)
-                    .foregroundStyle(.secondary)
-                Button("Open Settings") {
-                    if let url = URL(string: UIApplication.openSettingsURLString) {
-                        UIApplication.shared.open(url)
-                    }
-                }
-            }
-        }
-    }
-
-    /// The large circular record button shared by the idle state, with a caption.
-    private func recordControl<Glyph: View>(
-        label: String,
-        @ViewBuilder glyph: () -> Glyph,
-        action: @escaping () -> Void
-    ) -> some View {
-        VStack(spacing: 18) {
-            Button(action: action) {
-                ZStack {
-                    Circle().fill(.red).frame(width: 84, height: 84)
-                    glyph()
-                }
-            }
-            .buttonStyle(.plain)
-            Text(label)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-        }
-    }
-
-    private func attach() {
-        if let draft = recorder.makeAttachment() { onAttach(draft) }
-        dismiss()
-    }
-
-    /// Seconds as m:ss for the timer and the finished-take duration.
     static func clock(_ seconds: TimeInterval) -> String {
         let total = Int(seconds.rounded())
         return String(format: "%d:%02d", total / 60, total % 60)
+    }
+}
+
+struct VoiceStrip: View {
+    let recorder: VoiceRecorder
+    let canSend: Bool
+    let onSend: () -> Void
+
+    var body: some View {
+        Group {
+            switch recorder.phase {
+            case .idle:
+                EmptyView()
+            case .recording:
+                recording
+            case .recorded:
+                review
+            case .denied:
+                denied
+            }
+        }
+        .sensoryFeedback(trigger: recorder.phase) { old, new in
+            if new == .recording { return .start }
+            if old == .recording { return .stop }
+            return nil
+        }
+    }
+
+    private var recording: some View {
+        HStack(spacing: 12) {
+            discardButton
+            Circle().fill(.red).frame(width: 10, height: 10)
+            Text(VoiceRecorder.clock(recorder.elapsed))
+                .font(.body.monospacedDigit())
+            Spacer()
+            Button(action: recorder.stop) {
+                ZStack {
+                    Circle().fill(.red).frame(width: 30, height: 30)
+                    RoundedRectangle(cornerRadius: 3).fill(.white).frame(width: 11, height: 11)
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Stop recording")
+        }
+        .padding(.horizontal, 4)
+        .frame(minHeight: 36)
+    }
+
+    private var review: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            transcriptLine
+            HStack(spacing: 12) {
+                discardButton
+                Button(action: recorder.playback.toggle) {
+                    Image(systemName: recorder.playback.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 14, weight: .semibold))
+                        .frame(width: 30, height: 30)
+                        .background(Color.accentColor.opacity(0.15), in: Circle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.accentColor)
+                .accessibilityLabel(recorder.playback.isPlaying ? "Pause" : "Play")
+                AudioProgressTrack(progress: recorder.playback.progress, tint: .accentColor)
+                Text(VoiceRecorder.clock(shownTime))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                Button(action: onSend) {
+                    Image(systemName: "arrow.up.circle.fill")
+                        .font(.system(size: 30))
+                }
+                .disabled(!canSend)
+                .accessibilityLabel("Send voice message")
+            }
+        }
+        .padding(.horizontal, 4)
+    }
+
+    @ViewBuilder
+    private var transcriptLine: some View {
+        switch recorder.transcript {
+        case .pending:
+            Text("Transcribing…")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        case .done(let words) where !words.isEmpty:
+            Text(words)
+                .font(.footnote)
+                .lineLimit(4)
+        case .done, .unavailable:
+            EmptyView()
+        }
+    }
+
+    private var denied: some View {
+        HStack(spacing: 10) {
+            Image(systemName: "mic.slash")
+                .foregroundStyle(.secondary)
+            Text("Microphone access is off for Zirbe.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Button("Settings") {
+                if let url = URL(string: UIApplication.openSettingsURLString) {
+                    UIApplication.shared.open(url)
+                }
+            }
+            .font(.footnote)
+            discardButton
+        }
+        .padding(.horizontal, 4)
+        .frame(minHeight: 36)
+    }
+
+    private var discardButton: some View {
+        Button(action: recorder.reset) {
+            Image(systemName: "trash")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 34, height: 34)
+                .background(Color(.secondarySystemFill), in: Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Discard voice message")
+    }
+
+    private var shownTime: TimeInterval {
+        let playback = recorder.playback
+        if playback.isPlaying || playback.currentTime > 0 { return playback.currentTime }
+        if case .recorded(let duration) = recorder.phase { return duration }
+        return 0
     }
 }

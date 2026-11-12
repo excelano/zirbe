@@ -11,7 +11,9 @@ not by a policy that depends on the developer behaving well.
 
 Zirbe talks to the IMAP server and the SMTP server you sign in to and, when you
 sign in with Microsoft, to Microsoft's sign-in service. Nothing
-else. There is no Zirbe server, no account to create with us, no
+else of its own; the one other download is Apple's speech model, which iOS fetches
+from Apple the first time Zirbe transcribes a voice or video message, carrying
+nothing of yours. There is no Zirbe server, no account to create with us, no
 analytics, no telemetry, and no third-party SDK. Your mail and your credentials
 stay on your device. Zirbe's App Privacy declaration is "Data Not Collected,"
 because the developer collects nothing.
@@ -58,6 +60,12 @@ after about an hour. To do that, Zirbe contacts Microsoft's token service
 (`login.microsoftonline.com`), sending only Zirbe's public client identifier and the tokens. An account that
 signs in with a password never contacts a sign-in service.
 
+**Apple's speech model, once per language.** Voice and video messages are
+transcribed on your device with Apple's Speech framework. The first time Zirbe
+transcribes, iOS downloads Apple's speech model for your language from Apple, as it
+does for any app that uses on-device transcription. That download carries none of
+your audio, text, or mail; the transcription itself never leaves the device.
+
 **Nothing else.** Zirbe makes no other network request. There is no analytics
 service, no crash reporter, no telemetry, no usage logging that leaves the device,
 and no third-party SDK that would do any of those things. The project imports none
@@ -88,6 +96,19 @@ sender's photo as an avatar, and to suggest matching people as you type a recipi
 The lookup happens entirely on your device, the address book is never transmitted,
 and denying access simply means no avatars and no suggestions. You can still type any
 address by hand.
+
+## Voice and video messages
+
+A voice or video message you record stays on your device until you send it, and
+then travels like any attachment, over your own SMTP server. Before it goes, Zirbe
+transcribes it on the device and puts the transcript in the message's body, so
+people reading it in any mail client can read what was said. You see the transcript
+before you send: under the recording for a voice message, and in the text field,
+where you can change or delete it, for a video.
+
+Voice and video messages you receive are transcribed on your device too, when the
+message carries no text of its own. Those transcripts are kept in the local message
+database so search can find them, and are never sent anywhere.
 
 ## Notifications
 

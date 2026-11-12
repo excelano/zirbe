@@ -104,6 +104,7 @@ public struct MailEnvelope: Sendable, Hashable, Identifiable {
     /// (including reactions from clients that don't set the header). Read off the
     /// full header block the fetch already pulls, so it needs no extra round trip.
     public var reaction: String?
+    public var partTypes: [String]
 
     /// Stable identity for SwiftUI lists: the UID when present, else the
     /// Message-ID, else the sequence number.
@@ -125,7 +126,8 @@ public struct MailEnvelope: Sendable, Hashable, Identifiable {
         inReplyTo: String? = nil,
         references: [String] = [],
         flags: [String] = [],
-        reaction: String? = nil
+        reaction: String? = nil,
+        partTypes: [String] = []
     ) {
         self.sequenceNumber = sequenceNumber
         self.uid = uid
@@ -139,5 +141,6 @@ public struct MailEnvelope: Sendable, Hashable, Identifiable {
         self.references = references
         self.flags = flags
         self.reaction = reaction
+        self.partTypes = partTypes
     }
 }

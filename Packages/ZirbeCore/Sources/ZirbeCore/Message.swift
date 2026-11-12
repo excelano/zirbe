@@ -65,6 +65,8 @@ public struct Message: Sendable, Hashable, Identifiable {
     /// `text/calendar` part when the body was fetched. Nil for ordinary mail
     /// and until the body arrives.
     public var invite: Invite?
+    public var transcript: String?
+    public var media: MessageMedia
 
     public init(
         messageID: String? = nil,
@@ -82,7 +84,9 @@ public struct Message: Sendable, Hashable, Identifiable {
         attachments: [MessageAttachment] = [],
         sendState: SendState = .sent,
         reaction: String? = nil,
-        invite: Invite? = nil
+        invite: Invite? = nil,
+        transcript: String? = nil,
+        media: MessageMedia? = nil
     ) {
         self.messageID = messageID
         self.uid = uid
@@ -100,6 +104,8 @@ public struct Message: Sendable, Hashable, Identifiable {
         self.sendState = sendState
         self.reaction = reaction
         self.invite = invite
+        self.transcript = transcript
+        self.media = media ?? MessageMedia(mimeTypes: attachments.map(\.mimeType))
     }
 
     /// Whether this message answers a meeting invitation (an attendee's accept,

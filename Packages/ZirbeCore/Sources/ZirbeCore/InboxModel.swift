@@ -839,6 +839,10 @@ public final class InboxModel {
         return data
     }
 
+    public func storeTranscript(_ transcript: String, messageID: String) async {
+        try? await store.storeTranscript(transcript, messageID: messageID, accountID: account.id)
+    }
+
     /// Forward one message to fresh recipients. Refetches each of the message's
     /// attachments into bytes over the warm session so the forward carries the
     /// files (not just their names), then sends a new conversation under a `Fwd:`
