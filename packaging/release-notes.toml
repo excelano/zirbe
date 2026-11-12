@@ -2,12 +2,12 @@
 # against the release being cut, so notes left from last time stop the release
 # rather than reaching the listing.
 
-version = "1.7.1"
+version = "1.7.2"
 
 [locales."en-us"]
 whats-new = """
-A small internal cleanup to how videos are prepared for sending. Nothing \
-changes in how Zirbe works.
+Another small internal cleanup to how videos are prepared for sending. \
+Nothing changes in how Zirbe works.
 
 This builds on 1.7.0, which made voice and video messages a way to write an \
 email: record from the message bar, and Zirbe transcribes it on your device so \
