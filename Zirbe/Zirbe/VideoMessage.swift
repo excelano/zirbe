@@ -23,7 +23,7 @@ nonisolated enum VideoExport {
         AVAssetExportPresetLowQuality,
     ]
 
-    static func compressed(_ source: URL) async throws -> URL {
+    @concurrent static func compressed(_ source: URL) async throws -> URL {
         let asset = AVURLAsset(url: source)
         for preset in presets {
             guard let session = AVAssetExportSession(asset: asset, presetName: preset) else { continue }
