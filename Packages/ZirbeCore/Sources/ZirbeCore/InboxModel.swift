@@ -840,7 +840,11 @@ public final class InboxModel {
     }
 
     public func storeTranscript(_ transcript: String, messageID: String) async {
-        try? await store.storeTranscript(transcript, messageID: messageID, accountID: account.id)
+        try? await exclusively {
+            guard try await store.storeTranscript(transcript, messageID: messageID, accountID: account.id) else { return }
+            try await store.rethread(accountID: account.id)
+            try await reloadList()
+        }
     }
 
     /// Forward one message to fresh recipients. Refetches each of the message's

@@ -886,9 +886,10 @@ public final class MailStore: @unchecked Sendable {
         }
     }
 
-    public func storeTranscript(_ transcript: String, messageID id: String, accountID: String) async throws {
+    @discardableResult
+    public func storeTranscript(_ transcript: String, messageID id: String, accountID: String) async throws -> Bool {
         try await database.write { db in
-            guard let row = try MessageRow.fetchOne(db, key: MessageRow.key(id: id, accountID: accountID)) else { return }
+            guard let row = try MessageRow.fetchOne(db, key: MessageRow.key(id: id, accountID: accountID)) else { return false }
             let snippet = row.snippet ?? MessageRow.preview(of: transcript)
             try db.execute(
                 sql: "UPDATE message SET transcript = ?, snippet = ? WHERE accountID = ? AND id = ?",
@@ -896,6 +897,7 @@ public final class MailStore: @unchecked Sendable {
             )
             let searchable = SearchIndex.bodyText(row.bodyText, invite: row.invite, transcript: transcript)
             try SearchIndex.indexBody(searchable, messageID: id, accountID: accountID, in: db)
+            return snippet != row.snippet
         }
     }
 

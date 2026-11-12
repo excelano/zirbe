@@ -794,4 +794,15 @@ final class InboxModelTests: XCTestCase {
         let watching = await server.isWatching
         XCTAssertFalse(watching)
     }
+
+    func testATranscriptShowsInTheInboxRowOfAMessageWithNoText() async throws {
+        await server.add(incoming("Voice", id: "<v@x>"), body: MessageBody(text: "", hasHTML: false))
+        try await model.signIn(password: "pw")
+        let thread = try await openFirstConversation()
+        let message = try XCTUnwrap(thread.messages.first)
+
+        await model.storeTranscript("Running ten minutes late", messageID: message.id)
+
+        XCTAssertEqual(try summary("Voice").preview, "Running ten minutes late")
+    }
 }
