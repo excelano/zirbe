@@ -36,6 +36,11 @@ final class VoiceRecorder {
         return DraftAttachment(filename: "Voice Message.m4a", mimeType: "audio/mp4", data: data)
     }
 
+    var isTranscribing: Bool {
+        if case .recorded = phase { return transcript == .pending }
+        return false
+    }
+
     var finishedTranscript: String? {
         guard case .done(let words) = transcript, !words.isEmpty else { return nil }
         return words

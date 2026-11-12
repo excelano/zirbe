@@ -943,7 +943,7 @@ struct ReplyBar: View {
                     trailingButton
                 }
             } else {
-                VoiceStrip(recorder: recorder, canSend: canSend && !isSending, onSend: sendVoice)
+                VoiceStrip(recorder: recorder, canSend: canSend && !isSending && !recorder.isTranscribing, onSend: sendVoice)
             }
         }
         .padding(.horizontal)
