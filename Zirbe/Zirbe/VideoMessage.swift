@@ -8,7 +8,7 @@ import UniformTypeIdentifiers
 import UIKit
 import ZirbeCore
 
-enum VideoExport {
+nonisolated enum VideoExport {
     static let byteBudget: Int64 = 14_000_000
 
     enum Failure: Error {
