@@ -142,24 +142,23 @@ struct InlineAttachmentVideo: View {
     @State private var fileURL: URL?
     @State private var failed = false
     @State private var previewURL: URL?
-    @State private var heard: String?
-    @State private var isTranscribing = false
 
     var body: some View {
         if failed {
             AttachmentChip(model: model, messageID: messageID, attachment: attachment, isOwn: isOwn)
         } else {
-            VStack(alignment: .leading, spacing: 6) {
+            TranscribedAttachment(
+                model: model,
+                messageID: messageID,
+                attachment: attachment,
+                isOwn: isOwn,
+                transcript: transcript,
+                transcribes: transcribes,
+                waitingColor: isOwn ? Color.white.opacity(0.85) : .secondary
+            ) {
                 frame
-                transcriptText
             }
             .task { await load() }
-            .task {
-                guard transcribes, transcript == nil else { return }
-                isTranscribing = true
-                heard = await TranscriptionQueue.transcribe(attachment, of: messageID, in: model)
-                isTranscribing = false
-            }
             .quickLook($previewURL)
         }
     }
@@ -196,19 +195,6 @@ struct InlineAttachmentVideo: View {
                 .fill(isOwn ? AnyShapeStyle(Color.white.opacity(0.18)) : AnyShapeStyle(Color(.tertiarySystemFill)))
                 .frame(width: 180, height: 130)
                 .overlay { ProgressView() }
-        }
-    }
-
-    @ViewBuilder
-    private var transcriptText: some View {
-        if let words = transcript ?? heard, !words.isEmpty {
-            Text(words)
-                .foregroundStyle(isOwn ? .white : .primary)
-                .fixedSize(horizontal: false, vertical: true)
-        } else if isTranscribing {
-            Text("Transcribing…")
-                .font(.caption)
-                .foregroundStyle(isOwn ? Color.white.opacity(0.85) : .secondary)
         }
     }
 

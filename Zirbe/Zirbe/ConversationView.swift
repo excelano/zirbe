@@ -1535,11 +1535,11 @@ private struct MessageBubble: View {
         message.attachments.filter { $0.mimeType.lowercased().hasPrefix("audio/") }
     }
 
-    /// Everything else, rendered as a tappable chip.
     private var videoAttachments: [MessageAttachment] {
         message.attachments.filter { $0.mimeType.lowercased().hasPrefix("video/") }
     }
 
+    /// Everything else, rendered as a tappable chip.
     private var fileAttachments: [MessageAttachment] {
         message.attachments.filter {
             let type = $0.mimeType.lowercased()

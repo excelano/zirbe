@@ -114,8 +114,6 @@ struct InlineAttachmentAudio: View {
 
     @State private var playback = AudioPlayback()
     @State private var isLoading = false
-    @State private var heard: String?
-    @State private var isTranscribing = false
     /// Set once the bytes can't be loaded, switching to the chip fallback.
     @State private var failed = false
 
@@ -127,15 +125,16 @@ struct InlineAttachmentAudio: View {
         if failed {
             AttachmentChip(model: model, messageID: messageID, attachment: attachment, isOwn: isOwn)
         } else {
-            VStack(alignment: .leading, spacing: 6) {
+            TranscribedAttachment(
+                model: model,
+                messageID: messageID,
+                attachment: attachment,
+                isOwn: isOwn,
+                transcript: transcript,
+                transcribes: transcribes,
+                waitingColor: tint.opacity(0.85)
+            ) {
                 player
-                transcriptText
-            }
-            .task {
-                guard transcribes, transcript == nil else { return }
-                isTranscribing = true
-                heard = await TranscriptionQueue.transcribe(attachment, of: messageID, in: model)
-                isTranscribing = false
             }
         }
     }
@@ -157,19 +156,6 @@ struct InlineAttachmentAudio: View {
         .accessibilityLabel("Voice message")
         .accessibilityValue(playback.isLoaded ? VoiceRecorder.clock(playback.duration) : "")
         .accessibilityAddTraits(.isButton)
-    }
-
-    @ViewBuilder
-    private var transcriptText: some View {
-        if let words = transcript ?? heard, !words.isEmpty {
-            Text(words)
-                .foregroundStyle(isOwn ? .white : .primary)
-                .fixedSize(horizontal: false, vertical: true)
-        } else if isTranscribing {
-            Text("Transcribing…")
-                .font(.caption)
-                .foregroundStyle(tint.opacity(0.85))
-        }
     }
 
     private var playButton: some View {
