@@ -79,6 +79,8 @@ enum TranscriptionQueue {
         }
         tasks[messageID] = work
         tail = Task { _ = await work.value }
-        return await work.value
+        let words = await work.value
+        if words == nil, tasks[messageID] == work { tasks[messageID] = nil }
+        return words
     }
 }
