@@ -41,6 +41,14 @@ final class VoiceRecorder {
         return false
     }
 
+    isolated deinit {
+        recorder?.stop()
+        if phase == .recording {
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
+        if let fileURL { try? FileManager.default.removeItem(at: fileURL) }
+    }
+
     var finishedTranscript: String? {
         guard case .done(let words) = transcript, !words.isEmpty else { return nil }
         return words
