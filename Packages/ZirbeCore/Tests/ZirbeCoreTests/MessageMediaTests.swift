@@ -1,6 +1,7 @@
 // Author: David M. Anderson
 // Built with AI assistance (Claude, Anthropic)
 
+import GRDB
 import XCTest
 @testable import ZirbeCore
 import ZirbeMail
@@ -67,6 +68,46 @@ final class MessageMediaTests: XCTestCase {
 
         let summary = try await store.threadSummaries(accountID: acct.id, mailboxName: "INBOX").first
         XCTAssertEqual(summary?.media, .audio)
+    }
+
+    func testAHeaderResaveKeepsTheMediaItsBodyFound() async throws {
+        let (store, acct) = try await store()
+        let older = Message(envelope(uid: 1, subject: "Voice", partTypes: []))
+        try await store.save([older], accountID: acct.id, mailboxName: "INBOX")
+        let voice = MessageAttachment(filename: "Voice Message.m4a", mimeType: "audio/mp4", partID: "2")
+        try await store.storeBodies([older.id: (text: "", hasHTML: false, attachments: [voice])], accountID: acct.id)
+        try await store.save([older], accountID: acct.id, mailboxName: "INBOX")
+        try await store.rethread(accountID: acct.id)
+
+        let summary = try await store.threadSummaries(accountID: acct.id, mailboxName: "INBOX").first
+        XCTAssertEqual(summary?.media, .audio)
+    }
+
+    func testUpgradingReadsTheMediaOfBodiesAlreadyCached() throws {
+        let dbQueue = try DatabaseQueue()
+        try MailStore.migrator.migrate(dbQueue, upTo: "v24-media")
+        let voice = MessageAttachment(filename: "Voice Message.m4a", mimeType: "audio/mp4", partID: "2")
+        let attachments = String(decoding: try JSONEncoder().encode([voice]), as: UTF8.self)
+        try dbQueue.write { db in
+            for (id, json) in [("<a@x>", attachments), ("<b@x>", "[]")] {
+                try db.execute(
+                    sql: """
+                        INSERT INTO message
+                            (id, accountID, mailboxName, referenceIDs, toParticipants, ccParticipants,
+                             flags, bodyText, hasHTML, attachments, sendState)
+                        VALUES (?, 'acct', 'INBOX', '[]', '[]', '[]', '[]', '', 0, ?, 'sent')
+                        """,
+                    arguments: [id, json]
+                )
+            }
+        }
+
+        try MailStore.migrator.migrate(dbQueue)
+
+        try dbQueue.read { db in
+            XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT media FROM message WHERE id = '<a@x>'"), MessageMedia.audio.rawValue)
+            XCTAssertEqual(try Int.fetchOne(db, sql: "SELECT media FROM message WHERE id = '<b@x>'"), 0)
+        }
     }
 
     func testALocalSentCopyCarriesTheMediaOfWhatWasAttached() {

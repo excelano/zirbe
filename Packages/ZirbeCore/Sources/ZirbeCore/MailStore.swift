@@ -111,7 +111,14 @@ struct MessageRow: Codable, FetchableRecord, PersistableRecord {
     static func headerColumns(in db: Database) throws -> [String] {
         try db.columns(in: databaseTableName)
             .map(\.name)
-            .filter { $0 != "id" && $0 != "accountID" && !bodyColumns.contains($0) }
+            .filter { $0 != "id" && $0 != "accountID" && $0 != "media" && !bodyColumns.contains($0) }
+    }
+
+    static func mergeMedia(_ media: Int, id: String, accountID: String, in db: Database) throws {
+        try db.execute(
+            sql: "UPDATE message SET media = media | ? WHERE accountID = ? AND id = ?",
+            arguments: [media, accountID, id]
+        )
     }
 
     static func key(id: String, accountID: String) -> [String: (any DatabaseValueConvertible)?] {
@@ -568,6 +575,7 @@ public final class MailStore: @unchecked Sendable {
                 // every conversation already opened only to hand it back unchanged.
                 if row.bodyText == nil, try MessageRow.exists(db, key: MessageRow.key(id: row.id, accountID: accountID)) {
                     try row.update(db, columns: headerColumns)
+                    try MessageRow.mergeMedia(row.media, id: row.id, accountID: accountID, in: db)
                     try SearchIndex.indexHeaders(row, in: db)
                 } else {
                     try row.save(db)
@@ -848,20 +856,29 @@ public final class MailStore: @unchecked Sendable {
         guard !bodiesByMessageID.isEmpty else { return }
         let encoder = JSONEncoder()
         try await database.write { db in
+            let ids = Array(bodiesByMessageID.keys)
+            var transcripts: [String: String] = [:]
+            for row in try Row.fetchAll(
+                db,
+                MessageRow
+                    .select(Column("id"), Column("transcript"))
+                    .filter(Column("accountID") == accountID && ids.contains(Column("id")) && Column("transcript") != nil)
+            ) {
+                transcripts[row["id"]] = row["transcript"]
+            }
             for (id, body) in bodiesByMessageID {
                 let attachmentsJSON = String(decoding: try encoder.encode(body.attachments), as: UTF8.self)
                 let inviteJSON = try body.invite.map { String(decoding: try encoder.encode($0), as: UTF8.self) }
-                let transcript = try String.fetchOne(
-                    db,
-                    sql: "SELECT transcript FROM message WHERE accountID = ? AND id = ?",
-                    arguments: [accountID, id]
-                )
+                let transcript = transcripts[id]
                 let snippet = MessageRow.preview(text: body.text, invite: body.invite)
                     ?? transcript.flatMap(MessageRow.preview(of:))
                 try db.execute(
-                    sql: "UPDATE message SET bodyText = ?, hasHTML = ?, attachments = ?, snippet = ?, invite = ?, media = media | ? WHERE accountID = ? AND id = ?",
-                    arguments: [body.text, body.hasHTML, attachmentsJSON, snippet, inviteJSON,
-                                MessageMedia(mimeTypes: body.attachments.map(\.mimeType)).rawValue, accountID, id]
+                    sql: "UPDATE message SET bodyText = ?, hasHTML = ?, attachments = ?, snippet = ?, invite = ? WHERE accountID = ? AND id = ?",
+                    arguments: [body.text, body.hasHTML, attachmentsJSON, snippet, inviteJSON, accountID, id]
+                )
+                try MessageRow.mergeMedia(
+                    MessageMedia(mimeTypes: body.attachments.map(\.mimeType)).rawValue,
+                    id: id, accountID: accountID, in: db
                 )
                 let searchable = SearchIndex.bodyText(body.text, invite: body.invite, transcript: transcript)
                 try SearchIndex.indexBody(searchable, messageID: id, accountID: accountID, in: db)
@@ -1620,6 +1637,20 @@ public final class MailStore: @unchecked Sendable {
             }
             try db.alter(table: "thread") { t in
                 t.add(column: "media", .integer).notNull().defaults(to: 0)
+            }
+        }
+        migrator.registerMigration("v25-media-backfill") { db in
+            let decoder = JSONDecoder()
+            let cached = try Row.fetchAll(
+                db,
+                sql: "SELECT accountID, id, attachments FROM message WHERE attachments IS NOT NULL AND attachments != '[]'"
+            )
+            for row in cached {
+                guard let json: String = row["attachments"],
+                      let attachments = try? decoder.decode([MessageAttachment].self, from: Data(json.utf8)) else { continue }
+                let media = MessageMedia(mimeTypes: attachments.map(\.mimeType)).rawValue
+                guard media != 0 else { continue }
+                try MessageRow.mergeMedia(media, id: row["id"], accountID: row["accountID"], in: db)
             }
         }
         return migrator
