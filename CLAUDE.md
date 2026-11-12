@@ -41,7 +41,9 @@ boundary rule below.
 
 No backend, no third-party SDK, no telemetry. The only network destinations are
 the user's own IMAP and SMTP servers and, for a Microsoft or Google account, that
-provider's OAuth endpoints (`OAuth.swift`, our own code, no vendor SDK).
+provider's OAuth endpoints (`OAuth.swift`, our own code, no vendor SDK). The one
+other download is Apple's on-device speech model, which iOS fetches from Apple
+for transcription (`Transcriber.swift`).
 Credentials and tokens are device-bound in the Keychain and never iCloud-synced.
 Remote images in HTML mail are blocked by default. Bcc is transport-only (it
 reaches the SMTP envelope, never a stored header). Introducing any server,
