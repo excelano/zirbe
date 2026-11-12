@@ -2,27 +2,19 @@
 # against the release being cut, so notes left from last time stop the release
 # rather than reaching the listing.
 
-version = "1.7.0"
+version = "1.7.1"
 
 [locales."en-us"]
 whats-new = """
-Voice and video messages are a way to write an email. When the message field \
-is empty, its send button is a microphone: tap it to record, tap again to \
-stop, listen back, and send. The camera button beside the paperclip records a \
-video, and the photo library offers videos too, made small enough to send by \
-email.
+Preparing a video to send no longer runs on the part of the app that draws the \
+screen, so Zirbe stays responsive while a video is made small enough for email.
 
-Zirbe transcribes what you recorded on your iPhone or iPad and puts the text \
-in the message, so whoever reads it, in any mail app, can read what you said. \
-Voice and video messages you receive without any text are transcribed the \
-same way, shown under the recording, and found by search.
+This builds on 1.7.0, which made voice and video messages a way to write an \
+email: record from the message bar, and Zirbe transcribes it on your device so \
+anyone can read what you said. The inbox filter shows conversations with voice \
+or video messages.
 
-The filter at the bottom of the inbox now shows unread conversations, \
-conversations with voice messages, or conversations with videos.
-
-Transcription happens on your device. The first time, iOS downloads Apple's \
-speech model for your language; none of your audio, text or mail goes with \
-it. As always, Zirbe talks only to your own mail servers and, when you sign \
-in with Microsoft, Microsoft's sign-in service. No backend, no analytics, no \
+As always, Zirbe talks only to your own mail servers and, when you sign in \
+with Microsoft, Microsoft's sign-in service. No backend, no analytics, no \
 third-party SDKs.
 """
