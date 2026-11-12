@@ -59,9 +59,8 @@ written as an API spec. Transport stays here; content parsing stays there.
 - Swift files authored with AI assistance carry a two-line header:
   `// Author: David M. Anderson` / `// Built with AI assistance (Claude, Anthropic)`.
 - SourceKit "No such module" warnings in the editor are reindex noise; the real
-  check is `scripts/check.sh`, which runs both packages' tests with coverage and
-  builds the app scheme (`--skip-app` for tests only, `--files` for per-file
-  coverage).
+  check is `xcremote test Packages/ZirbeCore`, `xcremote test Packages/ZirbeMail`
+  and `xcremote build`, run from this box against the Mac's simulator.
 - The app icons (light, dark, tinted) are drawn in `Zirbe/Icon/AppIcon.svg`,
   `AppIcon-dark.svg` and `AppIcon-tinted.svg`; change one there and render it into
   `Zirbe/Zirbe/Assets.xcassets/AppIcon.appiconset/` with
