@@ -114,6 +114,7 @@ public enum DemoData {
         seen: Bool = true,
         inReplyTo: String? = nil,
         references: [String] = [],
+        attachments: [MessageAttachment] = [],
         uid: UInt32
     ) -> Message {
         Message(
@@ -126,7 +127,8 @@ public enum DemoData {
             to: to,
             date: ago(minutesAgo),
             flags: seen ? [.seen] : [],
-            bodyText: body
+            bodyText: body,
+            attachments: attachments
         )
     }
 
@@ -141,8 +143,9 @@ public enum DemoData {
                 body: "Okay, I booked the cabin for the 18th–20th! Two bedrooms, sleeps six, and there's a hot tub on the deck.",
                 minutesAgo: 46, seen: false, uid: 101),
             msg("cabin-2", from: daniel, to: [me, priya], subject: "Re: \(cabin)",
-                body: "Incredible. I'll bring the kayaks and the good coffee.",
-                minutesAgo: 33, seen: false, inReplyTo: "cabin-1", references: ["cabin-1"], uid: 102),
+                body: "Okay, this is incredible. I'll bring the kayaks and the good coffee, and I can drive if anyone wants a ride up.",
+                minutesAgo: 33, seen: false, inReplyTo: "cabin-1", references: ["cabin-1"],
+                attachments: [MessageAttachment(filename: "Voice Message.m4a", mimeType: "audio/mp4", partID: "2")], uid: 102),
             msg("cabin-3", from: me, to: [priya, daniel], subject: "Re: \(cabin)",
                 body: "I've got Friday dinner covered. Anyone allergic to anything I should plan around?",
                 minutesAgo: 21, inReplyTo: "cabin-2", references: ["cabin-1", "cabin-2"], uid: 103),

@@ -22,4 +22,13 @@ final class DemoDataTests: XCTestCase {
         XCTAssertEqual(thread.conversationMessages.count, 1, "the update replaces the invite; the answer is a line")
         XCTAssertEqual(thread.inviteResponses.map(\.text), ["Daniel Okafor accepted"])
     }
+
+    func testTheCabinConversationCarriesAVoiceMessage() async throws {
+        let store = try MailStore()
+        try await DemoData.seed(into: store)
+
+        let summaries = try await store.threadSummaries(accountID: DemoData.account.id)
+        let cabin = try XCTUnwrap(summaries.first { $0.subject == "Cabin weekend" })
+        XCTAssertEqual(cabin.media, .audio)
+    }
 }
