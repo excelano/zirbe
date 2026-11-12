@@ -2,10 +2,20 @@
 # against the release being cut, so notes left from last time stop the release
 # rather than reaching the listing.
 
-version = "1.5.4"
+version = "1.6.0"
 
 [locales."en-us"]
 whats-new = """
+A private reply now opens its own conversation. When someone answers a \
+message you sent to many people by Bcc, or replies to you alone from a group \
+thread, their reply and yours sit together in a conversation of their own, \
+with the message they answered shown at the top, and your reply goes back to \
+them alone.
+
+If mail reaches you at more than one address, such as a shared address, add \
+the others under Other Addresses in the account's settings, and Zirbe treats \
+them as yours.
+
 Web View is stricter about what a message can do. Scripts in a message no \
 longer run, and its forms cannot be sent. Until you choose to load images, \
 nothing in the message reaches the internet; when you do, only its images \
