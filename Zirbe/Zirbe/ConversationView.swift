@@ -877,11 +877,6 @@ private struct ParticipantChangeLine: View {
     }
 }
 
-/// The bottom message bar: a growing text field, an attach button, and a send
-/// button, in the Messages idiom. Shared by a reply (in a conversation) and a new
-/// conversation (the composer), so the two compose the same way. Send is disabled
-/// while in flight, while there's nothing to send, or while an external
-/// precondition isn't met (a new conversation needs a recipient).
 struct ReplyBar: View {
     @Binding var text: String
     @Binding var attachments: [StagedAttachment]
