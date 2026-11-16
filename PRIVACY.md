@@ -1,7 +1,7 @@
 # Zirbe: Privacy Statement
 
 Zirbe is an open-source iOS and iPadOS email client. It connects only to your own
-mail servers and, for a Microsoft account, Microsoft's sign-in service. It keeps everything it holds on your device and sends nothing about you
+mail servers and, for a Microsoft or Google account, that provider's sign-in service. It keeps everything it holds on your device and sends nothing about you
 anywhere. This document is the canonical statement of what Zirbe does and does
 not do with your data. The app is open source so that every claim here is
 independently verifiable, and the claims are enforced by how the code is built,
@@ -10,7 +10,7 @@ not by a policy that depends on the developer behaving well.
 ## The short version
 
 Zirbe talks to the IMAP server and the SMTP server you sign in to and, when you
-sign in with Microsoft, to Microsoft's sign-in service. Nothing
+sign in with Microsoft or Google, to that provider's sign-in service. Nothing
 else of its own; the one other download is Apple's speech model, which iOS fetches
 from Apple the first time Zirbe transcribes a voice or video message, carrying
 nothing of yours. There is no Zirbe server, no account to create with us, no
@@ -33,8 +33,8 @@ Zirbe service, and never shared with anyone. Signing out erases it: the app tear
 the database down and rebuilds it empty.
 
 Your sign-in credentials are held separately in the iOS Keychain, device-bound. The
-app-specific password you enter, or the tokens Microsoft issues when you sign in
-with Microsoft, are stored there so Zirbe can reconnect, and nowhere else. They are never written to the message database, never
+app-specific password you enter, or the tokens Microsoft or Google issue when you
+sign in with them, are stored there so Zirbe can reconnect, and nowhere else. They are never written to the message database, never
 copied to another device, and never synced through iCloud Keychain. A credential
 obtained on one device stays on that device.
 
@@ -50,14 +50,15 @@ analytics to that traffic. It requires transport encryption: TLS is implicit on 
 standard secure ports and demanded via STARTTLS otherwise, and a connection that
 cannot be secured fails rather than falling back to plaintext.
 
-**Microsoft's sign-in, for Microsoft accounts.** When you choose Sign in with
-Microsoft, Zirbe opens Microsoft's
+**Your mail provider's sign-in, for Microsoft and Google accounts.** When you
+choose Sign in with Microsoft or Sign in with Google, Zirbe opens the provider's
 own sign-in page in a private browser session that keeps no cookies, and you sign
-in there. Zirbe never sees your account password. Microsoft returns an access
+in there. Zirbe never sees your account password. The provider returns an access
 token, which your mail servers accept in place of a password, and a refresh token,
 which lets Zirbe obtain a new access token when the current one expires, usually
-after about an hour. To do that, Zirbe contacts Microsoft's token service
-(`login.microsoftonline.com`), sending only Zirbe's public client identifier and the tokens. An account that
+after about an hour. To do that, Zirbe contacts the provider's token service
+(`login.microsoftonline.com` for Microsoft, `oauth2.googleapis.com` for Google),
+sending only Zirbe's public client identifier and the tokens. An account that
 signs in with a password never contacts a sign-in service.
 
 **Apple's speech model, once per language.** Voice and video messages are
@@ -72,6 +73,24 @@ and no third-party SDK that would do any of those things. The project imports no
 of that on purpose. Remote images in HTML mail are blocked by default, so simply
 opening a message does not reach out to a sender's web server or load a tracking
 pixel; images load only when you choose to load them.
+
+## Google user data
+
+When you sign in with Google, Zirbe asks for Gmail's full mail access
+(`https://mail.google.com/`), the only permission Google's IMAP and SMTP servers
+accept. Zirbe uses it to do what a mail client does at your request: sync your
+mail to the device, show it to you, and send, move, flag, and delete messages
+when you tell it to. Your Gmail data travels only between your device and Google's
+servers. It is stored only in the on-device cache described above, is never
+transferred to the developer or any third party, and is not used for advertising,
+for training AI or machine-learning models, or for any purpose other than
+providing Zirbe's features to you. No person reads it. Signing out deletes the
+cached mail and the Google tokens from your device, and you can revoke Zirbe's
+access at any time at [myaccount.google.com/permissions](https://myaccount.google.com/permissions).
+
+Zirbe's use and transfer of information received from Google APIs adheres to the
+[Google API Services User Data Policy](https://developers.google.com/terms/api-services-user-data-policy),
+including the Limited Use requirements.
 
 ## Writes to your mailbox
 
