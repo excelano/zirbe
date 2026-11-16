@@ -8,6 +8,7 @@
 // the store, and the sync against the fake server.
 
 import XCTest
+import GRDB
 import ZirbeMail
 @testable import ZirbeCore
 
@@ -16,8 +17,11 @@ final class InviteThreadingTests: XCTestCase {
     private let sam = Participant(address: "sam@x.com", displayName: "Sam")
     private let me = Participant(address: "me@x.com")
 
+    private static let noonMonday = Date(timeIntervalSince1970: 1_794_852_000)
+
     private func invite(_ uid: String, sequence: Int = 0, method: Invite.Method = .request, summary: String = "Lunch", cancelled: Bool = false, replyFrom: Invite.Attendee? = nil) -> Invite {
         Invite(uid: uid, sequence: sequence, method: method, summary: summary,
+               start: Self.noonMonday, end: Self.noonMonday.addingTimeInterval(3600),
                attendees: replyFrom.map { [$0] } ?? [], isCancelled: cancelled)
     }
 
@@ -138,6 +142,40 @@ final class InviteThreadingTests: XCTestCase {
         try await store.rethread(accountID: account.id)
         let again = try await store.thread(id: XCTUnwrap(summaries.first?.id), accountID: account.id)
         XCTAssertEqual(again?.messages.first?.invite, parsed)
+    }
+
+    func testAnInviteCachedWithSecondsSince2001IsRepairedOnUpgrade() async throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory())
+            .appendingPathComponent("zirbe-invite-dates-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let dbPath = directory.appendingPathComponent("mail.sqlite").path
+        let account = Account(emailAddress: "me@x.com", imapHost: "imap.x.com", smtpHost: "smtp.x.com")
+        let header = Message(messageID: "<a@x>", uid: 1, subject: "Lunch", from: pat, to: [me], date: Date(timeIntervalSince1970: 0))
+        let parsed = invite("M1", summary: "Lunch with Pat")
+
+        do {
+            let store = try MailStore(path: dbPath)
+            try await store.upsert(account)
+            try await store.save([header], accountID: account.id, mailboxName: "INBOX")
+            try await store.storeBodies([header.id: FetchedBody(text: "", hasHTML: false, invite: parsed)], accountID: account.id)
+            try await store.rethread(accountID: account.id)
+        }
+        do {
+            let database = try DatabaseQueue(path: dbPath)
+            try await database.write { db in
+                try db.execute(
+                    sql: "UPDATE message SET invite = ?",
+                    arguments: [String(decoding: try JSONEncoder().encode(parsed), as: UTF8.self)]
+                )
+                try db.execute(sql: "DELETE FROM grdb_migrations WHERE identifier = 'v26-invite-dates'")
+            }
+        }
+
+        let upgraded = try MailStore(path: dbPath)
+        let summaries = try await upgraded.threadSummaries(accountID: account.id)
+        let thread = try await upgraded.thread(id: XCTUnwrap(summaries.first?.id), accountID: account.id)
+        XCTAssertEqual(thread?.messages.first?.invite?.start, Self.noonMonday)
     }
 
     // MARK: Sync

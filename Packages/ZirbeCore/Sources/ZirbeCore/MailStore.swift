@@ -854,7 +854,10 @@ public final class MailStore: @unchecked Sendable {
     /// text takes its preview and its search text from the invitation.
     public func storeBodies(_ bodiesByMessageID: [String: FetchedBody], accountID: String) async throws {
         guard !bodiesByMessageID.isEmpty else { return }
-        let encoder = JSONEncoder()
+        // The record's own encoders, so a column reads back through `MessageRow`
+        // the way it was written: GRDB's JSON keeps dates as milliseconds since 1970.
+        let attachmentsEncoder = MessageRow.databaseJSONEncoder(for: "attachments")
+        let inviteEncoder = MessageRow.databaseJSONEncoder(for: "invite")
         try await database.write { db in
             let ids = Array(bodiesByMessageID.keys)
             var transcripts: [String: String] = [:]
@@ -867,8 +870,8 @@ public final class MailStore: @unchecked Sendable {
                 transcripts[row["id"]] = row["transcript"]
             }
             for (id, body) in bodiesByMessageID {
-                let attachmentsJSON = String(decoding: try encoder.encode(body.attachments), as: UTF8.self)
-                let inviteJSON = try body.invite.map { String(decoding: try encoder.encode($0), as: UTF8.self) }
+                let attachmentsJSON = String(decoding: try attachmentsEncoder.encode(body.attachments), as: UTF8.self)
+                let inviteJSON = try body.invite.map { String(decoding: try inviteEncoder.encode($0), as: UTF8.self) }
                 let transcript = transcripts[id]
                 let snippet = MessageRow.preview(text: body.text, invite: body.invite)
                     ?? transcript.flatMap(MessageRow.preview(of:))
@@ -1653,6 +1656,26 @@ public final class MailStore: @unchecked Sendable {
                 let media = MessageMedia(mimeTypes: attachments.map(\.mimeType)).rawValue
                 guard media != 0 else { continue }
                 try MessageRow.mergeMedia(media, id: row["id"], accountID: row["accountID"], in: db)
+            }
+        }
+        migrator.registerMigration("v26-invite-dates") { db in
+            // An invite holding seconds since 2001 where milliseconds since 1970 are
+            // read lands in 1970; one written in milliseconds never does.
+            let asRead = JSONDecoder()
+            asRead.dateDecodingStrategy = .millisecondsSince1970
+            let asWritten = JSONDecoder()
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .millisecondsSince1970
+            let yearAfterEpoch = Date(timeIntervalSince1970: 365 * 86400)
+            for row in try Row.fetchAll(db, sql: "SELECT accountID, id, invite FROM message WHERE invite IS NOT NULL") {
+                guard let json: String = row["invite"],
+                      let read = try? asRead.decode(Invite.self, from: Data(json.utf8)),
+                      let start = read.start ?? read.end, start < yearAfterEpoch,
+                      let invite = try? asWritten.decode(Invite.self, from: Data(json.utf8)) else { continue }
+                try db.execute(
+                    sql: "UPDATE message SET invite = ? WHERE accountID = ? AND id = ?",
+                    arguments: [String(decoding: try encoder.encode(invite), as: UTF8.self), row["accountID"] as String, row["id"] as String]
+                )
             }
         }
         return migrator
