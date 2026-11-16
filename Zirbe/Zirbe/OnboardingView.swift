@@ -174,13 +174,16 @@ struct OnboardingView: View {
                 .foregroundStyle(.secondary)
             HStack {
                 ForEach(hostedProviders, id: \.id) { provider in
-                    Button("Sign in with \(provider.displayName)") {
+                    Button {
                         let servers = ProviderPresets.servers(for: provider.id)
                         imapHost = servers.imapHost
                         imapPort = String(servers.imapPort)
                         smtpHost = servers.smtpHost
                         smtpPort = String(servers.smtpPort)
                         signIn(with: provider)
+                    } label: {
+                        Text(provider.displayName)
+                            .frame(maxWidth: .infinity)
                     }
                     .buttonStyle(.bordered)
                     .font(.subheadline)
