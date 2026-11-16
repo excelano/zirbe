@@ -66,7 +66,7 @@ public struct OAuthProvider: Sendable, Hashable {
 
 enum OAuthClientIDs {
     static let microsoft = "1e5b498b-2c00-4466-9028-b3841124ed78"
-    static let google = ""
+    static let google = "753251616705-a5m1c5rnllem2uvhnuuuhss0t85ff064.apps.googleusercontent.com"
 }
 
 public struct OAuthTokens: Sendable, Hashable, Codable {
