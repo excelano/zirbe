@@ -148,8 +148,8 @@ public actor MailEngine {
     /// reusing the warm session. Selects the mailbox once, reads each message's
     /// body structure, then downloads all the chosen text parts in a single
     /// pipelined burst rather than one round trip at a time. Returns the decoded
-    /// body keyed by the caller's message id; a message with no text part (or one
-    /// that fails to decode) is simply absent from the result.
+    /// body keyed by the caller's message id; a message with nothing to show is
+    /// simply absent from the result.
     ///
     /// Only text parts are downloaded, never attachments. Both the `text/plain`
     /// and `text/html` alternatives are fetched when a message carries both,
@@ -158,10 +158,10 @@ public actor MailEngine {
     /// real content; otherwise the HTML is reduced to readable text. Either way
     /// the body records whether an HTML alternative exists, so the UI can offer
     /// the Web View without re-deriving it. A `text/calendar` part (a meeting
-    /// invitation) is fetched in the same burst and carried verbatim; an invite
-    /// often has no other readable part, so it alone makes a message a
-    /// candidate, with an empty text. A message that yields nothing is simply
-    /// absent, so it isn't cached as empty.
+    /// invitation) is fetched in the same burst and carried verbatim. An invite
+    /// or a file sent with no words (a screenshot, a bare image/png) has an
+    /// empty text. A message that yields nothing is simply absent, so it isn't
+    /// cached as empty.
     public func fetchTextBodies(
         in mailbox: String,
         messages: [(id: String, uid: UInt32)]
@@ -177,14 +177,14 @@ public actor MailEngine {
             for message in messages {
                 let uid = UID(message.uid)
                 let structure = try await self.server.fetchStructure(uid)
-                let plain = Self.textLeaf(in: structure, type: "text/plain")
-                let html = Self.textLeaf(in: structure, type: "text/html")
-                let calendar = Self.calendarPart(in: structure)
-                if plain != nil || html != nil || calendar != nil {
-                    candidates.append((message.id, uid, plain, html, calendar, structure))
-                }
+                candidates.append((
+                    message.id, uid,
+                    Self.textLeaf(in: structure, type: "text/plain"),
+                    Self.textLeaf(in: structure, type: "text/html"),
+                    Self.calendarPart(in: structure),
+                    structure
+                ))
             }
-            guard !candidates.isEmpty else { return [:] }
 
             // Download every candidate section in one pipelined burst.
             var requests: [(uid: UID, section: Section)] = []
@@ -193,7 +193,7 @@ public actor MailEngine {
                 if let html = c.html { requests.append((c.uid, html.section)) }
                 if let calendar = c.calendar { requests.append((c.uid, calendar.section)) }
             }
-            let fetched = try await self.server.fetchPartsPipelined(parts: requests)
+            let fetched = requests.isEmpty ? [:] : try await self.server.fetchPartsPipelined(parts: requests)
 
             // Decode one part's bytes, matched back by UID and section.
             func text(of part: MessagePart?, uid: UID) -> String? {
@@ -207,29 +207,12 @@ public actor MailEngine {
 
             var bodies: [String: MessageBody] = [:]
             for c in candidates {
-                // The HTML markup, if any, drives both the readable-text fallback
-                // and the attachment cid join (which parts the body references and
-                // so are inline, not real attachments).
-                let htmlMarkup = c.html != nil ? text(of: c.html, uid: c.uid) : nil
-                let attachments = Self.userFacingAttachments(
-                    in: c.structure,
-                    bodySections: [c.plain?.section, c.html?.section].compactMap { $0 },
-                    html: htmlMarkup
+                bodies[c.id] = Self.messageBody(
+                    structure: c.structure,
+                    plain: c.plain.map { ($0, text(of: $0, uid: c.uid)) },
+                    html: c.html.map { ($0, text(of: $0, uid: c.uid)) },
+                    calendar: text(of: c.calendar, uid: c.uid)
                 )
-
-                let hasHTML = c.html != nil
-                let calendar = text(of: c.calendar, uid: c.uid)
-                    .flatMap { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0 }
-                if let plain = text(of: c.plain, uid: c.uid),
-                   !plain.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    bodies[c.id] = MessageBody(text: plain, hasHTML: hasHTML, attachments: attachments, calendar: calendar)
-                } else if let htmlMarkup, case let reduced = Klartext.plainText(fromHTML: htmlMarkup), !reduced.isEmpty {
-                    bodies[c.id] = MessageBody(text: reduced, hasHTML: true, attachments: attachments, calendar: calendar)
-                } else if let calendar {
-                    // An invite with no readable text: the calendar part is the
-                    // whole message.
-                    bodies[c.id] = MessageBody(text: "", hasHTML: hasHTML, attachments: attachments, calendar: calendar)
-                }
             }
             return bodies
         }
@@ -616,6 +599,36 @@ public actor MailEngine {
             try await ensureSession()
             return try await operation()
         }
+    }
+
+    // MARK: - Body assembly
+
+    /// A message's body from its structure and its decoded text parts (each
+    /// paired with the part it came from), or nil when there is nothing to show.
+    /// A non-blank plain text wins; otherwise the HTML is reduced to readable
+    /// text. With no readable text the images an HTML body references are the
+    /// content rather than decoration (a screenshot mailed from Apple Mail is
+    /// one `<img src="cid:…">`), so the cid join is skipped and every part is an
+    /// attachment the bubble shows.
+    static func messageBody(
+        structure: [MessagePart],
+        plain: (part: MessagePart, text: String?)?,
+        html: (part: MessagePart, text: String?)?,
+        calendar: String?
+    ) -> MessageBody? {
+        func nonBlank(_ text: String?) -> String? {
+            guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
+            return text
+        }
+        let readable = nonBlank(plain?.text) ?? nonBlank(html?.text.map(Klartext.plainText(fromHTML:)))
+        let attachments = userFacingAttachments(
+            in: structure,
+            bodySections: [plain?.part.section, html?.part.section].compactMap { $0 },
+            html: readable == nil ? nil : html?.text
+        )
+        let calendar = nonBlank(calendar)
+        guard readable != nil || calendar != nil || !attachments.isEmpty else { return nil }
+        return MessageBody(text: readable ?? "", hasHTML: html != nil, attachments: attachments, calendar: calendar)
     }
 
     // MARK: - Body part selection

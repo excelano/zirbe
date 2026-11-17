@@ -168,6 +168,55 @@ final class AttachmentClassificationTests: XCTestCase {
         XCTAssertEqual(resolved.map(\.filename), ["PDF"])
     }
 
+    // MARK: - Body assembly
+
+    func testAnImageOnlyHTMLBodyShowsItsImage() {
+        // Apple Mail's shape for a mailed screenshot: empty plain text, and HTML
+        // that is one cid image. With no words, the image is the message.
+        let plain = part("1.1", "text/plain")
+        let html = part("1.2.1", "text/html")
+        let parts = [
+            part("1", "multipart/alternative"), plain,
+            part("1.2", "multipart/related"), html,
+            part("1.2.2", "image/png", disposition: "inline", filename: "Screenshot.png", contentId: "<shot@x>"),
+        ]
+        let body = MailEngine.messageBody(
+            structure: parts,
+            plain: (plain, "\n"),
+            html: (html, #"<html><body><img src="cid:shot@x"></body></html>"#),
+            calendar: nil
+        )
+        XCTAssertEqual(body?.text, "")
+        XCTAssertEqual(body?.hasHTML, true)
+        XCTAssertEqual(body?.attachments.map(\.filename), ["Screenshot.png"])
+        XCTAssertEqual(body?.attachments.first?.partID, "1.2.2")
+    }
+
+    func testAMessageWithNoTextPartStillShowsItsFile() {
+        let parts = [part("1", "image/png", filename: "Screenshot.png")]
+        let body = MailEngine.messageBody(structure: parts, plain: nil, html: nil, calendar: nil)
+        XCTAssertEqual(body?.text, "")
+        XCTAssertEqual(body?.attachments.map(\.partID), ["1"])
+    }
+
+    func testAnInlineLogoStaysDroppedBesideReadableText() {
+        let html = part("1", "text/html")
+        let parts = [html, part("2", "image/png", disposition: "inline", filename: "logo.png", contentId: "<logo@x>")]
+        let body = MailEngine.messageBody(
+            structure: parts,
+            plain: nil,
+            html: (html, #"<p>Hi there</p><img src="cid:logo@x">"#),
+            calendar: nil
+        )
+        XCTAssertEqual(body?.text, "Hi there")
+        XCTAssertEqual(body?.attachments, [])
+    }
+
+    func testAMessageWithNothingToShowHasNoBody() {
+        let plain = part("1", "text/plain")
+        XCTAssertNil(MailEngine.messageBody(structure: [plain], plain: (plain, "  "), html: nil, calendar: nil))
+    }
+
     func testFallbackName() {
         XCTAssertEqual(MailEngine.fallbackName(for: "image/gif"), "Image")
         XCTAssertEqual(MailEngine.fallbackName(for: "application/pdf"), "PDF")
