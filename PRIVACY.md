@@ -78,15 +78,38 @@ pixel; images load only when you choose to load them.
 
 When you sign in with Google, Zirbe asks for Gmail's full mail access
 (`https://mail.google.com/`), the only permission Google's IMAP and SMTP servers
-accept. Zirbe uses it to do what a mail client does at your request: sync your
-mail to the device, show it to you, and send, move, flag, and delete messages
-when you tell it to. Your Gmail data travels only between your device and Google's
-servers. It is stored only in the on-device cache described above, is never
-transferred to the developer or any third party, and is not used for advertising,
-for training AI or machine-learning models, or for any purpose other than
-providing Zirbe's features to you. No person reads it. Signing out deletes the
-cached mail and the Google tokens from your device, and you can revoke Zirbe's
-access at any time at [myaccount.google.com/permissions](https://myaccount.google.com/permissions).
+accept. This section states what Zirbe does with the Gmail data that permission
+reaches.
+
+**What Zirbe accesses.** Your Gmail address; your messages, including their
+headers, bodies, and attachments; your labels as IMAP folders; and the read,
+starred, and other status flags on each message. Zirbe creates no aggregated or
+anonymized data from any of it.
+
+**How Zirbe uses it.** Only to provide the mail client you see: syncing your mail
+to the device and showing it to you, searching it, notifying you of
+new mail, transcribing voice and video messages on the device with Apple's Speech
+framework, and sending, moving, starring, archiving, and deleting messages when
+you tell it to. Zirbe does not use Gmail data for advertising, for profiling, or
+to develop, improve, or train any AI or machine-learning model, and no person
+reads it.
+
+**Who Zirbe shares it with.** No one. Gmail data travels only between your device
+and Google's servers. It is never transferred to the developer, who runs no
+server and receives nothing, and never to any third party, including advertisers,
+data brokers, and AI services.
+
+**How it is protected.** Every connection to Google is encrypted with TLS. The
+mail Zirbe keeps lives in the app's private container on your device, protected
+by iOS's file encryption, and your Google tokens are held in the iOS Keychain,
+bound to the device and never synced to iCloud.
+
+**How long it is kept, and how to delete it.** Zirbe keeps its copy of your mail
+on the device for as long as the account is in Zirbe. Removing the account
+deletes the cached mail and the Google tokens from the device, and deleting the
+app deletes everything it stored. The developer holds no copy, so nothing remains
+anywhere else. You can also revoke Zirbe's access at any time at
+[myaccount.google.com/permissions](https://myaccount.google.com/permissions).
 
 Zirbe's use and transfer of information received from Google APIs adheres to the
 [Google API Services User Data Policy](https://developers.google.com/terms/api-services-user-data-policy),
