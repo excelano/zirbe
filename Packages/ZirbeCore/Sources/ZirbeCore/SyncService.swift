@@ -555,6 +555,8 @@ public actor SyncService {
     /// `localSentMailbox`. The server's real Drafts folder is resolved by the
     /// engine on APPEND; a later Drafts sync reconciles the names by Message-ID.
     private static let localDraftsMailbox = "Drafts"
+
+    static let localMailboxes: Set<String> = [localSentMailbox, localDraftsMailbox]
 }
 
 extension FetchedBody {

@@ -279,7 +279,11 @@ public final class InboxModel {
     /// server in the background.
     public func loadMailboxes() async {
         await attempt {
-            self.mailboxes = try await self.store.mailboxes(accountID: self.account.id)
+            let cached = try await self.store.mailboxes(accountID: self.account.id)
+            self.mailboxes = cached.filter { mailbox in
+                !SyncService.localMailboxes.contains(mailbox.name)
+                    || !cached.contains { $0.role == mailbox.role && $0.name != mailbox.name }
+            }
             self.unreadCounts = try await self.store.unreadCounts(accountID: self.account.id)
         }
     }
