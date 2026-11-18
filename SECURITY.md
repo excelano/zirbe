@@ -24,9 +24,10 @@ analytics, no crash reporter and no third-party SDK.
 An account that signs in with Microsoft opens Microsoft's sign-in page at
 `login.microsoftonline.com` in an ephemeral browser session that keeps no
 cookies, and Zirbe then calls Microsoft's token endpoint there to redeem and
-refresh tokens. The source also carries a Google sign-in, which is offered only
-when a Google client identifier is set, and this repository leaves it empty. An
-account that signs in with a password contacts no sign-in service.
+refresh tokens. An account that signs in with Google does the same with Google's
+sign-in page at `accounts.google.com` and its token endpoint at
+`oauth2.googleapis.com`. An account that signs in with a password contacts no
+sign-in service.
 
 Mail arrives from other people and is the input this application has to
 withstand. Messages are shown as text, with HTML turned into text by the

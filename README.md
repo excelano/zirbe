@@ -35,8 +35,8 @@ nothing that isn't email: no video or voice calls, no shared notes, tasks, or
 team workspaces. There is no backend, no third-party SDK and no
 telemetry. Credentials and tokens live in the Keychain, device-bound, never
 synced off the device that obtained them. The only network destinations are the
-user's own IMAP and SMTP servers and, for a Microsoft account, Microsoft's sign-in
-service. [PRIVACY.md](PRIVACY.md) states this in full, and
+user's own IMAP and SMTP servers and, for a Microsoft or Google account, that
+provider's sign-in service. [PRIVACY.md](PRIVACY.md) states this in full, and
 [SECURITY.md](SECURITY.md) says what the app can reach and what it keeps.
 
 ## How it is built
