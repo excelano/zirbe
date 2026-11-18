@@ -172,22 +172,20 @@ struct OnboardingView: View {
             Text("Email hosted by Microsoft 365 or Google Workspace?")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-            HStack {
-                ForEach(hostedProviders, id: \.id) { provider in
-                    Button {
-                        let servers = ProviderPresets.servers(for: provider.id)
-                        imapHost = servers.imapHost
-                        imapPort = String(servers.imapPort)
-                        smtpHost = servers.smtpHost
-                        smtpPort = String(servers.smtpPort)
-                        signIn(with: provider)
-                    } label: {
-                        Text(provider.displayName)
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.bordered)
-                    .font(.subheadline)
+            ForEach(hostedProviders, id: \.id) { provider in
+                Button {
+                    let servers = ProviderPresets.servers(for: provider.id)
+                    imapHost = servers.imapHost
+                    imapPort = String(servers.imapPort)
+                    smtpHost = servers.smtpHost
+                    smtpPort = String(servers.smtpPort)
+                    signIn(with: provider)
+                } label: {
+                    Text("Sign in with \(provider.displayName)")
+                        .frame(maxWidth: .infinity)
                 }
+                .buttonStyle(.bordered)
+                .font(.subheadline)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

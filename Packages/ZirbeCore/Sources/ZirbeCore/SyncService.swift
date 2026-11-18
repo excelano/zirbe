@@ -216,6 +216,7 @@ public actor SyncService {
         for mailbox in mailboxes {
             try await store.upsert(mailbox)
         }
+        try await store.pruneMailboxes(accountID: account.id, keeping: Set(mailboxes.map(\.name)))
         return mailboxes
     }
 
@@ -321,8 +322,9 @@ public actor SyncService {
     public func recordLocal(_ draft: OutgoingDraft, state: SendState) async throws {
         var local = draft.localMessage
         local.sendState = state
-        try await store.upsert(Mailbox(accountID: account.id, name: Self.localSentMailbox, role: .sent))
-        try await store.save([local], accountID: account.id, mailboxName: Self.localSentMailbox)
+        let sent = try await cachedFolder(role: .sent) ?? Self.fallbackSentMailbox
+        try await store.upsert(Mailbox(accountID: account.id, name: sent, role: .sent))
+        try await store.save([local], accountID: account.id, mailboxName: sent)
         try await store.rethread(accountID: account.id)
 
         // Inline-rendered attachments (images, voice memos) are stashed so the
@@ -365,41 +367,23 @@ public actor SyncService {
     /// UID when the server reported one, else nil.
     @discardableResult
     public func saveDraft(_ draft: OutgoingDraft, login: MailLogin) async throws -> UInt32? {
-        let priorUID = try await store.messageRef(id: draft.localMessage.id, accountID: account.id)?.uid
-
         try await engine.connect(username: account.username, login: login)
-        let newUID = try await engine.saveToDrafts(draft.outgoingMessage, replacing: priorUID)
+        let newUID = try await engine.saveToDrafts(draft.outgoingMessage)
+        let drafts = try await engine.draftsMailbox()
 
-        try await store.upsert(Mailbox(accountID: account.id, name: Self.localDraftsMailbox, role: .drafts))
-        try await store.save([draft.draftLocalMessage(uid: newUID)], accountID: account.id, mailboxName: Self.localDraftsMailbox)
+        try await store.upsert(Mailbox(accountID: account.id, name: drafts, role: .drafts))
+        try await store.save([draft.draftLocalMessage(uid: newUID)], accountID: account.id, mailboxName: drafts)
         try await store.rethread(accountID: account.id)
         return newUID
     }
 
     /// Delete a draft: expunge its server copy from Drafts and drop the local copy,
     /// then rethread so it leaves the Drafts list. Called when a draft is sent (its
-    /// content now lives as a real message) or explicitly discarded. A draft with no
-    /// known UID (never synced, no UIDPLUS) is only removed locally, and its server
-    /// copy is reconciled away on the next Drafts sync.
-    ///
-    /// Only the thread's Drafts-filed messages are expunged: `removeDraft` always
-    /// targets the Drafts folder, so a UID from another folder would be expunged as
-    /// if it were a Drafts UID. A discarded draft is a Drafts-only thread today, so
-    /// this filter is a guard against a future thread bridging Drafts with another
-    /// folder, not a change in behavior.
-    public func deleteDraft(threadID: String, login: MailLogin) async throws {
-        let draftsMailboxes = try await store.mailboxes(accountID: account.id)
-            .filter { $0.role == .drafts }
-            .map(\.name)
-        let draftRefs = try await store.messageRefs(threadIDs: [threadID], accountID: account.id)
-            .filter { $0.mailbox == Self.localDraftsMailbox || draftsMailboxes.contains($0.mailbox) }
-        if !draftRefs.isEmpty {
-            try await engine.connect(username: account.username, login: login)
-            for ref in draftRefs {
-                try await engine.removeDraft(uid: ref.uid)
-            }
-        }
-        try await store.deleteThreads(threadIDs: [threadID], accountID: account.id)
+    /// content now lives as a real message) or explicitly discarded.
+    public func deleteDraft(_ context: DraftContext, login: MailLogin) async throws {
+        try await engine.connect(username: account.username, login: login)
+        try await engine.removeDraft(messageID: context.messageID)
+        try await store.deleteThreads(threadIDs: [context.threadID], accountID: account.id)
         try await store.rethread(accountID: account.id)
     }
 
@@ -545,18 +529,11 @@ public actor SyncService {
     /// Matches `MailStore`'s own INBOX scope for that mark.
     private static let inboxMailbox = "INBOX"
 
-    /// The mailbox name the optimistic Sent copy is filed under locally, a stable
-    /// label rather than a server folder. The server's real Sent folder is
-    /// resolved by the engine; when it syncs, the server's copy takes over the
-    /// local row, since both carry the same Message-ID.
-    private static let localSentMailbox = "Sent"
+    private static let fallbackSentMailbox = "Sent"
 
-    /// The mailbox name the optimistic local Draft copy is filed under, mirroring
-    /// `localSentMailbox`. The server's real Drafts folder is resolved by the
-    /// engine on APPEND; a later Drafts sync reconciles the names by Message-ID.
-    private static let localDraftsMailbox = "Drafts"
-
-    static let localMailboxes: Set<String> = [localSentMailbox, localDraftsMailbox]
+    private func cachedFolder(role: MailboxRole) async throws -> String? {
+        try await store.mailboxes(accountID: account.id).first { $0.role == role }?.name
+    }
 }
 
 extension FetchedBody {

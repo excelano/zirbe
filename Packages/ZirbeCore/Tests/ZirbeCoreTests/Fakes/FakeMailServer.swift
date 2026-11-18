@@ -27,7 +27,7 @@ actor FakeMailServer: IMAPTransport {
 
     /// The operations a test can fail, and the log records.
     enum Operation: Hashable {
-        case connect, fetchRecentEnvelopes, mailboxState, searchEnvelopes, listMailboxes, sentMailbox, fetchTextBodies
+        case connect, fetchRecentEnvelopes, mailboxState, searchEnvelopes, listMailboxes, sentMailbox, draftsMailbox, fetchTextBodies
         case fetchHTMLBody, fetchAttachment, saveToSent, saveToDrafts, removeDraft
         case setSeen, setFlagged, idleChanges, trash, move, archive, markJunk
     }
@@ -40,12 +40,13 @@ actor FakeMailServer: IMAPTransport {
         case searchEnvelopes(mailbox: String, text: String, limit: Int)
         case listMailboxes
         case sentMailbox
+        case draftsMailbox
         case fetchTextBodies(mailbox: String, uids: [UInt32])
         case fetchHTMLBody(mailbox: String, uid: UInt32)
         case fetchAttachment(mailbox: String, uid: UInt32, partID: String)
         case saveToSent(messageID: String)
-        case saveToDrafts(messageID: String, replacing: UInt32?)
-        case removeDraft(uid: UInt32)
+        case saveToDrafts(messageID: String)
+        case removeDraft(messageID: String)
         case setSeen(Bool, mailbox: String, uids: [UInt32])
         case setFlagged(Bool, mailbox: String, uids: [UInt32])
         case idleChanges(mailbox: String)
@@ -290,18 +291,28 @@ actor FakeMailServer: IMAPTransport {
         add(envelope(for: outgoing), to: folderName(for: .sent))
     }
 
-    func saveToDrafts(_ outgoing: OutgoingMessage, replacing previousUID: UInt32?) async throws -> UInt32? {
-        calls.append(.saveToDrafts(messageID: outgoing.messageID, replacing: previousUID))
-        try check(.saveToDrafts)
-        let drafts = folderName(for: .drafts)
-        if let previousUID { folders[drafts]?.messages[previousUID] = nil }
-        return add(envelope(for: outgoing), to: drafts)
+    func draftsMailbox() async throws -> String {
+        calls.append(.draftsMailbox)
+        try check(.draftsMailbox)
+        return folderName(for: .drafts)
     }
 
-    func removeDraft(uid: UInt32) async throws {
-        calls.append(.removeDraft(uid: uid))
+    func saveToDrafts(_ outgoing: OutgoingMessage) async throws -> UInt32? {
+        calls.append(.saveToDrafts(messageID: outgoing.messageID))
+        try check(.saveToDrafts)
+        let drafts = folderName(for: .drafts)
+        let earlier = folders[drafts]?.messages.filter { $0.value.messageID == outgoing.messageID }.map(\.key) ?? []
+        let uid = add(envelope(for: outgoing), to: drafts)
+        for old in earlier { folders[drafts]?.messages[old] = nil }
+        return uid
+    }
+
+    func removeDraft(messageID: String) async throws {
+        calls.append(.removeDraft(messageID: messageID))
         try check(.removeDraft)
-        folders[folderName(for: .drafts)]?.messages[uid] = nil
+        let drafts = folderName(for: .drafts)
+        let matching = folders[drafts]?.messages.filter { $0.value.messageID == messageID }.map(\.key) ?? []
+        for uid in matching { folders[drafts]?.messages[uid] = nil }
     }
 
     func setSeen(_ seen: Bool, in mailbox: String, uids: [UInt32]) async throws {
@@ -451,6 +462,7 @@ extension FakeMailServer.Call {
         case .searchEnvelopes: .searchEnvelopes
         case .listMailboxes: .listMailboxes
         case .sentMailbox: .sentMailbox
+        case .draftsMailbox: .draftsMailbox
         case .fetchTextBodies: .fetchTextBodies
         case .fetchHTMLBody: .fetchHTMLBody
         case .fetchAttachment: .fetchAttachment

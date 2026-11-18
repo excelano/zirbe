@@ -669,7 +669,7 @@ final class InboxModelTests: XCTestCase {
         XCTAssertTrue(model.mailboxes.contains { $0.name == "Projects" }, "the cache survives sign-out")
     }
 
-    func testCachedFoldersHideTheLocalDraftsAndSentWhenTheServerNamesItsOwn() async throws {
+    func testDraftsAndSentCopiesAreFiledInTheServersOwnFolders() async throws {
         await server.renameFolder("Drafts", to: "[Gmail]/Drafts")
         await server.renameFolder("Sent", to: "[Gmail]/Sent Mail")
         try await model.signIn(password: "pw")
@@ -684,6 +684,21 @@ final class InboxModelTests: XCTestCase {
         XCTAssertTrue(names.contains("[Gmail]/Sent Mail"))
         XCTAssertFalse(names.contains("Drafts"))
         XCTAssertFalse(names.contains("Sent"))
+        let drafts = try await store.threadSummaries(accountID: account.id, mailboxName: "[Gmail]/Drafts")
+        XCTAssertEqual(drafts.count, 1, "the new draft is filed in the server's Drafts folder")
+        let sent = try await store.threadSummaries(accountID: account.id, mailboxName: "[Gmail]/Sent Mail")
+        XCTAssertFalse(sent.isEmpty, "the sent copy is filed in the server's Sent folder")
+    }
+
+    func testFolderDiscoveryDropsFoldersTheServerNoLongerLists() async throws {
+        try await model.signIn(password: "pw")
+        try await store.upsert(Mailbox(accountID: account.id, name: "Old Sent", role: .sent))
+
+        await model.discoverFolders()
+        await model.loadMailboxes()
+
+        XCTAssertFalse(model.mailboxes.contains { $0.name == "Old Sent" })
+        XCTAssertTrue(model.mailboxes.contains { $0.name == "Sent" })
     }
 
     func testCachedFoldersKeepDraftsAndSentWhenTheServerUsesThoseNames() async throws {

@@ -32,8 +32,9 @@ public protocol IMAPTransport: Sendable {
     func fetchHTMLBody(in mailbox: String, uid: UInt32) async throws -> HTMLBody?
     func fetchAttachment(in mailbox: String, uid: UInt32, partID: String) async throws -> Data
     func saveToSent(_ outgoing: OutgoingMessage) async throws
-    func saveToDrafts(_ outgoing: OutgoingMessage, replacing previousUID: UInt32?) async throws -> UInt32?
-    func removeDraft(uid: UInt32) async throws
+    func draftsMailbox() async throws -> String
+    func saveToDrafts(_ outgoing: OutgoingMessage) async throws -> UInt32?
+    func removeDraft(messageID: String) async throws
     func setSeen(_ seen: Bool, in mailbox: String, uids: [UInt32]) async throws
     func setFlagged(_ flagged: Bool, in mailbox: String, uids: [UInt32]) async throws
     func idleChanges(in mailbox: String) async throws -> AsyncStream<Void>
