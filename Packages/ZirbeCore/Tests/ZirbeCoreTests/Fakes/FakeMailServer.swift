@@ -151,6 +151,14 @@ actor FakeMailServer: IMAPTransport {
         folders[info.name] = Folder(info: info, uidValidity: UInt32(2000 + folders.count))
     }
 
+    /// Rename a folder, keeping its role, to model a server whose special-use
+    /// folders carry their own names (Gmail's `[Gmail]/Drafts`).
+    func renameFolder(_ name: String, to newName: String) {
+        guard var folder = folders.removeValue(forKey: name) else { return }
+        folder.info.name = newName
+        folders[newName] = folder
+    }
+
     /// Store attachment bytes a later `fetchAttachment` returns.
     func addAttachment(_ data: Data, to mailbox: String, uid: UInt32, partID: String) {
         folders[mailbox]?.attachments["\(uid)/\(partID)"] = data

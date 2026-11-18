@@ -388,8 +388,11 @@ public actor SyncService {
     /// this filter is a guard against a future thread bridging Drafts with another
     /// folder, not a change in behavior.
     public func deleteDraft(threadID: String, login: MailLogin) async throws {
+        let draftsMailboxes = try await store.mailboxes(accountID: account.id)
+            .filter { $0.role == .drafts }
+            .map(\.name)
         let draftRefs = try await store.messageRefs(threadIDs: [threadID], accountID: account.id)
-            .filter { $0.mailbox == Self.localDraftsMailbox }
+            .filter { $0.mailbox == Self.localDraftsMailbox || draftsMailboxes.contains($0.mailbox) }
         if !draftRefs.isEmpty {
             try await engine.connect(username: account.username, login: login)
             for ref in draftRefs {
