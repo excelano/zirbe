@@ -343,48 +343,53 @@ public actor MailEngine {
     /// session, so a half-written message survives a quit and shows up in other
     /// clients. SwiftMail's `createDraft` sets the `\Draft` flag and stamps the
     /// Apple draft-ownership header, so a client that later sends it removes it
-    /// from Drafts. When `replacing` is given (the user edited an existing
-    /// draft), the new copy is appended first and the prior draft expunged
-    /// after, so an edit replaces rather than duplicates and a failure mid-way
-    /// can only leave a stray duplicate, never lose the draft. Returns the new
-    /// draft's server UID when the server supports UIDPLUS, so a later edit can
-    /// replace it in turn; nil otherwise. Like `saveToSent` this does not retry
+    /// from Drafts. Like `saveToSent` this does not retry
     /// on a dropped connection, because an APPEND that half-committed could
     /// otherwise be doubled.
     @discardableResult
-    public func saveToDrafts(_ outgoing: OutgoingMessage, replacing previousUID: UInt32? = nil) async throws -> UInt32? {
+    public func saveToDrafts(_ outgoing: OutgoingMessage) async throws -> UInt32? {
         try await ensureSession()
         let mailbox = try await resolvedDraftsMailbox()
+        let earlier = try await draftUIDs(messageID: outgoing.messageID, in: mailbox)
         let result = try await server.createDraft(from: Email(outgoing), in: mailbox)
-        if let previousUID {
-            // Best-effort cleanup: the new draft is already saved, so a failed
-            // expunge leaves a duplicate, not data loss. Don't fail the save.
+        if !earlier.isEmpty {
             do {
-                try await removeDraft(uid: previousUID)
+                try await expungeDrafts(earlier, in: mailbox)
             } catch {
-                logger.debug("draft replace: couldn't expunge prior uid \(previousUID): \(error)")
+                logger.debug("draft replace: couldn't expunge the earlier copy: \(error)")
             }
         }
         return result.firstUID?.value
     }
 
-    /// Permanently remove a draft from the Drafts mailbox by UID, over the warm
-    /// session: mark it `\Deleted` and expunge. Used when an edited draft is
-    /// replaced by a fresh append, and when a saved draft is sent or discarded.
-    /// Expunges just that UID where the server supports UIDPLUS; otherwise
-    /// expunges the mailbox's deleted messages, which is safe here because
-    /// Drafts holds only the user's own drafts.
-    public func removeDraft(uid: UInt32) async throws {
+    public func removeDraft(messageID: String) async throws {
         try await perform {
             let mailbox = try await self.resolvedDraftsMailbox()
-            _ = try await self.server.selectMailbox(mailbox)
-            let set = UIDSet([UID(uid)])
-            try await self.server.store(flags: [.deleted], on: set, operation: .add)
-            if await self.server.supportsUIDPlus {
-                try await self.server.expunge(messages: set)
-            } else {
-                try await self.server.expunge()
-            }
+            let uids = try await self.draftUIDs(messageID: messageID, in: mailbox)
+            guard !uids.isEmpty else { return }
+            try await self.expungeDrafts(uids, in: mailbox)
+        }
+    }
+
+    public func draftsMailbox() async throws -> String {
+        try await ensureSession()
+        return try await resolvedDraftsMailbox()
+    }
+
+    private func draftUIDs(messageID: String, in mailbox: String) async throws -> [UID] {
+        _ = try await server.selectMailbox(mailbox)
+        let result: ExtendedSearchResult<UID> = try await server.extendedSearch(criteria: [.header("Message-ID", messageID)])
+        return (result.all ?? result.partial?.results)?.toArray() ?? []
+    }
+
+    private func expungeDrafts(_ uids: [UID], in mailbox: String) async throws {
+        _ = try await server.selectMailbox(mailbox)
+        let set = UIDSet(uids)
+        try await server.store(flags: [.deleted], on: set, operation: .add)
+        if await server.supportsUIDPlus {
+            try await server.expunge(messages: set)
+        } else {
+            try await server.expunge()
         }
     }
 

@@ -553,7 +553,22 @@ public final class MailStore: @unchecked Sendable {
     }
 
     public func upsert(_ mailbox: Mailbox) async throws {
-        try await database.write { db in try MailboxRow(mailbox).save(db) }
+        try await database.write { db in
+            var row = MailboxRow(mailbox)
+            if let stored = try MailboxRow.fetchOne(db, key: ["accountID": mailbox.accountID, "name": mailbox.name]) {
+                row.role = row.role ?? stored.role
+                row.hierarchyDelimiter = row.hierarchyDelimiter ?? stored.hierarchyDelimiter
+            }
+            try row.save(db)
+        }
+    }
+
+    public func pruneMailboxes(accountID: String, keeping names: Set<String>) async throws {
+        try await database.write { db in
+            _ = try MailboxRow
+                .filter(Column("accountID") == accountID && !names.contains(Column("name")))
+                .deleteAll(db)
+        }
     }
 
     /// Insert or update the given messages. Existing rows (matched by id) are

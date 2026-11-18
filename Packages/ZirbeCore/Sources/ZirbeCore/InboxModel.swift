@@ -279,11 +279,7 @@ public final class InboxModel {
     /// server in the background.
     public func loadMailboxes() async {
         await attempt {
-            let cached = try await self.store.mailboxes(accountID: self.account.id)
-            self.mailboxes = cached.filter { mailbox in
-                !SyncService.localMailboxes.contains(mailbox.name)
-                    || !cached.contains { $0.role == mailbox.role && $0.name != mailbox.name }
-            }
+            self.mailboxes = try await self.store.mailboxes(accountID: self.account.id)
             self.unreadCounts = try await self.store.unreadCounts(accountID: self.account.id)
         }
     }
@@ -580,7 +576,7 @@ public final class InboxModel {
                 // Best-effort: a failed expunge leaves a stale draft to reconcile,
                 // not a failed send, so it must not turn a sent message into an
                 // error. The single reloadList below reflects both changes.
-                try? await sync.deleteDraft(threadID: discarding.threadID, login: login)
+                try? await sync.deleteDraft(discarding, login: login)
             }
             try await reloadList()
             return true
@@ -644,7 +640,7 @@ public final class InboxModel {
             return
         }
         await attempt {
-            try await self.sync.deleteDraft(threadID: context.threadID, login: login)
+            try await self.sync.deleteDraft(context, login: login)
             try await self.reloadList()
         }
     }

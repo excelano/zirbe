@@ -735,6 +735,20 @@ final class MailStoreTests: XCTestCase {
         XCTAssertNil(mailboxes.first { $0.name == "Projects" }?.role)
     }
 
+    func testUpsertKeepsAKnownDelimiterAndRole() async throws {
+        let store = try MailStore()
+        let acct = account()
+        try await store.upsert(acct)
+        try await store.upsert(Mailbox(accountID: acct.id, name: "[Gmail]/Drafts", role: .drafts, hierarchyDelimiter: "/"))
+
+        try await store.upsert(Mailbox(accountID: acct.id, name: "[Gmail]/Drafts", role: nil))
+
+        let drafts = try await store.mailboxes(accountID: acct.id).first
+        XCTAssertEqual(drafts?.hierarchyDelimiter, "/")
+        XCTAssertEqual(drafts?.role, .drafts)
+        XCTAssertEqual(drafts?.displayName, "Drafts")
+    }
+
     func testScopedSummariesReturnOnlyThreadsInThatFolder() async throws {
         let store = try MailStore()
         let acct = account()

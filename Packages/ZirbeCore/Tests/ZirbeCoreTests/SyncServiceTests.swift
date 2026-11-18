@@ -439,8 +439,8 @@ final class SyncServiceTests: XCTestCase {
         XCTAssertEqual(second, 2)
         let appends = await server.calls(.saveToDrafts)
         XCTAssertEqual(appends, [
-            .saveToDrafts(messageID: "<draft@x>", replacing: nil),
-            .saveToDrafts(messageID: "<draft@x>", replacing: 1),
+            .saveToDrafts(messageID: "<draft@x>"),
+            .saveToDrafts(messageID: "<draft@x>"),
         ])
         let serverDrafts = await server.uids(in: "Drafts")
         XCTAssertEqual(serverDrafts, [2], "the edit replaced the old copy rather than stacking")
@@ -464,12 +464,11 @@ final class SyncServiceTests: XCTestCase {
 
     func testDeleteDraftExpungesTheServerCopyAndDropsTheThread() async throws {
         try await sync.saveDraft(savedDraft(body: "v1"), login: login)
-        let id = try await onlyThread().id
 
-        try await sync.deleteDraft(threadID: id, login: login)
+        try await sync.deleteDraft(DraftContext(messageID: "<draft@x>"), login: login)
 
         let removed = await server.calls(.removeDraft)
-        XCTAssertEqual(removed, [.removeDraft(uid: 1)])
+        XCTAssertEqual(removed, [.removeDraft(messageID: "<draft@x>")])
         let serverDrafts = await server.uids(in: "Drafts")
         XCTAssertTrue(serverDrafts.isEmpty)
         let summaries = try await allSummaries()
@@ -480,14 +479,33 @@ final class SyncServiceTests: XCTestCase {
         await server.renameFolder("Drafts", to: "[Gmail]/Drafts")
         try await sync.saveDraft(savedDraft(body: "v1"), login: login)
         try await sync.syncFolder(mailbox: "[Gmail]/Drafts", role: .drafts, login: login)
-        let id = try await onlyThread().id
 
-        try await sync.deleteDraft(threadID: id, login: login)
+        try await sync.deleteDraft(DraftContext(messageID: "<draft@x>"), login: login)
 
-        let removed = await server.calls(.removeDraft)
-        XCTAssertEqual(removed, [.removeDraft(uid: 1)])
         let serverDrafts = await server.uids(in: "[Gmail]/Drafts")
         XCTAssertTrue(serverDrafts.isEmpty)
+        let summaries = try await allSummaries()
+        XCTAssertTrue(summaries.isEmpty)
+    }
+
+    func testADraftAlsoListedInAllMailIsEditedAndDeletedWithoutTouchingAnotherDraft() async throws {
+        await server.renameFolder("Drafts", to: "[Gmail]/Drafts")
+        await server.addFolder(MailboxInfo(name: "[Gmail]/All Mail"))
+        await server.add(incoming("Plan", id: "<a@x>"), to: "[Gmail]/All Mail")
+        try await sync.saveDraft(savedDraft(body: "v1"), login: login)
+        await server.add(incoming("Other", id: "<other@x>"), to: "[Gmail]/Drafts")
+        await server.add(incoming("Draft", id: "<draft@x>"), to: "[Gmail]/All Mail")
+        try await sync.syncFolder(mailbox: "[Gmail]/All Mail", role: nil, login: login)
+
+        try await sync.saveDraft(savedDraft(body: "v2"), login: login)
+
+        var drafts = await server.messages(in: "[Gmail]/Drafts").compactMap(\.messageID)
+        XCTAssertEqual(drafts.sorted(), ["<draft@x>", "<other@x>"], "the edit replaced its own copy and left the other draft")
+
+        try await sync.deleteDraft(DraftContext(messageID: "<draft@x>"), login: login)
+
+        drafts = await server.messages(in: "[Gmail]/Drafts").compactMap(\.messageID)
+        XCTAssertEqual(drafts, ["<other@x>"])
     }
 
     // MARK: Flags
