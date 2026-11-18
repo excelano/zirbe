@@ -669,6 +669,36 @@ final class InboxModelTests: XCTestCase {
         XCTAssertTrue(model.mailboxes.contains { $0.name == "Projects" }, "the cache survives sign-out")
     }
 
+    func testCachedFoldersHideTheLocalDraftsAndSentWhenTheServerNamesItsOwn() async throws {
+        await server.renameFolder("Drafts", to: "[Gmail]/Drafts")
+        await server.renameFolder("Sent", to: "[Gmail]/Sent Mail")
+        try await model.signIn(password: "pw")
+        await model.discoverFolders()
+        _ = await model.saveDraft(to: [pat], subject: "Hi", body: "half")
+        _ = await model.sendNew(to: [pat], subject: "Hi", body: "sent")
+
+        await model.loadMailboxes()
+
+        let names = model.mailboxes.map(\.name)
+        XCTAssertTrue(names.contains("[Gmail]/Drafts"))
+        XCTAssertTrue(names.contains("[Gmail]/Sent Mail"))
+        XCTAssertFalse(names.contains("Drafts"))
+        XCTAssertFalse(names.contains("Sent"))
+    }
+
+    func testCachedFoldersKeepDraftsAndSentWhenTheServerUsesThoseNames() async throws {
+        try await model.signIn(password: "pw")
+        await model.discoverFolders()
+        _ = await model.saveDraft(to: [pat], subject: "Hi", body: "half")
+        _ = await model.sendNew(to: [pat], subject: "Hi", body: "sent")
+
+        await model.loadMailboxes()
+
+        let names = model.mailboxes.map(\.name)
+        XCTAssertEqual(names.filter { $0 == "Drafts" }.count, 1)
+        XCTAssertEqual(names.filter { $0 == "Sent" }.count, 1)
+    }
+
     // MARK: Blocking
 
     func testBlockingASenderJunksTheirMailAndListsThem() async throws {
