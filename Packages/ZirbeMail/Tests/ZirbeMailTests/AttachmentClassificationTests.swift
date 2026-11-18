@@ -212,6 +212,12 @@ final class AttachmentClassificationTests: XCTestCase {
         XCTAssertEqual(body?.attachments, [])
     }
 
+    func testATextPartThatFailedToLoadLeavesTheMessageUncachedForARetry() {
+        let html = part("1", "text/html")
+        let parts = [html, part("2", "application/pdf", disposition: "attachment", filename: "Plan.pdf")]
+        XCTAssertNil(MailEngine.messageBody(structure: parts, plain: nil, html: (html, nil), calendar: nil))
+    }
+
     func testAMessageWithNothingToShowHasNoBody() {
         let plain = part("1", "text/plain")
         XCTAssertNil(MailEngine.messageBody(structure: [plain], plain: (plain, "  "), html: nil, calendar: nil))

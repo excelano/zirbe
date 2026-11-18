@@ -620,6 +620,7 @@ public actor MailEngine {
             guard let text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
             return text
         }
+        guard plain.map({ $0.text != nil }) ?? true, html.map({ $0.text != nil }) ?? true else { return nil }
         let readable = nonBlank(plain?.text) ?? nonBlank(html?.text.map(Klartext.plainText(fromHTML:)))
         let attachments = userFacingAttachments(
             in: structure,
