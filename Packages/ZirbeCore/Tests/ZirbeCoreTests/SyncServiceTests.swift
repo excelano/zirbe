@@ -476,6 +476,20 @@ final class SyncServiceTests: XCTestCase {
         XCTAssertTrue(summaries.isEmpty)
     }
 
+    func testDeleteDraftExpungesADraftSyncedFromANamedDraftsFolder() async throws {
+        await server.renameFolder("Drafts", to: "[Gmail]/Drafts")
+        try await sync.saveDraft(savedDraft(body: "v1"), login: login)
+        try await sync.syncFolder(mailbox: "[Gmail]/Drafts", role: .drafts, login: login)
+        let id = try await onlyThread().id
+
+        try await sync.deleteDraft(threadID: id, login: login)
+
+        let removed = await server.calls(.removeDraft)
+        XCTAssertEqual(removed, [.removeDraft(uid: 1)])
+        let serverDrafts = await server.uids(in: "[Gmail]/Drafts")
+        XCTAssertTrue(serverDrafts.isEmpty)
+    }
+
     // MARK: Flags
 
     func testSetReadReachesEveryFolderTheThreadSpans() async throws {
