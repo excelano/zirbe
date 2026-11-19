@@ -1,3 +1,6 @@
+// Author: David M. Anderson
+// Built with AI assistance (Claude, Anthropic)
+//
 // Maps SwiftMail's MessageInfo into Zirbe's MailEnvelope. The only file that
 // imports SwiftMail's model types; keeping it isolated is what makes the
 // engine swappable.
@@ -13,7 +16,9 @@ extension MailEnvelope {
             from: info.from,
             to: info.to,
             cc: info.cc,
-            date: info.date,
+            // Some automated senders (E*TRADE's alerts) omit the Date header;
+            // the server's arrival time keeps such mail in its place in the inbox.
+            date: info.date ?? info.internalDate,
             messageID: info.messageId?.description,
             inReplyTo: info.inReplyTo?.description,
             references: (info.references ?? []).map(\.description),
