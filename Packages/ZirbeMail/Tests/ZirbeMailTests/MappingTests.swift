@@ -5,7 +5,8 @@
 // mailbox values: the only code that sees SwiftMail's types. What matters is
 // that every field the domain relies on survives the crossing, that the
 // reaction header is read by its lowercased name (the parser lowercases custom
-// header keys), and that a folder's role resolves from its special-use flags
+// header keys), that mail with no Date header takes the server's arrival
+// time, and that a folder's role resolves from its special-use flags
 // with INBOX recognized by name alone.
 
 import XCTest
@@ -58,6 +59,17 @@ final class MappingTests: XCTestCase {
         XCTAssertEqual(envelope.to, [])
         XCTAssertEqual(envelope.flags, [])
         XCTAssertEqual(envelope.id, "seq:1")
+    }
+
+    func testEnvelopeWithoutADateHeaderTakesTheServerArrivalTime() {
+        let sent = Date(timeIntervalSince1970: 1_000)
+        let arrived = Date(timeIntervalSince1970: 2_000)
+
+        let undated = MessageInfo(sequenceNumber: SequenceNumber(1), internalDate: arrived)
+        XCTAssertEqual(MailEnvelope(undated).date, arrived)
+
+        let dated = MessageInfo(sequenceNumber: SequenceNumber(1), date: sent, internalDate: arrived)
+        XCTAssertEqual(MailEnvelope(dated).date, sent)
     }
 
     func testReactionHeaderIsReadByItsLowercasedName() {
