@@ -1,4 +1,4 @@
-# CLAUDE.md — Zirbe (excelano/zirbe)
+# CLAUDE.md — Zirbe (excelano/zirbe-ios)
 
 Project guidance for Zirbe. This repo is public and MIT-licensed; keep this file
 to project facts. (On the maintainer's machine, higher-level CLAUDE.md files add

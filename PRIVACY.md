@@ -182,7 +182,7 @@ Developers**. Turning it off applies to every app on your phone.
 
 ## How to verify the claims yourself
 
-The full source is at [github.com/excelano/zirbe](https://github.com/excelano/zirbe).
+The full source is at [github.com/excelano/zirbe-ios](https://github.com/excelano/zirbe-ios).
 To check the claims here independently:
 
 1. Search the project for the code that opens network connections. Every server
